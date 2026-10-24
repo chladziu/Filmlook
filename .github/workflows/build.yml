@@ -1,0 +1,44 @@
+name: build-module
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Checkout Magic Lantern (state of 2025-06-21, like the user's build)
+        run: |
+          git clone --filter=blob:none https://github.com/reticulatedpines/magiclantern_simplified ml
+          cd ml
+          COMMIT=$(git rev-list -1 --before="2025-06-21" HEAD)
+          echo "ML commit: $COMMIT"
+          git checkout "$COMMIT"
+          git submodule update --init --recursive || true
+
+      - name: ARM toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: '14.2.Rel1'
+
+      - name: Host tools
+        run: sudo apt-get update && sudo apt-get install -y python3 zip
+
+      - name: Build the module
+        run: |
+          cp -r modules/filmlook ml/modules/filmlook
+          cd ml/modules/filmlook
+          make -j2 ARM_BINPATH=$(dirname $(which arm-none-eabi-gcc))
+          ls -la build
+
+      - name: Upload module
+        uses: actions/upload-artifact@v4
+        with:
+          name: filmlook-module
+          path: |
+            ml/modules/filmlook/build/*.mo
+            ml/modules/filmlook/build/*.sym
