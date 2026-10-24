@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """preset2films.py - turns Lightroom presets (.xmp, crs: attributes) into modules/filmlook/films.h
 
-usage:  preset2films.py <folder with the user's own .xmp presets> <EmulsionPresets checkout> <output films.h>
+usage:  preset2films.py <folder with the user's own .xmp presets | -> <EmulsionPresets checkout> <output films.h>
+        "-" = leave the user's own presets out (state of v1.6); pass the folder to put the 17 back in.
 
 Sources
   1. the user's own presets (the 17 files listed in USER_META)
@@ -154,8 +155,8 @@ def build_entry(a, curves, brand, name, full, iso, typ, desc, kind, src):
 
 def main(user_dir, repo_dir, out):
     films = []
-    # 1. the user's own presets
-    for fname, brand, name, iso, typ, desc in USER_META:
+    # 1. the user's own presets (skipped when the folder is "-")
+    for fname, brand, name, iso, typ, desc in (USER_META if user_dir != "-" else []):
         if len(desc) > 52: raise SystemExit("description too long: " + desc)
         a, curves = parse(os.path.join(user_dir, fname))
         mono = a.get("ConvertToGrayscale") == "True"

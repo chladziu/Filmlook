@@ -20,7 +20,7 @@
 #include "films.h"
 #include "xmp.h"
 
-#define VERSION "v1.6"
+#define VERSION "v1.7"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
 #define NROWS 6                              /* 0 type, 1 brand, 2 film, 3 effect, 4 grain, 5 contrast */
