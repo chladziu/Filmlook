@@ -5,7 +5,10 @@
  *   - all tone / colour sliders (also HSL, B&W mixer, calibration) are scaled linearly towards 0,
  *   - the tone curves are blended towards the straight line,
  *   - sharpening / noise reduction / white balance of the preset are written as they are (only when Efekt > 0),
- *   - Efekt = 0: the file only carries the film name and the Kontrast / Ziarno changes, no look and no B&W conversion. */
+ *   - Efekt = 0: the file only carries the film name and the Kontrast / Ziarno changes, no look and no B&W conversion.
+ * Black & white films always get crs:ConvertToGrayscale="True" (the attribute Lightroom's own B&W presets use). The
+ * <crs:Look> block and crs:Treatment of the EmulsionPresets files are deliberately NOT written: their identifiers are
+ * not verified and Lightroom may ignore the whole preset (the B&W conversion included) when they do not match. */
 #ifndef FL_XMP_H
 #define FL_XMP_H
 
@@ -51,6 +54,15 @@ static void xb_attr_tenths(xb_t *b, const char *name, int v)     /* "+1.5" */
     xb_i(b, v % 10, 0); xb_s(b, "\"\n");
 }
 
+static void xb_attr_hund(xb_t *b, const char *name, int v)       /* "+0.30" / "-0.15" / "0.00" */
+{
+    int a = v < 0 ? -v : v;
+    xb_s(b, "   crs:"); xb_s(b, name); xb_s(b, "=\"");
+    if (v < 0) xb_s(b, "-"); else if (v > 0) xb_s(b, "+");
+    xb_i(b, a / 100, 0); xb_s(b, "."); xb_i(b, (a % 100) / 10, 0); xb_i(b, a % 10, 0);
+    xb_s(b, "\"\n");
+}
+
 static int curve_is_straight(const film_t *f, int c)
 {
     int i;
@@ -74,7 +86,7 @@ static int build_xmp(char *buf, int cap, const film_t *f, int strength, int grai
     xb_s(&b, "   xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\"\n");
     xb_s(&b, "   xmlns:film=\"http://ns.example.com/filmlook/1.0/\"\n");
     xb_s(&b, "   xmlns:dc=\"http://purl.org/dc/elements/1.1/\"\n");
-    xb_s(&b, "   crs:Version=\"15.0\"\n   crs:ProcessVersion=\"11.0\"\n   crs:HasSettings=\"True\"\n");
+    xb_s(&b, "   crs:Version=\"15.4\"\n   crs:ProcessVersion=\"15.4\"\n   crs:HasSettings=\"True\"\n");
     xb_s(&b, "   film:Name=\""); xb_s(&b, f->full); xb_s(&b, "\"\n");
     xb_s(&b, "   film:Strength=\""); xb_i(&b, strength, 0); xb_s(&b, "\"\n");
 
@@ -98,7 +110,8 @@ static int build_xmp(char *buf, int cap, const film_t *f, int strength, int grai
         if (a->flags & F_SCALE) v = xl_scale(v, strength);
         if (a->flags & F_CON) v = xl_clamp(v + con_add, -100, 100);
         if (a->flags & F_GRAIN) v = xl_clamp((v * grain_pct) / 100, 0, 100);
-        if (a->flags & F_TENTHS) xb_attr_tenths(&b, a->name, v);
+        if (a->flags & F_HUND) xb_attr_hund(&b, a->name, v);
+        else if (a->flags & F_TENTHS) xb_attr_tenths(&b, a->name, v);
         else xb_attr(&b, a->name, v, (a->flags & F_SIGN) ? 1 : 0);
     }
 

@@ -15,10 +15,10 @@ int main(int argc, char **argv)
             int n = build_xmp(buf, sizeof(buf), &films[i], st[k], 100, 0);
             if (n < 0) { printf("%s: build error\n", films[i].full); bad = 1; continue; }
             if (n > maxn) maxn = n;
-            snprintf(path, sizeof(path), "%s/%02d_%d.xmp", dir, i, st[k]);
+            snprintf(path, sizeof(path), "%s/%03d_%d.xmp", dir, i, st[k]);
             fp = fopen(path, "w"); fputs(buf, fp); fclose(fp);
         }
-        printf("%-26s brand %d  %d values\n", films[i].full, films[i].brand, films[i].nv);
+        printf("%-34s %-14s %-10s %d values\n", films[i].full, types[groups[films[i].group].type].name, groups[films[i].group].brand, films[i].nv);
     }
     printf("largest sidecar: %d bytes\n", maxn);
     if (build_xmp(buf, 64, &films[0], 100, 100, 0) != -1) { puts("overflow check FAILED"); bad = 1; }

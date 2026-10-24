@@ -1,7 +1,7 @@
 /*
  * filmlook.c - film look simulation for Canon EOS 5D Mark II (Magic Lantern module)
  *
- *  INFO opens ONE full-screen panel: brand -> film (of that brand) + settings.
+ *  INFO opens ONE full-screen panel: type (colour / black & white / slide) -> brand -> film + settings.
  *    both dials and joystick left/right = change value of the chosen row, joystick up/down = next row,
  *    SET = save, INFO / MENU = save & close, half-shutter = close and shoot.
  *  After every photo an IMG_xxxx.xmp sidecar is written (Lightroom / Camera Raw).
@@ -20,10 +20,10 @@
 #include "films.h"
 #include "xmp.h"
 
-#define VERSION "v1.5"
+#define VERSION "v1.6"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
-#define NROWS 5                              /* 0 brand, 1 film, 2 effect, 3 grain, 4 contrast */
+#define NROWS 6                              /* 0 type, 1 brand, 2 film, 3 effect, 4 grain, 5 contrast */
 
 extern int gui_state;
 extern int lv;
@@ -43,31 +43,36 @@ static int st_contrast = 0;               /* -50..50 */
 #define UI_OPEN     2
 #define UI_CLOSING  3
 static volatile int ui_state = UI_CLOSED;
-static int row = 0;                       /* 0 brand, 1 film, 2 effect, 3 grain, 4 contrast */
+static int row = 0;                       /* 0 type, 1 brand, 2 film, 3 effect, 4 grain, 5 contrast */
 static int last_input_ms = 0;
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
-/* films[] is grouped by brand (tools/preset2films.py sorts it). brand_first/brand_n describe each group,
- * memo remembers the last film of every brand so that switching brands back and forth returns to it */
-static int brand_first[BRAND_COUNT];
-static int brand_n[BRAND_COUNT];
-static int memo[BRAND_COUNT];
+/* films[] is sorted by group (= brand inside one type: tools/preset2films.py), groups[] by type.
+ * memo_group / memo_film remember the last brand of every type and the last film of every brand,
+ * so that switching back and forth returns to where the user was */
+static int memo_group[TYPE_COUNT];        /* relative to types[t].first_group */
+static int memo_film[GROUP_COUNT];        /* relative to groups[g].first */
 
-static void brands_init(void)
+static void memo_init(void)
 {
-    int i, b;
-    for (b = 0; b < BRAND_COUNT; b++) { brand_first[b] = 0; brand_n[b] = 0; memo[b] = 0; }
-    for (i = 0; i < FILM_COUNT; i++) {
-        b = films[i].brand;
-        if (b < 0 || b >= BRAND_COUNT) continue;
-        if (!brand_n[b]) brand_first[b] = i;
-        brand_n[b]++;
-    }
+    int i;
+    for (i = 0; i < TYPE_COUNT; i++) memo_group[i] = 0;
+    for (i = 0; i < GROUP_COUNT; i++) memo_film[i] = 0;
 }
 
-/* 0 = no effect, 1.. = brand + 1 */
-static int cur_brand(void) { return st_film > 0 ? films[st_film - 1].brand + 1 : 0; }
+/* 0 = no effect, 1.. = type + 1 */
+static int cur_type(void) { return st_film > 0 ? groups[films[st_film - 1].group].type + 1 : 0; }
+
+static void remember(void)
+{
+    if (st_film > 0) {
+        int g = films[st_film - 1].group;
+        int t = groups[g].type;
+        memo_group[t] = g - types[t].first_group;
+        memo_film[g] = st_film - 1 - groups[g].first;
+    }
+}
 
 /* ------------------------------------------------------------------ log */
 static void flog(const char *a, int v)
@@ -168,7 +173,7 @@ static void load_state(void)
         parse_after(buf, "contrast", &st_contrast);
     }
     st_film = clampi(st_film, 0, FILM_COUNT);
-    if (st_film > 0) memo[films[st_film - 1].brand] = st_film - 1 - brand_first[films[st_film - 1].brand];
+    remember();
     st_strength = clampi(st_strength, 0, 100);
     st_grain = clampi(st_grain, 0, 200);
     st_contrast = clampi(st_contrast, -50, 50);
@@ -182,9 +187,8 @@ static void load_state(void)
 #define C_SOFT   COLOR_GRAY(60)
 
 /* what has to be redrawn (set from the key handler, handled in the shoot task) */
-#define D_ROW(r) (1 << (r))          /* rows 0..4 */
-#define D_INFO   32                  /* description block under the film row */
-#define D_ALL    (D_ROW(0) | D_ROW(1) | D_ROW(2) | D_ROW(3) | D_ROW(4) | D_INFO)
+#define D_ROW(r) (1 << (r))          /* rows 0..5 */
+#define D_INFO   64                  /* description block under the film row */
 static volatile int dirty = 0;
 
 /* ---- Polish letters. The stock ML fonts have no ą ę ł ś ź ż ć ń, so ML/FONTS/FILM23.RBF (made by
@@ -231,14 +235,19 @@ static void pl_load_font(void)
 
 /* prints a line of text and wipes only what is left of the previous, longer text:
  * the new text is never drawn on a cleared background, so nothing blinks */
-static void text_line(int font, int fg, int x, int y, int maxx, int h, const char *s)
+static int put_text(int font, int fg, int x, int y, const char *s)
 {
     char buf[112];
     int w;
     pl_convert(s, buf, sizeof(buf));
     if (pl_spec && (font & 0xFFFF0000) == (FONT_MED & 0xFFFF0000)) font = pl_spec;   /* Polish-capable copy of the 23 px font */
     w = bmp_printf(FONT(font, fg, C_BG), x, y, "%s", buf);
-    if (w < 0) w = 0;
+    return w < 0 ? 0 : w;
+}
+
+static void text_line(int font, int fg, int x, int y, int maxx, int h, const char *s)
+{
+    int w = put_text(font, fg, x, y, s);
     if (x + w < maxx) bmp_fill(C_BG, x + w, y, maxx - (x + w), h);
 }
 
@@ -266,29 +275,49 @@ static void draw_static(void)
     bmp_printf(FONT(FONT_MED_LARGE, C_ACCENT, C_BG), 40, 20, "Film Look Simulation");
     bmp_printf(FONT(FONT_MED, C_DIM, C_BG), 600, 24, VERSION);
     bmp_fill(C_DIM, 40, 66, 640, 2);
-    bmp_fill(C_DIM, 40, 244, 640, 2);
+    bmp_fill(C_DIM, 40, 252, 640, 2);
     bmp_fill(C_DIM, 40, 424, 640, 2);
     draw_hint(0);
 }
 
-/* rows 0 (brand) and 1 (film): label, < value >  */
+/* row 0: the film type as a tab bar. The texts never move, only their colour and the underline change,
+ * so redrawing the bar over itself does not blink */
+static void draw_tabs(void)
+{
+    int on = (row == 0);
+    int ct = cur_type();
+    int x = 150, i;
+    const int y = 78;
+
+    bmp_fill(on ? C_ACCENT : C_BG, 40, y - 2, 4, 32);
+    text_line(FONT_MED_LARGE, on ? C_ACCENT : C_TEXT, 64, y - 2, 146, 32, "Typ");
+    for (i = 0; i <= TYPE_COUNT; i++) {
+        const char *s = (i == 0) ? "Bez efektu" : types[i - 1].name;
+        int sel = (i == ct);
+        int c = sel ? (on ? C_ACCENT : C_TEXT) : C_SOFT;
+        int w = put_text(FONT_MED, c, x, y, s);
+        bmp_fill(sel ? c : C_BG, x, y + 28, w, 3);
+        x += w + 26;
+    }
+}
+
+/* rows 1 (brand) and 2 (film): label, < value >  */
 static void draw_sel(int r)
 {
     int on = (row == r);
-    int y = (r == 0) ? 76 : 120;
+    int y = (r == 1) ? 114 : 156;
     int off = (st_film == 0);
-    int dimmed = (r == 1 && off);
-    int c = dimmed ? C_DIM : (on ? C_ACCENT : C_TEXT);
+    int c = off ? C_DIM : (on ? C_ACCENT : C_TEXT);
     const char *val;
 
-    if (r == 0) val = off ? "Bez efektu" : brands[films[st_film - 1].brand];
+    if (r == 1) val = off ? "-" : groups[films[st_film - 1].group].brand;
     else        val = off ? "-" : films[st_film - 1].name;
 
     bmp_fill(on ? C_ACCENT : C_BG, 40, y + 4, 4, 32);
-    text_line(FONT_MED_LARGE, c, 64, y + 4, 224, 32, r == 0 ? "Marka" : "Film");
-    bmp_printf(FONT(FONT_LARGE, dimmed ? C_DIM : (on ? C_ACCENT : C_DIM), C_BG), 230, y, "<");
-    text_line(FONT_LARGE, dimmed ? C_DIM : C_TEXT, 262, y, 660, 40, val);
-    bmp_printf(FONT(FONT_LARGE, dimmed ? C_DIM : (on ? C_ACCENT : C_DIM), C_BG), 668, y, ">");
+    text_line(FONT_MED_LARGE, c, 64, y + 4, 224, 32, r == 1 ? "Marka" : "Film");
+    bmp_printf(FONT(FONT_LARGE, off ? C_DIM : (on ? C_ACCENT : C_DIM), C_BG), 230, y, "<");
+    text_line(FONT_LARGE, off ? C_DIM : C_TEXT, 262, y, 660, 40, val);
+    bmp_printf(FONT(FONT_LARGE, off ? C_DIM : (on ? C_ACCENT : C_DIM), C_BG), 668, y, ">");
 }
 
 /* kind | ISO, position in the brand, short description */
@@ -297,27 +326,27 @@ static void draw_info(void)
     char tmp[80];
     if (st_film > 0) {
         const film_t *f = &films[st_film - 1];
-        int b = f->brand;
-        if (f->iso > 0) snprintf(tmp, sizeof(tmp), "%s   |   ISO %d", f->kind, f->iso);
+        const group_t *g = &groups[f->group];
+        if (f->iso > 0) snprintf(tmp, sizeof(tmp), "%s  |  ISO %d", f->kind, f->iso);
         else            snprintf(tmp, sizeof(tmp), "%s", f->kind);
-        text_line(FONT_MED, C_ACCENT, 64, 168, 610, 28, tmp);
-        snprintf(tmp, sizeof(tmp), "%d / %d", st_film - brand_first[b], brand_n[b]);
-        text_line(FONT_MED, C_SOFT, 620, 168, 716, 28, tmp);
-        text_line(FONT_MED, C_SOFT, 64, 198, 716, 32, f->desc);
+        text_line(FONT_MED, C_ACCENT, 64, 194, 612, 28, tmp);
+        snprintf(tmp, sizeof(tmp), "%d / %d", st_film - g->first, g->n);
+        text_line(FONT_MED, C_SOFT, 620, 194, 716, 28, tmp);
+        text_line(FONT_MED, C_SOFT, 64, 222, 716, 28, f->desc);
     } else {
-        text_line(FONT_MED, C_ACCENT, 64, 168, 610, 28, "Efekt filmu wyłączony");
-        text_line(FONT_MED, C_SOFT, 620, 168, 716, 28, "");
-        text_line(FONT_MED, C_SOFT, 64, 198, 716, 32, "Zdjęcia zostają bez zmian, plik XMP nie powstaje");
+        text_line(FONT_MED, C_ACCENT, 64, 194, 612, 28, "Efekt filmu wyłączony");
+        text_line(FONT_MED, C_SOFT, 620, 194, 716, 28, "");
+        text_line(FONT_MED, C_SOFT, 64, 222, 716, 28, "Zdjęcia zostają bez zmian, plik XMP nie powstaje");
     }
 }
 
-static void draw_row(int r)          /* r = 2..4: sliders */
+static void draw_row(int r)          /* r = 3..5: sliders */
 {
     static const char *names[3] = { "Efekt", "Ziarno", "Kontrast" };
-    int i = r - 2;
+    int i = r - 3;
     int on = (row == r);
     int c = on ? C_ACCENT : C_TEXT;
-    int y = 264 + i * 50;
+    int y = 266 + i * 48;
     char tmp[32];
 
     bmp_fill(on ? C_ACCENT : C_BG, 40, y + 2, 4, 28);
@@ -351,12 +380,13 @@ static void redraw_dirty(void)
     dirty &= ~d;
     BMP_LOCK
     (
-        if (d & D_ROW(0))  draw_sel(0);
+        if (d & D_ROW(0))  draw_tabs();
         if (d & D_ROW(1))  draw_sel(1);
+        if (d & D_ROW(2))  draw_sel(2);
         if (d & D_INFO)    draw_info();
-        if (d & D_ROW(2))  draw_row(2);
         if (d & D_ROW(3))  draw_row(3);
         if (d & D_ROW(4))  draw_row(4);
+        if (d & D_ROW(5))  draw_row(5);
     )
 }
 
@@ -379,12 +409,13 @@ static void paint_all(void)
     (
         draw_static();
         dirty = 0;
-        draw_sel(0);
+        draw_tabs();
         draw_sel(1);
+        draw_sel(2);
         draw_info();
-        draw_row(2);
         draw_row(3);
         draw_row(4);
+        draw_row(5);
     )
 }
 
@@ -395,7 +426,7 @@ static void do_open(void)
 {
     int i;
     kill_ml_overlay();
-    row = (st_film > 0) ? 1 : 0;                        /* start on the film row when a film is chosen */
+    row = (st_film > 0) ? 2 : 0;                        /* start on the film row when a film is chosen */
     klog_n = 0;
     msg_until = 0;
     want_save = 0;
@@ -437,29 +468,44 @@ static void do_close(void)
 
 static void change_value(int dir)
 {
-    if (row == 0) {                                      /* brand: 0 = no effect, 1.. = brands */
-        int cb = cur_brand();
-        int nb = clampi(cb + dir, 0, BRAND_COUNT);
-        if (nb != cb) {
-            if (cb > 0) memo[cb - 1] = st_film - 1 - brand_first[cb - 1];
-            if (nb == 0) st_film = 0;
-            else st_film = 1 + brand_first[nb - 1] + clampi(memo[nb - 1], 0, brand_n[nb - 1] - 1);
-            dirty |= D_ROW(0) | D_ROW(1) | D_INFO;
+    if (row == 0) {                                      /* type: 0 = no effect, 1.. = colour / b&w / slide */
+        int ct = cur_type();
+        int nt = clampi(ct + dir, 0, TYPE_COUNT);
+        if (nt != ct) {
+            remember();
+            if (nt == 0) st_film = 0;
+            else {
+                int g = types[nt - 1].first_group + clampi(memo_group[nt - 1], 0, types[nt - 1].ngroups - 1);
+                st_film = 1 + groups[g].first + clampi(memo_film[g], 0, groups[g].n - 1);
+            }
+            dirty |= D_ROW(0) | D_ROW(1) | D_ROW(2) | D_INFO;
         }
-    } else if (row == 1) {                               /* film inside the brand */
+    } else if (row == 1) {                               /* brand inside the type */
         if (st_film > 0) {
-            int b = films[st_film - 1].brand;
-            int pos = clampi(st_film - 1 - brand_first[b] + dir, 0, brand_n[b] - 1);
-            memo[b] = pos;
-            if (1 + brand_first[b] + pos != st_film) {
-                st_film = 1 + brand_first[b] + pos;
-                dirty |= D_ROW(1) | D_INFO;
+            int g = films[st_film - 1].group;
+            int t = groups[g].type;
+            int ng = types[t].first_group + clampi(g - types[t].first_group + dir, 0, types[t].ngroups - 1);
+            if (ng != g) {
+                remember();
+                st_film = 1 + groups[ng].first + clampi(memo_film[ng], 0, groups[ng].n - 1);
+                remember();
+                dirty |= D_ROW(1) | D_ROW(2) | D_INFO;
+            }
+        }
+    } else if (row == 2) {                               /* film inside the brand */
+        if (st_film > 0) {
+            const group_t *g = &groups[films[st_film - 1].group];
+            int pos = clampi(st_film - 1 - g->first + dir, 0, g->n - 1);
+            if (1 + g->first + pos != st_film) {
+                st_film = 1 + g->first + pos;
+                remember();
+                dirty |= D_ROW(2) | D_INFO;
             }
         }
     }
-    else if (row == 2) { st_strength = clampi(st_strength + dir * 5, 0, 100); dirty |= D_ROW(2); }
-    else if (row == 3) { st_grain = clampi(st_grain + dir * 5, 0, 200);       dirty |= D_ROW(3); }
-    else               { st_contrast = clampi(st_contrast + dir * 5, -50, 50); dirty |= D_ROW(4); }
+    else if (row == 3) { st_strength = clampi(st_strength + dir * 5, 0, 100); dirty |= D_ROW(3); }
+    else if (row == 4) { st_grain = clampi(st_grain + dir * 5, 0, 200);       dirty |= D_ROW(4); }
+    else               { st_contrast = clampi(st_contrast + dir * 5, -50, 50); dirty |= D_ROW(5); }
 }
 
 static void set_row(int r)
@@ -468,11 +514,11 @@ static void set_row(int r)
     if (r != row) { dirty |= D_ROW(row) | D_ROW(r); row = r; }      /* selection colours change */
 }
 
-/* joystick up / down; the film row is skipped while no brand is chosen */
+/* joystick up / down; the brand and film rows are skipped while no film type is chosen */
 static void move_row(int dir)
 {
     int r = row + dir;
-    if (r == 1 && st_film == 0) r += dir;
+    if (st_film == 0 && (r == 1 || r == 2)) r = (dir > 0) ? 3 : 0;
     set_row(r);
 }
 
@@ -591,7 +637,7 @@ static unsigned int filmlook_seconds(unsigned int ctx)
 /* ------------------------------------------------------------------ module glue */
 static unsigned int filmlook_init(void)
 {
-    brands_init();
+    memo_init();
     load_state();
     kill_ml_overlay();
     flog_s("FILMLOOK module loaded", VERSION);
