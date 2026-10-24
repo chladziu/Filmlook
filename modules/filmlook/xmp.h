@@ -1,5 +1,11 @@
-/* xmp.h - builds the Lightroom / Camera Raw sidecar. No snprintf: only %d-free manual formatting,
- * so it behaves the same in the camera and on a PC (see test_xmp.c). */
+/* xmp.h - builds the Lightroom / Camera Raw sidecar from a film (films.h). No snprintf: manual number formatting,
+ * so it behaves the same in the camera and on a PC (see test_xmp.c).
+ *
+ * The preset is reproduced 1:1 at Efekt = 100 %. Below that:
+ *   - all tone / colour sliders (also HSL, B&W mixer, calibration) are scaled linearly towards 0,
+ *   - the tone curves are blended towards the straight line,
+ *   - sharpening / noise reduction / white balance of the preset are written as they are (only when Efekt > 0),
+ *   - Efekt = 0: the file only carries the film name and the Kontrast / Ziarno changes, no look and no B&W conversion. */
 #ifndef FL_XMP_H
 #define FL_XMP_H
 
@@ -22,7 +28,7 @@ static void xb_i(xb_t *b, int v, int with_sign)
     unsigned int u = neg ? (unsigned int)(-v) : (unsigned int)v;
     if (u == 0) t[k++] = '0';
     while (u > 0) { t[k++] = '0' + (u % 10); u /= 10; }
-    if (neg) xb_s(b, "-"); else if (with_sign) xb_s(b, "+");
+    if (neg) xb_s(b, "-"); else if (with_sign && v > 0) xb_s(b, "+");
     while (k > 0) { char c[2]; c[0] = t[--k]; c[1] = 0; xb_s(b, c); }
 }
 
@@ -31,13 +37,33 @@ static int xl_scale(int v, int strength) { return (v * strength) / 100; }
 
 static void xb_attr(xb_t *b, const char *name, int v, int sign)
 {
-    xb_s(b, "   "); xb_s(b, name); xb_s(b, "=\""); xb_i(b, v, sign); xb_s(b, "\"\n");
+    xb_s(b, "   crs:"); xb_s(b, name); xb_s(b, "=\""); xb_i(b, v, sign); xb_s(b, "\"\n");
 }
 
-/* strength 0..100, grain_pct 0..200 (100 = as in table), con_add -50..50. Returns length or -1. */
+static void xb_attr_s(xb_t *b, const char *name, const char *v)
+{
+    xb_s(b, "   crs:"); xb_s(b, name); xb_s(b, "=\""); xb_s(b, v); xb_s(b, "\"\n");
+}
+
+static void xb_attr_tenths(xb_t *b, const char *name, int v)     /* "+1.5" */
+{
+    xb_s(b, "   crs:"); xb_s(b, name); xb_s(b, "=\"+"); xb_i(b, v / 10, 0); xb_s(b, ".");
+    xb_i(b, v % 10, 0); xb_s(b, "\"\n");
+}
+
+static int curve_is_straight(const film_t *f, int c)
+{
+    int i;
+    for (i = 0; i < f->nc[c]; i++) if (f->cv[c][i][0] != f->cv[c][i][1]) return 0;
+    return 1;
+}
+
+/* strength 0..100, grain_pct 0..200 (100 = as in the preset), con_add -50..50. Returns length or -1. */
 static int build_xmp(char *buf, int cap, const film_t *f, int strength, int grain_pct, int con_add)
 {
-    xb_t b; int i;
+    static const char *const curve_tag[4] = { "ToneCurvePV2012", "ToneCurvePV2012Red",
+                                              "ToneCurvePV2012Green", "ToneCurvePV2012Blue" };
+    xb_t b; int i, c, custom = 0;
     b.buf = buf; b.cap = cap; b.n = 0; b.err = 0; buf[0] = 0;
     strength = xl_clamp(strength, 0, 100);
 
@@ -49,36 +75,48 @@ static int build_xmp(char *buf, int cap, const film_t *f, int strength, int grai
     xb_s(&b, "   xmlns:film=\"http://ns.example.com/filmlook/1.0/\"\n");
     xb_s(&b, "   xmlns:dc=\"http://purl.org/dc/elements/1.1/\"\n");
     xb_s(&b, "   crs:Version=\"15.0\"\n   crs:ProcessVersion=\"11.0\"\n   crs:HasSettings=\"True\"\n");
-    xb_s(&b, "   film:Name=\""); xb_s(&b, f->name); xb_s(&b, "\"\n");
-    xb_attr(&b, "film:Strength", strength, 0);
-    xb_s(&b, f->mono ? "   crs:ConvertToGrayscale=\"True\"\n" : "   crs:ConvertToGrayscale=\"False\"\n");
-    xb_attr(&b, "crs:Contrast2012",   xl_clamp(xl_scale(f->con, strength) + con_add, -100, 100), 1);
-    xb_attr(&b, "crs:Highlights2012", xl_scale(f->hi, strength), 1);
-    xb_attr(&b, "crs:Shadows2012",    xl_scale(f->sh, strength), 1);
-    xb_attr(&b, "crs:Whites2012",     xl_scale(f->wh, strength), 1);
-    xb_attr(&b, "crs:Blacks2012",     xl_scale(f->bl, strength), 1);
-    if (!f->mono) {
-        xb_attr(&b, "crs:Saturation", xl_scale(f->sat, strength), 1);
-        xb_attr(&b, "crs:Vibrance",   xl_scale(f->vib, strength), 1);
-        xb_attr(&b, "crs:SplitToningShadowHue", xl_clamp(f->sh_h, 0, 359), 0);
-        xb_attr(&b, "crs:SplitToningShadowSaturation", xl_scale(f->sh_s, strength), 0);
-        xb_attr(&b, "crs:SplitToningHighlightHue", xl_clamp(f->hi_h, 0, 359), 0);
-        xb_attr(&b, "crs:SplitToningHighlightSaturation", xl_scale(f->hi_s, strength), 0);
-        xb_attr(&b, "crs:SplitToningBalance", 0, 0);
+    xb_s(&b, "   film:Name=\""); xb_s(&b, f->full); xb_s(&b, "\"\n");
+    xb_s(&b, "   film:Strength=\""); xb_i(&b, strength, 0); xb_s(&b, "\"\n");
+
+    /* look: black & white conversion, white balance, camera profile */
+    xb_attr_s(&b, "ConvertToGrayscale", (f->mono && strength > 0) ? "True" : "False");
+    if (strength > 0) {
+        if (f->wb_custom) {
+            xb_attr_s(&b, "WhiteBalance", "Custom");
+            xb_attr(&b, "Temperature", f->temp, 0);
+            xb_attr(&b, "Tint", f->tint, 1);
+        }
+        if (f->profile == 1) xb_attr_s(&b, "CameraProfile", "Adobe Standard");
+        else if (f->profile == 2) xb_attr_s(&b, "CameraProfile", "Camera Standard");
     }
-    xb_attr(&b, "crs:GrainAmount", xl_clamp((xl_scale(f->g, strength) * grain_pct) / 100, 0, 100), 0);
-    xb_attr(&b, "crs:GrainSize", xl_clamp(f->gs, 0, 100), 0);
-    xb_attr(&b, "crs:GrainFrequency", xl_clamp(f->gr, 0, 100), 0);
-    xb_s(&b, "   crs:ToneCurveName2012=\"Custom\">\n");
-    xb_s(&b, "   <crs:ToneCurvePV2012>\n    <rdf:Seq>\n");
-    for (i = 0; i < 5; i++) {
-        int x = f->curve[i][0], y = f->curve[i][1];
-        int o = x + ((y - x) * strength) / 100;
-        xb_s(&b, "     <rdf:li>"); xb_i(&b, xl_clamp(x, 0, 255), 0);
-        xb_s(&b, ", "); xb_i(&b, xl_clamp(o, 0, 255), 0); xb_s(&b, "</rdf:li>\n");
+
+    /* all numeric values of the preset */
+    for (i = 0; i < f->nv; i++) {
+        const attr_t *a = &attr_defs[f->v[i].id];
+        int v = f->v[i].v;
+        if ((a->flags & F_TECH) && strength == 0) continue;
+        if (a->flags & F_SCALE) v = xl_scale(v, strength);
+        if (a->flags & F_CON) v = xl_clamp(v + con_add, -100, 100);
+        if (a->flags & F_GRAIN) v = xl_clamp((v * grain_pct) / 100, 0, 100);
+        if (a->flags & F_TENTHS) xb_attr_tenths(&b, a->name, v);
+        else xb_attr(&b, a->name, v, (a->flags & F_SIGN) ? 1 : 0);
     }
-    xb_s(&b, "    </rdf:Seq>\n   </crs:ToneCurvePV2012>\n");
-    xb_s(&b, "   <dc:subject>\n    <rdf:Bag>\n     <rdf:li>Film: "); xb_s(&b, f->name);
+
+    for (c = 0; c < 4; c++) if (!curve_is_straight(f, c)) custom = 1;
+    xb_attr_s(&b, "ToneCurveName2012", custom ? "Custom" : "Linear");
+    xb_s(&b, ">\n");
+
+    for (c = 0; c < 4; c++) {
+        xb_s(&b, "   <crs:"); xb_s(&b, curve_tag[c]); xb_s(&b, ">\n    <rdf:Seq>\n");
+        for (i = 0; i < f->nc[c]; i++) {
+            int x = f->cv[c][i][0], y = f->cv[c][i][1];
+            int o = x + ((y - x) * strength) / 100;
+            xb_s(&b, "     <rdf:li>"); xb_i(&b, xl_clamp(x, 0, 255), 0);
+            xb_s(&b, ", "); xb_i(&b, xl_clamp(o, 0, 255), 0); xb_s(&b, "</rdf:li>\n");
+        }
+        xb_s(&b, "    </rdf:Seq>\n   </crs:"); xb_s(&b, curve_tag[c]); xb_s(&b, ">\n");
+    }
+    xb_s(&b, "   <dc:subject>\n    <rdf:Bag>\n     <rdf:li>Film: "); xb_s(&b, f->full);
     xb_s(&b, "</rdf:li>\n    </rdf:Bag>\n   </dc:subject>\n");
     xb_s(&b, "  </rdf:Description>\n </rdf:RDF>\n</x:xmpmeta>\n<?xpacket end=\"w\"?>\n");
     return b.err ? -1 : b.n;
