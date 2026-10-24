@@ -4,6 +4,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -32,8 +35,22 @@ jobs:
         run: |
           cp -r modules/filmlook ml/modules/filmlook
           cd ml/modules/filmlook
-          make -j2 ARM_BINPATH=$(dirname $(which arm-none-eabi-gcc))
-          ls -la build
+          set +e
+          make -j2 ARM_BINPATH=$(dirname $(which arm-none-eabi-gcc)) > "$GITHUB_WORKSPACE/build.log" 2>&1
+          echo $? > "$GITHUB_WORKSPACE/build.rc"
+          ls -la build >> "$GITHUB_WORKSPACE/build.log" 2>&1
+          arm-none-eabi-gcc --version >> "$GITHUB_WORKSPACE/build.log" 2>&1
+          exit 0
+
+      - name: Publish build log to branch "logs"
+        run: |
+          mkdir -p /tmp/logs && cp build.log build.rc /tmp/logs/
+          cd /tmp/logs && git init -q -b logs && git config user.email actions@github.com && git config user.name actions
+          git add -A && git commit -q -m "build log"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" logs
+
+      - name: Fail if the build failed
+        run: test "$(cat build.rc)" = "0"
 
       - name: Upload module
         uses: actions/upload-artifact@v4
