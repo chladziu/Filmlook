@@ -20,7 +20,7 @@
 #include "films.h"
 #include "xmp.h"
 
-#define VERSION "v1.3"
+#define VERSION "v1.4"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
 #define FL_CHOICES (FILM_COUNT + 1)          /* 0 = Off, 1.. = films */
@@ -148,11 +148,57 @@ static void load_state(void)
 #define D_ALL    (D_FILM | D_ROW(1) | D_ROW(2) | D_ROW(3))
 static volatile int dirty = 0;
 
+/* ---- Polish letters. The stock ML fonts have no ą ę ł ś ź ż ć ń, so ML/FONTS/FILM23.RBF (made by
+ * tools/make_polish_font.py) carries them in slots 0x80..0x91. Texts in this file are plain UTF-8 and are converted
+ * when drawn. Without the font file the letters are replaced by their plain ASCII look-alikes. */
+static unsigned int pl_spec = 0;        /* upper 16 bits of the font spec of FILM23, 0 = not available */
+
+static const struct { unsigned char a, b, code, ascii; } pl_map[] = {
+    {0xC4,0x85,0x80,'a'}, {0xC4,0x87,0x81,'c'}, {0xC4,0x99,0x82,'e'}, {0xC5,0x82,0x83,'l'}, {0xC5,0x84,0x84,'n'},
+    {0xC3,0xB3,0x85,'o'}, {0xC5,0x9B,0x86,'s'}, {0xC5,0xBA,0x87,'z'}, {0xC5,0xBC,0x88,'z'},
+    {0xC4,0x84,0x89,'A'}, {0xC4,0x86,0x8A,'C'}, {0xC4,0x98,0x8B,'E'}, {0xC5,0x81,0x8C,'L'}, {0xC5,0x83,0x8D,'N'},
+    {0xC3,0x93,0x8E,'O'}, {0xC5,0x9A,0x8F,'S'}, {0xC5,0xB9,0x90,'Z'}, {0xC5,0xBB,0x91,'Z'}
+};
+
+static void pl_convert(const char *in, char *out, int cap)
+{
+    int o = 0;
+    const unsigned char *p = (const unsigned char *)in;
+    while (*p && o < cap - 1) {
+        if (*p < 0x80) { out[o++] = *p++; continue; }
+        {
+            int k, hit = 0;
+            for (k = 0; k < (int)(sizeof(pl_map) / sizeof(pl_map[0])); k++) {
+                if (p[0] == pl_map[k].a && p[1] == pl_map[k].b) {
+                    out[o++] = pl_spec ? (char)pl_map[k].code : (char)pl_map[k].ascii;
+                    p += 2; hit = 1; break;
+                }
+            }
+            if (!hit) { out[o++] = '?'; p++; while ((*p & 0xC0) == 0x80) p++; }
+        }
+    }
+    out[o] = 0;
+}
+
+static void pl_load_font(void)
+{
+    uint32_t size = 0;
+    if (FIO_GetFileSize("ML/FONTS/FILM23.RBF", &size) == 0 && size > 1000) {
+        uint32_t f = font_by_name("FILM23", COLOR_WHITE, COLOR_BLACK);
+        if ((f & 0xFFFF0000) != (FONT_CANON & 0xFFFF0000)) pl_spec = f & 0xFFFF0000;
+    }
+    flog("polish font loaded", pl_spec != 0);
+}
+
 /* prints a line of text and wipes only what is left of the previous, longer text:
  * the new text is never drawn on a cleared background, so nothing blinks */
 static void text_line(int font, int fg, int x, int y, int maxx, int h, const char *s)
 {
-    int w = bmp_printf(FONT(font, fg, C_BG), x, y, "%s", s);
+    char buf[112];
+    int w;
+    pl_convert(s, buf, sizeof(buf));
+    if (pl_spec && (font & 0xFFFF0000) == (FONT_MED & 0xFFFF0000)) font = pl_spec;   /* Polish-capable copy of the 23 px font */
+    w = bmp_printf(FONT(font, fg, C_BG), x, y, "%s", buf);
     if (w < 0) w = 0;
     if (x + w < maxx) bmp_fill(C_BG, x + w, y, maxx - (x + w), h);
 }
@@ -171,7 +217,7 @@ static void draw_bar(int x, int y, int w, int v, int lo, int hi, int color)
 static void draw_hint(const char *msg)
 {
     if (msg) text_line(FONT_MED, C_ACCENT, 40, 440, 700, 28, msg);
-    else     text_line(FONT_MED, C_SOFT, 40, 440, 700, 28, "dial: change   joystick: row   SET: save   INFO: close");
+    else     text_line(FONT_MED, C_SOFT, 40, 440, 700, 28, "pokrętło: zmiana  joystick: wiersz  SET: zapis  INFO: zamknij");
 }
 
 static void draw_static(void)
@@ -201,9 +247,9 @@ static void draw_film(void)
         text_line(FONT_MED, C_ACCENT, 92, 138, 700, 28, tmp);
         text_line(FONT_MED, C_SOFT, 92, 168, 700, 32, f->desc);
     } else {
-        text_line(FONT_LARGE, C_TEXT, 92, 90, 660, 44, "Off");
-        text_line(FONT_MED, C_ACCENT, 92, 138, 700, 28, "No film effect");
-        text_line(FONT_MED, C_SOFT, 92, 168, 700, 32, "Photos are left alone, no sidecar written");
+        text_line(FONT_LARGE, C_TEXT, 92, 90, 660, 44, "Bez efektu");
+        text_line(FONT_MED, C_ACCENT, 92, 138, 700, 28, "Efekt filmu wyłączony");
+        text_line(FONT_MED, C_SOFT, 92, 168, 700, 32, "Zdjęcia zostają bez zmian, plik XMP nie powstaje");
     }
     for (i = 0; i < FL_CHOICES; i++) {
         int x = 92 + i * 28;
@@ -213,7 +259,7 @@ static void draw_film(void)
 
 static void draw_row(int r)          /* r = 1..3 */
 {
-    static const char *names[3] = { "Effect", "Grain", "Contrast" };
+    static const char *names[3] = { "Efekt", "Ziarno", "Kontrast" };
     int i = r - 1;
     int on = (row == r);
     int c = on ? C_ACCENT : C_TEXT;
@@ -241,7 +287,7 @@ static void redraw_dirty(void)
         want_save = 0;
         save_state();
         msg_until = get_ms_clock() + 1200;
-        BMP_LOCK ( draw_hint("Saved"); )
+        BMP_LOCK ( draw_hint("Zapisano"); )
         flog("settings saved, film", st_film);
     } else if (msg_until && get_ms_clock() > msg_until) {
         msg_until = 0;
@@ -463,6 +509,7 @@ static unsigned int filmlook_init(void)
     load_state();
     kill_ml_overlay();
     flog_s("FILMLOOK module loaded", VERSION);
+    pl_load_font();
     flog("film", st_film);
     return 0;
 }
