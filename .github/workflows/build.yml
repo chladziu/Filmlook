@@ -44,7 +44,7 @@ jobs:
 
       - name: Publish build log to branch "logs"
         run: |
-          mkdir -p /tmp/logs && cp build.log build.rc /tmp/logs/
+          mkdir -p /tmp/logs && cp build.log build.rc /tmp/logs/ && (cp ml/modules/filmlook/build/*.mo /tmp/logs/ || true)
           cd /tmp/logs && git init -q -b logs && git config user.email actions@github.com && git config user.name actions
           git add -A && git commit -q -m "build log"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" logs
