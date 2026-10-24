@@ -246,6 +246,8 @@ static void kill_ml_overlay(void)
     if (get_config_var("global.draw") != 0) set_config_var("global.draw", 0);
 }
 
+/* Canon GUI mode variable of the 5D2 firmware 2.1.2 (same address as CURRENT_GUI_MODE in the ML platform files) */
+#define CUR_GUI_MODE (*(volatile int *)0x37F0)
 extern void SetGUIRequestMode(int mode);
 extern void msleep(int ms);
 
@@ -273,7 +275,7 @@ static void do_open(void)
     last_input_ms = get_ms_clock();
     canon_gui_disable_front_buffer();
     paint_all();
-    if (!lv && CURRENT_GUI_MODE != 2) {
+    if (!lv && CUR_GUI_MODE != 2) {
         SetGUIRequestMode(2);
         msleep(200);
     }
@@ -294,7 +296,7 @@ static void do_close(void)
     dirty = 0;
     save_state();
     klog_flush();
-    if (CURRENT_GUI_MODE != 0) {
+    if (CUR_GUI_MODE != 0) {
         SetGUIRequestMode(0);
         msleep(100);
     }
