@@ -131,6 +131,17 @@ def guess_iso(name):
     return 0
 
 
+def push_label(f, sh):
+    """text of one Push/Pull option (Polish; B&W: push / pull with the exposure index, colour: EV)"""
+    iso = f["iso"]
+    if f["type"] == 1:
+        if sh == 0: return "Normalnie (EI %d)" % iso if iso else "Normalnie"
+        ei = (" (EI %d)" % (iso * 2 ** sh if sh > 0 else iso // 2 ** (-sh))) if iso else ""
+        return ("Push +%d" % sh if sh > 0 else "Pull %d" % sh) + ei
+    if sh == 0: return "Normalnie"
+    return "%+d EV %s" % (sh, "prześwietlone" if sh > 0 else "niedoświetlone")
+
+
 def build_entry(a, curves, brand, name, full, iso, typ, desc, kind, src):
     vals = []
     for i, (n, fl) in enumerate(ATTRS):
@@ -166,6 +177,8 @@ def main(user_dir, repo_dir, out):
     # 2. EmulsionPresets
     cat = json.load(open(os.path.join(repo_dir, "presets.json"), encoding="utf-8"))["presets"]
     wanted = {"Color Negative Film": "Color-Negative", "Black & White Film": "Black-White", "Slide / E-6 Film": "Slide"}
+    names = {(p["category"], p["name"]) for p in cat}
+    pending = []                      # push / pull variants: (base preset name, shift, suffix, entry)
     for p in cat:
         if p["category"] not in wanted: continue
         pname = p["name"]
@@ -182,20 +195,47 @@ def main(user_dir, repo_dir, out):
         if (typ, brand, name) in taken: name += " (EP)"
         taken.add((typ, brand, name))
         full = name if (brand in ("Inne", "Tonowanie") or name.startswith(brand)) else brand + " " + name
-        films.append(build_entry(a, curves, brand, name, full, iso, typ, desc, kind, pname))
+        e = build_entry(a, curves, brand, name, full, iso, typ, desc, kind, pname)
+        mv = re.match(r'^(.*) ([+-][12])$', pname)
+        if mv and (p["category"], mv.group(1)) in names:      # "Kodak Tri-X 400 +1": variant of "Kodak Tri-X 400"
+            pending.append((mv.group(1), int(mv.group(2)), mv.group(2), e))
+            continue
+        films.append(e)
 
     # grouping: type -> brand -> film (natural order of the names)
     def border(b): return BRAND_ORDER.index(b) if b in BRAND_ORDER else 99
     films.sort(key=lambda f: (f["type"], border(f["brand"]), f["brand"], natkey(f["name"])))
-    fulls = [f["full"] for f in films]
-    dup = {x for x in fulls if fulls.count(x) > 1}
-    if dup: raise SystemExit("duplicate full names: %s" % dup)
     groups = []
     for i, f in enumerate(films):
         if not groups or groups[-1]["type"] != f["type"] or groups[-1]["brand"] != f["brand"]:
             groups.append(dict(type=f["type"], brand=f["brand"], first=i, n=0))
         groups[-1]["n"] += 1
         f["group"] = len(groups) - 1
+    # push / pull variants live after all base films in films[]; they are not listed in the Film row, the
+    # "Push/Pull" slider of the base film selects them (popts[] = options of a base film, sorted by shift)
+    byname = {f["src"]: f for f in films}
+    for f in films: f.update(shift=0, np=0, pfirst=0, var=[])
+    for bs, shift, suf, e in pending:
+        b = byname[bs]
+        if any(x["shift"] == shift for x in b["var"]): raise SystemExit("two variants with shift %d: %s" % (shift, bs))
+        e.update(brand=b["brand"], type=b["type"], name=b["name"] + " " + suf, full=b["full"] + " " + suf, iso=b["iso"],
+                 kind=b["kind"], group=b["group"], shift=shift, np=0, pfirst=0, var=[])
+        b["var"].append(e)
+    variants = [e for f in films for e in sorted(f["var"], key=lambda e: e["shift"])]
+    allf = films + variants
+    for i, f in enumerate(allf): f["idx"] = i
+    fulls = [f["full"] for f in allf]
+    dup = {x for x in fulls if fulls.count(x) > 1}
+    if dup: raise SystemExit("duplicate full names: %s" % dup)
+    popts = []
+    for f in films:
+        if not f["var"]: continue
+        opts = sorted([(0, f)] + [(e["shift"], e) for e in f["var"]], key=lambda o: o[0])
+        f["pfirst"], f["np"] = len(popts), len(opts)
+        for sh, e in opts:
+            lab = push_label(f, sh)
+            if len(lab) > 22: raise SystemExit("push label too long: " + lab)
+            popts.append((sh, lab, e["idx"]))
 
     o = []
     w = o.append
@@ -221,7 +261,11 @@ def main(user_dir, repo_dir, out):
       "    unsigned char mono, wb_custom, profile;   /* profile: 0 none, 1 Adobe Standard, 2 Camera Standard */\n"
       "    short temp, tint;\n    unsigned char nv;\n    const fv_t *v;\n"
       "    unsigned char nc[4];      /* points of master, red, green, blue tone curve */\n"
-      "    unsigned char cv[4][CURVE_MAX][2];\n} film_t;\n\n")
+      "    unsigned char cv[4][CURVE_MAX][2];\n"
+      "    signed char shift;        /* push / pull variant: stops (0 = the base film itself) */\n"
+      "    unsigned char np;         /* base film: number of Push/Pull options incl. normal, 0 = none */\n"
+      "    unsigned short pfirst;    /* index of its first option in popts[] */\n} film_t;\n\n"
+      "typedef struct { signed char shift; const char *label; unsigned short film; } popt_t;   /* film: index into films[] */\n\n")
     w("typedef struct { unsigned char type; const char *brand; unsigned short first, n; } group_t;\n")
     w("typedef struct { const char *name; unsigned char first_group, ngroups; } type_t;\n\n")
     w("static const type_t types[] = {\n")
@@ -234,14 +278,14 @@ def main(user_dir, repo_dir, out):
     for g in groups:
         w("    { %d, %s, %d, %d },\n" % (g["type"], cstr(g["brand"]), g["first"], g["n"]))
     w("};\n#define GROUP_COUNT ((int)(sizeof(groups) / sizeof(groups[0])))\n\n")
-    for i, f in enumerate(films):
+    for i, f in enumerate(allf):
         w("/* %s */\nstatic const fv_t fv_%d[] = {" % (f["src"], i))
         for k, (idx, v) in enumerate(f["vals"]):
             if k % 6 == 0: w("\n    ")
             w("{%d,%d}, " % (idx, v))
         w("\n};\n")
-    w("\nstatic const film_t films[] = {\n")
-    for i, f in enumerate(films):
+    w("\nstatic const film_t films[] = {     /* base films first (BASE_COUNT), then the push / pull variants */\n")
+    for i, f in enumerate(allf):
         w("    { %d, %s, %s,\n      %s,\n      %s, %d,\n      %d, %d, %d, %d, %d,\n      %d, fv_%d,\n      { %s },\n      {\n"
           % (f["group"], cstr(f["name"]), cstr(f["full"]), cstr(f["kind"]), cstr(f["desc"]), f["iso"],
              1 if f["mono"] else 0, f["wb_custom"], f["profile"], f["temp"], f["tint"],
@@ -249,10 +293,15 @@ def main(user_dir, repo_dir, out):
         for c in f["cv"]:
             pts = list(c) + [(0, 0)] * (MAXPTS - len(c))
             w("        { %s },\n" % ", ".join("{%d,%d}" % p for p in pts))
-        w("      } },\n")
-    w("};\n\n#define FILM_COUNT ((int)(sizeof(films) / sizeof(films[0])))\n\n#endif\n")
+        w("      }, %d, %d, %d },\n" % (f["shift"], f["np"], f["pfirst"]))
+    w("};\n\n#define FILM_COUNT ((int)(sizeof(films) / sizeof(films[0])))\n#define BASE_COUNT %d\n\n" % len(films))
+    w("static const popt_t popts[] = {\n")
+    for sh, lab, fi in popts:
+        w("    { %d, %s, %d },\n" % (sh, cstr(lab), fi))
+    if not popts: w("    { 0, \"\", 0 },\n")
+    w("};\n\n#endif\n")
     open(out, "w", encoding="utf-8").write("".join(o))
-    print("films: %d  groups: %d  attrs: %d" % (len(films), len(groups), len(ATTRS)))
+    print("films: %d (+ %d push/pull variants)  groups: %d  attrs: %d  push/pull options: %d" % (len(films), len(variants), len(groups), len(ATTRS), len(popts)))
     for t, tn in enumerate(TYPES):
         print("  %-13s %3d films, brands: %s" % (tn, sum(1 for f in films if f["type"] == t),
               ", ".join("%s(%d)" % (g["brand"], g["n"]) for g in groups if g["type"] == t)))
@@ -260,7 +309,7 @@ def main(user_dir, repo_dir, out):
         print("WARNING attributes not carried over:", {k: sorted(v)[:3] for k, v in UNKNOWN.items()})
     # for the checker scripts
     json.dump([dict(src=f["src"], full=f["full"], name=f["name"], desc=f["desc"], kind=f["kind"], iso=f["iso"],
-                    type=f["type"], brand=f["brand"], mono=f["mono"]) for f in films],
+                    type=f["type"], brand=f["brand"], mono=f["mono"]) for f in allf],
               open(os.path.splitext(out)[0] + ".index.json", "w", encoding="utf-8"), ensure_ascii=False, indent=0)
 
 

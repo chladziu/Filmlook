@@ -1,7 +1,8 @@
 /*
  * filmlook.c - film look simulation for Canon EOS 5D Mark II (Magic Lantern module)
  *
- *  INFO opens ONE full-screen panel: type (colour / black & white / slide) -> brand -> film + settings.
+ *  INFO opens ONE full-screen panel: type (colour / black & white / slide) -> brand -> film + settings
+ *  (Push/Pull slider when the film has push / pull variants, effect strength, grain, contrast).
  *    both dials and joystick left/right = change value of the chosen row, joystick up/down = next row,
  *    SET = save, INFO / MENU = save & close, half-shutter = close and shoot.
  *  After every photo an IMG_xxxx.xmp sidecar is written (Lightroom / Camera Raw).
@@ -20,10 +21,10 @@
 #include "films.h"
 #include "xmp.h"
 
-#define VERSION "v1.7"
+#define VERSION "v1.8"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
-#define NROWS 6                              /* 0 type, 1 brand, 2 film, 3 effect, 4 grain, 5 contrast */
+#define NROWS 7                              /* 0 type, 1 brand, 2 film, 3 push/pull, 4 effect, 5 grain, 6 contrast */
 
 extern int gui_state;
 extern int lv;
@@ -31,7 +32,8 @@ extern int set_config_var(const char *name, int new_value);
 extern int get_config_var(const char *name);
 
 /* ------------------------------------------------------------------ state */
-static int st_film = 0;                   /* 0 = Off, 1.. = index into films[] + 1 */
+static int st_film = 0;                   /* 0 = Off, 1.. = index into films[] + 1 (always a base film) */
+static int st_push = 0;                   /* push / pull of the film in stops, 0 = normal (see popts[]) */
 static int st_strength = 100;             /* 0..100 */
 static int st_grain = 100;                /* 0..200 */
 static int st_contrast = 0;               /* -50..50 */
@@ -43,7 +45,7 @@ static int st_contrast = 0;               /* -50..50 */
 #define UI_OPEN     2
 #define UI_CLOSING  3
 static volatile int ui_state = UI_CLOSED;
-static int row = 0;                       /* 0 type, 1 brand, 2 film, 3 effect, 4 grain, 5 contrast */
+static int row = 0;                       /* 0 type, 1 brand, 2 film, 3 push/pull, 4 effect, 5 grain, 6 contrast */
 static int last_input_ms = 0;
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -63,6 +65,34 @@ static void memo_init(void)
 
 /* 0 = no effect, 1.. = type + 1 */
 static int cur_type(void) { return st_film > 0 ? groups[films[st_film - 1].group].type + 1 : 0; }
+
+/* push / pull: a base film may have variants (Tri-X +1, Portra 400 -1 ...) that are not in the Film list.
+ * popts[f->pfirst .. +f->np-1] are its options sorted by shift, the normal film among them */
+static int n_opts(void) { return st_film > 0 ? films[st_film - 1].np : 0; }
+
+static int cur_opt(void)                      /* index of the option that is selected now */
+{
+    const film_t *f = &films[st_film - 1];
+    int i, zero = 0;
+    for (i = 0; i < f->np; i++) {
+        if (popts[f->pfirst + i].shift == st_push) return i;
+        if (popts[f->pfirst + i].shift == 0) zero = i;
+    }
+    return zero;
+}
+
+/* index into films[] + 1 of the film that is really used: the base film or its push / pull variant */
+static int eff_film(void)
+{
+    if (st_film > 0 && n_opts() > 0) return 1 + popts[films[st_film - 1].pfirst + cur_opt()].film;
+    return st_film;
+}
+
+static void fix_push(void)
+{
+    if (st_film == 0 || n_opts() == 0) st_push = 0;
+    else st_push = popts[films[st_film - 1].pfirst + cur_opt()].shift;
+}
 
 static void remember(void)
 {
@@ -121,9 +151,9 @@ static void klog_flush(void)
 /* ------------------------------------------------------------------ settings file */
 static void save_state(void)
 {
-    char t[160];
-    snprintf(t, sizeof(t), "film=%s\nstrength=%d\ngrain=%d\ncontrast=%d\n",
-             st_film > 0 ? films[st_film - 1].full : "Off", st_strength, st_grain, st_contrast);
+    char t[192];
+    snprintf(t, sizeof(t), "film=%s\npush=%d\nstrength=%d\ngrain=%d\ncontrast=%d\n",
+             st_film > 0 ? films[st_film - 1].full : "Off", st_push, st_strength, st_grain, st_contrast);
     FILE *f = FIO_CreateFile(SETTINGS_PATH);
     if (f) { FIO_WriteFile(f, t, strlen(t)); FIO_CloseFile(f); }
     else flog("save_state: cannot create file", 0);
@@ -152,7 +182,7 @@ static void parse_film(const char *s)
     for (; *s; s++) {
         if (strncmp(s, "film=", 5) == 0) {
             const char *p = s + 5;
-            for (i = 0; i < FILM_COUNT; i++) {
+            for (i = 0; i < BASE_COUNT; i++) {
                 int l = strlen(films[i].full);
                 if (strncmp(p, films[i].full, l) == 0 && (p[l] == '\n' || p[l] == '\r' || p[l] == 0)) { st_film = i + 1; return; }
             }
@@ -163,16 +193,18 @@ static void parse_film(const char *s)
 
 static void load_state(void)
 {
-    static char buf[256];
+    static char buf[320];
     int n = read_file(SETTINGS_PATH, buf, sizeof(buf) - 1);
     if (n > 0) {
         buf[n] = 0;
         parse_film(buf);
+        parse_after(buf, "push", &st_push);
         parse_after(buf, "strength", &st_strength);
         parse_after(buf, "grain", &st_grain);
         parse_after(buf, "contrast", &st_contrast);
     }
-    st_film = clampi(st_film, 0, FILM_COUNT);
+    st_film = clampi(st_film, 0, BASE_COUNT);
+    fix_push();
     remember();
     st_strength = clampi(st_strength, 0, 100);
     st_grain = clampi(st_grain, 0, 200);
@@ -187,8 +219,8 @@ static void load_state(void)
 #define C_SOFT   COLOR_GRAY(60)
 
 /* what has to be redrawn (set from the key handler, handled in the shoot task) */
-#define D_ROW(r) (1 << (r))          /* rows 0..5 */
-#define D_INFO   64                  /* description block under the film row */
+#define D_ROW(r) (1 << (r))          /* rows 0..6 */
+#define D_INFO   128                 /* description block under the film row */
 static volatile int dirty = 0;
 
 /* ---- Polish letters. The stock ML fonts have no ą ę ł ś ź ż ć ń, so ML/FONTS/FILM23.RBF (made by
@@ -256,6 +288,8 @@ static void draw_bar(int x, int y, int w, int v, int lo, int hi, int color)
     int fw = ((v - lo) * w) / (hi - lo);
     bmp_fill(C_BG, x - 4, y, w + 8, 8);             /* old knob above / below the track */
     bmp_fill(C_BG, x - 4, y + 12, w + 8, 8);
+    bmp_fill(C_BG, x - 4, y + 8, 4, 4);             /* knob at the very ends sticks out beside the track */
+    bmp_fill(C_BG, x + w, y + 8, 4, 4);
     bmp_fill(C_DIM, x, y + 8, w, 4);
     if (fw > 0) bmp_fill(color, x, y + 8, fw, 4);
     bmp_fill(color, x + fw - 4, y, 8, 20);
@@ -332,7 +366,7 @@ static void draw_info(void)
         text_line(FONT_MED, C_ACCENT, 64, 194, 612, 28, tmp);
         snprintf(tmp, sizeof(tmp), "%d / %d", st_film - g->first, g->n);
         text_line(FONT_MED, C_SOFT, 620, 194, 716, 28, tmp);
-        text_line(FONT_MED, C_SOFT, 64, 222, 716, 28, f->desc);
+        text_line(FONT_MED, C_SOFT, 64, 222, 716, 28, films[eff_film() - 1].desc);
     } else {
         text_line(FONT_MED, C_ACCENT, 64, 194, 612, 28, "Efekt filmu wyłączony");
         text_line(FONT_MED, C_SOFT, 620, 194, 716, 28, "");
@@ -340,13 +374,48 @@ static void draw_info(void)
     }
 }
 
-static void draw_row(int r)          /* r = 3..5: sliders */
+/* row 3: push / pull as a slider. The scale is -2..+2 stops with "Normalnie" in the middle; a notch is drawn
+ * only where the film has a variant, the knob jumps from notch to notch */
+#define PUSH_RANGE 2
+static void draw_push(void)
+{
+    int on = (row == 3);
+    int n = n_opts();
+    int y = 262;
+    int c = (n > 1) ? (on ? C_ACCENT : C_TEXT) : C_DIM;
+    const int bx = 252, bw = 170;
+
+    bmp_fill(on ? C_ACCENT : C_BG, 40, y + 2, 4, 28);
+    text_line(FONT_MED_LARGE, c, 64, y, 240, 32, "Push/Pull");
+    bmp_fill(C_BG, bx - 4, y + 4, bw + 8, 8);
+    bmp_fill(C_BG, bx - 4, y + 16, bw + 8, 8);
+    bmp_fill(C_BG, bx - 4, y + 12, 4, 4);
+    bmp_fill(C_BG, bx + bw, y + 12, 4, 4);
+    bmp_fill(C_DIM, bx, y + 12, bw, 4);
+    if (n > 1) {
+        const film_t *f = &films[st_film - 1];
+        int i, kx = bx + ((st_push + PUSH_RANGE) * bw) / (2 * PUSH_RANGE);
+        int cx = bx + bw / 2;
+        for (i = 0; i < f->np; i++) {
+            int xx = bx + ((popts[f->pfirst + i].shift + PUSH_RANGE) * bw) / (2 * PUSH_RANGE);
+            bmp_fill(C_SOFT, xx - 1, y + 8, 2, 16);
+        }
+        if (kx > cx) bmp_fill(c, cx, y + 12, kx - cx, 4);
+        else         bmp_fill(c, kx, y + 12, cx - kx, 4);
+        bmp_fill(c, kx - 4, y + 4, 8, 20);
+        text_line(FONT_MED, c, 440, y + 4, 716, 28, popts[f->pfirst + cur_opt()].label);
+    } else {
+        text_line(FONT_MED, C_DIM, 440, y + 4, 716, 28, st_film > 0 ? "brak wariantów" : "-");
+    }
+}
+
+static void draw_row(int r)          /* r = 4..6: sliders */
 {
     static const char *names[3] = { "Efekt", "Ziarno", "Kontrast" };
-    int i = r - 3;
+    int i = r - 4;
     int on = (row == r);
     int c = on ? C_ACCENT : C_TEXT;
-    int y = 266 + i * 48;
+    int y = 302 + i * 40;
     char tmp[32];
 
     bmp_fill(on ? C_ACCENT : C_BG, 40, y + 2, 4, 28);
@@ -371,7 +440,7 @@ static void redraw_dirty(void)
         save_state();
         msg_until = get_ms_clock() + 1200;
         BMP_LOCK ( draw_hint("Zapisano"); )
-        flog_s("settings saved, film", st_film > 0 ? films[st_film - 1].full : "Off");
+        flog_s("settings saved, film", st_film > 0 ? films[eff_film() - 1].full : "Off");
     } else if (msg_until && get_ms_clock() > msg_until) {
         msg_until = 0;
         BMP_LOCK ( draw_hint(0); )
@@ -384,9 +453,10 @@ static void redraw_dirty(void)
         if (d & D_ROW(1))  draw_sel(1);
         if (d & D_ROW(2))  draw_sel(2);
         if (d & D_INFO)    draw_info();
-        if (d & D_ROW(3))  draw_row(3);
+        if (d & D_ROW(3))  draw_push();
         if (d & D_ROW(4))  draw_row(4);
         if (d & D_ROW(5))  draw_row(5);
+        if (d & D_ROW(6))  draw_row(6);
     )
 }
 
@@ -413,9 +483,10 @@ static void paint_all(void)
         draw_sel(1);
         draw_sel(2);
         draw_info();
-        draw_row(3);
+        draw_push();
         draw_row(4);
         draw_row(5);
+        draw_row(6);
     )
 }
 
@@ -478,7 +549,8 @@ static void change_value(int dir)
                 int g = types[nt - 1].first_group + clampi(memo_group[nt - 1], 0, types[nt - 1].ngroups - 1);
                 st_film = 1 + groups[g].first + clampi(memo_film[g], 0, groups[g].n - 1);
             }
-            dirty |= D_ROW(0) | D_ROW(1) | D_ROW(2) | D_INFO;
+            st_push = 0;
+            dirty |= D_ROW(0) | D_ROW(1) | D_ROW(2) | D_ROW(3) | D_INFO;
         }
     } else if (row == 1) {                               /* brand inside the type */
         if (st_film > 0) {
@@ -489,7 +561,8 @@ static void change_value(int dir)
                 remember();
                 st_film = 1 + groups[ng].first + clampi(memo_film[ng], 0, groups[ng].n - 1);
                 remember();
-                dirty |= D_ROW(1) | D_ROW(2) | D_INFO;
+                st_push = 0;
+                dirty |= D_ROW(1) | D_ROW(2) | D_ROW(3) | D_INFO;
             }
         }
     } else if (row == 2) {                               /* film inside the brand */
@@ -499,13 +572,21 @@ static void change_value(int dir)
             if (1 + g->first + pos != st_film) {
                 st_film = 1 + g->first + pos;
                 remember();
-                dirty |= D_ROW(2) | D_INFO;
+                st_push = 0;
+                dirty |= D_ROW(2) | D_ROW(3) | D_INFO;
             }
         }
+    } else if (row == 3) {                               /* push / pull: next / previous notch */
+        if (n_opts() > 1) {
+            const film_t *f = &films[st_film - 1];
+            int i = cur_opt();
+            int ni = clampi(i + dir, 0, f->np - 1);
+            if (ni != i) { st_push = popts[f->pfirst + ni].shift; dirty |= D_ROW(3) | D_INFO; }
+        }
     }
-    else if (row == 3) { st_strength = clampi(st_strength + dir * 5, 0, 100); dirty |= D_ROW(3); }
-    else if (row == 4) { st_grain = clampi(st_grain + dir * 5, 0, 200);       dirty |= D_ROW(4); }
-    else               { st_contrast = clampi(st_contrast + dir * 5, -50, 50); dirty |= D_ROW(5); }
+    else if (row == 4) { st_strength = clampi(st_strength + dir * 5, 0, 100); dirty |= D_ROW(4); }
+    else if (row == 5) { st_grain = clampi(st_grain + dir * 5, 0, 200);       dirty |= D_ROW(5); }
+    else               { st_contrast = clampi(st_contrast + dir * 5, -50, 50); dirty |= D_ROW(6); }
 }
 
 static void set_row(int r)
@@ -514,11 +595,20 @@ static void set_row(int r)
     if (r != row) { dirty |= D_ROW(row) | D_ROW(r); row = r; }      /* selection colours change */
 }
 
-/* joystick up / down; the brand and film rows are skipped while no film type is chosen */
+/* rows that can not be changed right now are skipped: brand / film / push-pull without a film,
+ * push-pull for a film without variants */
+static int row_enabled(int r)
+{
+    if (r == 1 || r == 2) return st_film > 0;
+    if (r == 3) return n_opts() > 1;
+    return 1;
+}
+
+/* joystick up / down */
 static void move_row(int dir)
 {
     int r = row + dir;
-    if (st_film == 0 && (r == 1 || r == 2)) r = (dir > 0) ? 3 : 0;
+    while (r > 0 && r < NROWS - 1 && !row_enabled(r)) r += dir;
     set_row(r);
 }
 
@@ -594,9 +684,9 @@ static void on_new_photo(int number)
             if (q->dir[dl - 1] != '/') { q->dir[dl] = '/'; q->dir[dl + 1] = 0; }
             { int k; const char *pp = p ? p : "IMG_"; for (k = 0; k < 4 && pp[k]; k++) q->prefix[k] = pp[k]; q->prefix[k] = 0; }
             q->number = number; q->t = get_ms_clock();
-            q->film = st_film; q->strength = st_strength; q->grain = st_grain; q->contrast = st_contrast;
+            q->film = eff_film(); q->strength = st_strength; q->grain = st_grain; q->contrast = st_contrast;
             q->used = 1;
-            flog_s("photo queued", films[st_film - 1].full);
+            flog_s("photo queued", films[q->film - 1].full);
             return;
         }
     }
