@@ -2,7 +2,7 @@
  * filmlook.c - film look simulation for Canon EOS 5D Mark II (Magic Lantern module)
  *
  *  INFO opens ONE full-screen panel: film list + settings.
- *    rear wheel = change value of the chosen row, SET = next row, main dial = up/down rows,
+ *    both dials and joystick left/right = change value of the chosen row, SET or joystick up/down = next row,
  *    INFO / MENU = save & close, half-shutter = close and shoot.
  *  After every photo an IMG_xxxx.xmp sidecar is written (Lightroom / Camera Raw).
  *  RAW / JPEG files are never touched. No Canon property is written.
@@ -20,7 +20,7 @@
 #include "films.h"
 #include "xmp.h"
 
-#define VERSION "v1.1"
+#define VERSION "v1.2"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
 #define FL_CHOICES (FILM_COUNT + 1)          /* 0 = Off, 1.. = films */
@@ -36,7 +36,13 @@ static int st_strength = 100;             /* 0..100 */
 static int st_grain = 100;                /* 0..200 */
 static int st_contrast = 0;               /* -50..50 */
 
-static int is_open = 0;
+/* panel life cycle: opening and closing need the Canon GUI task to run, so they are done in the
+ * shoot task (the key handler only requests them) */
+#define UI_CLOSED   0
+#define UI_OPENING  1
+#define UI_OPEN     2
+#define UI_CLOSING  3
+static volatile int ui_state = UI_CLOSED;
 static int row = 0;                       /* 0 film, 1 effect, 2 grain, 3 contrast */
 static int last_input_ms = 0;
 
@@ -170,7 +176,7 @@ static void draw_static(void)
     bmp_fill(C_DIM, 40, 66, 640, 2);
     bmp_fill(C_DIM, 40, 244, 640, 2);
     bmp_fill(C_DIM, 40, 424, 640, 2);
-    bmp_printf(FONT(FONT_MED, C_SOFT, C_BG), 40, 440, "rear wheel: change    SET: next row    INFO: close");
+    bmp_printf(FONT(FONT_MED, C_SOFT, C_BG), 40, 440, "dial: change    SET: next row    INFO: close");
 }
 
 static void draw_film(void)
@@ -240,14 +246,11 @@ static void kill_ml_overlay(void)
     if (get_config_var("global.draw") != 0) set_config_var("global.draw", 0);
 }
 
-static void open_screen(void)
+extern void SetGUIRequestMode(int mode);
+extern void msleep(int ms);
+
+static void paint_all(void)
 {
-    kill_ml_overlay();
-    is_open = 1;
-    row = 0;
-    klog_n = 0;
-    last_input_ms = get_ms_clock();
-    canon_gui_disable_front_buffer();
     BMP_LOCK
     (
         draw_static();
@@ -257,18 +260,47 @@ static void open_screen(void)
         draw_row(2);
         draw_row(3);
     )
+}
+
+/* Same trick as the ML menu: in photo mode the Canon INFO screen does not pass the joystick and part of the
+ * dial clicks to ML, so the camera is switched to its (invisible) menu mode, where all buttons arrive. */
+static void do_open(void)
+{
+    int i;
+    kill_ml_overlay();
+    row = 0;
+    klog_n = 0;
+    last_input_ms = get_ms_clock();
+    canon_gui_disable_front_buffer();
+    paint_all();
+    if (!lv && CURRENT_GUI_MODE != 2) {
+        SetGUIRequestMode(2);
+        msleep(200);
+    }
+    canon_gui_disable_front_buffer();
+    paint_all();
+    for (i = 0; i < 3; i++) {            /* Canon repaints its own menu for a moment: paint over it */
+        msleep(40);
+        canon_gui_disable_front_buffer();
+        paint_all();
+    }
+    last_input_ms = get_ms_clock();
+    ui_state = UI_OPEN;
     flog("screen opened, film", st_film);
 }
 
-static void close_screen(void)
+static void do_close(void)
 {
-    if (!is_open) return;
-    is_open = 0;
     dirty = 0;
     save_state();
     klog_flush();
-    flog("screen closed, film", st_film);
+    if (CURRENT_GUI_MODE != 0) {
+        SetGUIRequestMode(0);
+        msleep(100);
+    }
     canon_gui_enable_front_buffer(1);
+    flog("screen closed, film", st_film);
+    ui_state = UI_CLOSED;
 }
 
 static void change_value(int dir)
@@ -293,39 +325,42 @@ static int idle_photo_mode(void)
 
 static unsigned int filmlook_keypress(unsigned int key)
 {
-    if (!is_open) {
-        if (key == MODULE_KEY_INFO && idle_photo_mode()) { open_screen(); return 0; }
+    if (ui_state == UI_CLOSED) {
+        if (key == MODULE_KEY_INFO && idle_photo_mode()) { ui_state = UI_OPENING; return 0; }
         if (key == MODULE_KEY_TRASH && idle_photo_mode()) return 0;   /* keeps ML's big menu closed */
         return 1;
     }
+    if (ui_state != UI_OPEN) return 0;           /* opening / closing: swallow everything */
 
     klog_add(key);
     last_input_ms = get_ms_clock();
     /* only change values here and let the shoot task draw: the key handler must stay fast */
     switch (key) {
-    case MODULE_KEY_WHEEL_DOWN:  change_value(+1); break;   /* rear wheel right */
-    case MODULE_KEY_WHEEL_UP:    change_value(-1); break;   /* rear wheel left  */
-    case MODULE_KEY_PRESS_RIGHT: change_value(+1); break;   /* joystick, if the camera sends it */
-    case MODULE_KEY_PRESS_LEFT:  change_value(-1); break;
-    case MODULE_KEY_WHEEL_RIGHT: set_row(row + 1); break;   /* main dial */
-    case MODULE_KEY_WHEEL_LEFT:  set_row(row - 1); break;
-    case MODULE_KEY_PRESS_DOWN:  set_row(row + 1); break;
-    case MODULE_KEY_PRESS_UP:    set_row(row - 1); break;
+    case MODULE_KEY_WHEEL_DOWN:                              /* rear dial right  */
+    case MODULE_KEY_WHEEL_RIGHT:                             /* top dial right   */
+    case MODULE_KEY_PRESS_RIGHT: change_value(+1); break;    /* joystick right   */
+    case MODULE_KEY_WHEEL_UP:                                /* rear dial left   */
+    case MODULE_KEY_WHEEL_LEFT:                              /* top dial left    */
+    case MODULE_KEY_PRESS_LEFT:  change_value(-1); break;    /* joystick left    */
+    case MODULE_KEY_PRESS_DOWN:  set_row(row + 1); break;    /* joystick down    */
+    case MODULE_KEY_PRESS_UP:    set_row(row - 1); break;    /* joystick up      */
     case MODULE_KEY_PRESS_SET:
     case MODULE_KEY_JOY_CENTER:  set_row((row + 1) % 4); break;
     case MODULE_KEY_INFO:
-    case MODULE_KEY_MENU:        close_screen(); return 0;
+    case MODULE_KEY_MENU:        ui_state = UI_CLOSING; return 0;
     case MODULE_KEY_PRESS_HALFSHUTTER:
-    case MODULE_KEY_PLAY:        close_screen(); return 1;          /* pass on to the camera */
+    case MODULE_KEY_PLAY:        ui_state = UI_CLOSING; return 1;   /* pass on to the camera */
     default: break;                                                 /* ignore everything else */
     }
     return 0;
 }
 
-/* runs in the shoot task, about every 50 ms */
+/* runs in the shoot task, about every 50 ms; opening / closing may sleep here */
 static unsigned int filmlook_shoot_task(unsigned int ctx)
 {
-    if (is_open) redraw_dirty();
+    if (ui_state == UI_OPENING) do_open();
+    else if (ui_state == UI_CLOSING) do_close();
+    else if (ui_state == UI_OPEN) redraw_dirty();
     return 0;
 }
 
@@ -387,7 +422,7 @@ static unsigned int filmlook_seconds(unsigned int ctx)
 {
     int i, t = get_ms_clock();
     kill_ml_overlay();
-    if (is_open && (t - last_input_ms) > 45000) { flog("auto-close (idle)", 0); close_screen(); }
+    if (ui_state == UI_OPEN && (t - last_input_ms) > 45000) { flog("auto-close (idle)", 0); ui_state = UI_CLOSING; }
     for (i = 0; i < QMAX; i++)
         if (queue[i].used && (t - queue[i].t) >= 3000)       /* let the camera finish writing the photo */
             write_sidecar(&queue[i]);
