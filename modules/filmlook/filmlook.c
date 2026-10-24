@@ -22,7 +22,7 @@
 #define VERSION "v1.0"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
-#define CHOICES (FILM_COUNT + 1)          /* 0 = Off, 1.. = films */
+#define FL_CHOICES (FILM_COUNT + 1)          /* 0 = Off, 1.. = films */
 
 extern int gui_state;
 extern int lv;
@@ -94,7 +94,7 @@ static void load_state(void)
         parse_after(buf, "grain", &st_grain);
         parse_after(buf, "contrast", &st_contrast);
     }
-    st_film = clampi(st_film, 0, CHOICES - 1);
+    st_film = clampi(st_film, 0, FL_CHOICES - 1);
     st_strength = clampi(st_strength, 0, 100);
     st_grain = clampi(st_grain, 0, 200);
     st_contrast = clampi(st_contrast, -50, 50);
@@ -144,7 +144,7 @@ static void draw_screen(void)
         bmp_printf(FONT(FONT_MED, C_ACCENT, C_BG), 92, 138, "No film effect");
         bmp_printf(FONT(FONT_MED, C_SOFT, C_BG), 92, 168, "Photos are left alone, no sidecar written");
     }
-    for (i = 0; i < CHOICES; i++) {
+    for (i = 0; i < FL_CHOICES; i++) {
         int x = 92 + i * 28;
         if (i == st_film) bmp_fill(C_ACCENT, x, 208, 16, 16);
         else              bmp_fill(C_DIM, x, 208, 16, 16);
@@ -197,7 +197,7 @@ static void close_screen(void)
 
 static void change_value(int dir)
 {
-    if (row == 0)      st_film = clampi(st_film + dir, 0, CHOICES - 1);
+    if (row == 0)      st_film = clampi(st_film + dir, 0, FL_CHOICES - 1);
     else if (row == 1) st_strength = clampi(st_strength + dir * 5, 0, 100);
     else if (row == 2) st_grain = clampi(st_grain + dir * 5, 0, 200);
     else               st_contrast = clampi(st_contrast + dir * 5, -50, 50);
@@ -264,7 +264,7 @@ static void on_new_photo(int number)
             if (!d || dl <= 0 || dl > 36) { flog("photo: bad DCIM path", number); return; }
             strcpy(q->dir, d);
             if (q->dir[dl - 1] != '/') { q->dir[dl] = '/'; q->dir[dl + 1] = 0; }
-            strncpy(q->prefix, p ? p : "IMG_", 4); q->prefix[4] = 0;
+            { int k; const char *pp = p ? p : "IMG_"; for (k = 0; k < 4 && pp[k]; k++) q->prefix[k] = pp[k]; q->prefix[k] = 0; }
             q->number = number; q->t = get_ms_clock();
             q->film = st_film; q->strength = st_strength; q->grain = st_grain; q->contrast = st_contrast;
             q->used = 1;
