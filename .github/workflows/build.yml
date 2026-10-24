@@ -29,7 +29,7 @@ jobs:
           release: '14.2.Rel1'
 
       - name: Host tools
-        run: sudo apt-get update && sudo apt-get install -y python3 zip
+        run: sudo apt-get update && sudo apt-get install -y python3 python3-docutils zip && pip install docutils
 
       - name: Build the module
         run: |
