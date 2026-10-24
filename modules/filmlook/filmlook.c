@@ -20,7 +20,7 @@
 #include "films.h"
 #include "xmp.h"
 
-#define VERSION "v1.2"
+#define VERSION "v1.3"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
 #define FL_CHOICES (FILM_COUNT + 1)          /* 0 = Off, 1.. = films */
@@ -167,16 +167,23 @@ static void draw_bar(int x, int y, int w, int v, int lo, int hi, int color)
     bmp_fill(color, x + fw - 4, y, 8, 20);
 }
 
+/* bottom line: key help, or a short confirmation message */
+static void draw_hint(const char *msg)
+{
+    if (msg) text_line(FONT_MED, C_ACCENT, 40, 440, 700, 28, msg);
+    else     text_line(FONT_MED, C_SOFT, 40, 440, 700, 28, "dial: change   joystick: row   SET: save   INFO: close");
+}
+
 static void draw_static(void)
 {
     bmp_fill(C_BG, 0, 0, 720, 480);
     bmp_fill(C_ACCENT, 0, 0, 720, 6);
-    bmp_printf(FONT(FONT_MED, C_ACCENT, C_BG), 40, 24, "FILMLOOK");
+    bmp_printf(FONT(FONT_MED_LARGE, C_ACCENT, C_BG), 40, 20, "Film Look Simulation");
     bmp_printf(FONT(FONT_MED, C_DIM, C_BG), 600, 24, VERSION);
     bmp_fill(C_DIM, 40, 66, 640, 2);
     bmp_fill(C_DIM, 40, 244, 640, 2);
     bmp_fill(C_DIM, 40, 424, 640, 2);
-    bmp_printf(FONT(FONT_MED, C_SOFT, C_BG), 40, 440, "dial: change    SET: next row    INFO: close");
+    draw_hint(0);
 }
 
 static void draw_film(void)
@@ -224,9 +231,22 @@ static void draw_row(int r)          /* r = 1..3 */
     text_line(FONT_MED_LARGE, c, 592, y, 716, 32, tmp);
 }
 
+static int msg_until = 0;            /* ms clock: show the "saved" message until then */
+static volatile int want_save = 0;
+
 static void redraw_dirty(void)
 {
     int d = dirty;
+    if (want_save) {
+        want_save = 0;
+        save_state();
+        msg_until = get_ms_clock() + 1200;
+        BMP_LOCK ( draw_hint("Saved"); )
+        flog("settings saved, film", st_film);
+    } else if (msg_until && get_ms_clock() > msg_until) {
+        msg_until = 0;
+        BMP_LOCK ( draw_hint(0); )
+    }
     if (!d) return;
     dirty &= ~d;
     BMP_LOCK
@@ -265,27 +285,29 @@ static void paint_all(void)
 }
 
 /* Same trick as the ML menu: in photo mode the Canon INFO screen does not pass the joystick and part of the
- * dial clicks to ML, so the camera is switched to its (invisible) menu mode, where all buttons arrive. */
+ * dial clicks to ML, so the camera is switched to its (invisible) menu mode, where all buttons arrive.
+ * The Canon menu that appears for a moment is hidden by switching the bitmap layer off meanwhile. */
 static void do_open(void)
 {
     int i;
     kill_ml_overlay();
     row = 0;
     klog_n = 0;
+    msg_until = 0;
+    want_save = 0;
     last_input_ms = get_ms_clock();
-    canon_gui_disable_front_buffer();
-    paint_all();
     if (!lv && CUR_GUI_MODE != 2) {
+        bmp_off();
         SetGUIRequestMode(2);
-        msleep(200);
+        for (i = 0; i < 40 && CUR_GUI_MODE != 2; i++) msleep(25);
+        msleep(280);                                   /* Canon draws its menu */
     }
     canon_gui_disable_front_buffer();
     paint_all();
-    for (i = 0; i < 3; i++) {            /* Canon repaints its own menu for a moment: paint over it */
-        msleep(40);
-        canon_gui_disable_front_buffer();
-        paint_all();
-    }
+    msleep(60);
+    canon_gui_disable_front_buffer();
+    paint_all();
+    bmp_on();
     last_input_ms = get_ms_clock();
     ui_state = UI_OPEN;
     flog("screen opened, film", st_film);
@@ -294,13 +316,17 @@ static void do_open(void)
 static void do_close(void)
 {
     dirty = 0;
+    want_save = 0;
     save_state();
     klog_flush();
     if (CUR_GUI_MODE != 0) {
+        bmp_off();
         SetGUIRequestMode(0);
-        msleep(100);
+        msleep(150);
     }
     canon_gui_enable_front_buffer(1);
+    msleep(150);
+    bmp_on();
     flog("screen closed, film", st_film);
     ui_state = UI_CLOSED;
 }
@@ -347,7 +373,7 @@ static unsigned int filmlook_keypress(unsigned int key)
     case MODULE_KEY_PRESS_DOWN:  set_row(row + 1); break;    /* joystick down    */
     case MODULE_KEY_PRESS_UP:    set_row(row - 1); break;    /* joystick up      */
     case MODULE_KEY_PRESS_SET:
-    case MODULE_KEY_JOY_CENTER:  set_row((row + 1) % 4); break;
+    case MODULE_KEY_JOY_CENTER:  want_save = 1; break;      /* SET = save the settings */
     case MODULE_KEY_INFO:
     case MODULE_KEY_MENU:        ui_state = UI_CLOSING; return 0;
     case MODULE_KEY_PRESS_HALFSHUTTER:
