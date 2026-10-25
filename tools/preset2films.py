@@ -17,7 +17,7 @@ import json, os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import films_meta as M
 
-TYPES = ["Kolor", "Czarno-biały", "Slajd"]            # menu order; also the folder -> type mapping below
+TYPES = ["Kolor", "Czarno-biały", "Slajd", "Własny"]   # menu order; "Własny" = no film, only the look sliders
 FOLDER_TYPE = {"Color-Negative": 0, "Black-White": 1, "Slide": 2}
 BRAND_ORDER = ["Kodak", "Ilford", "Fuji", "Agfa", "Foma", "Adox", "Rollei", "Kentmere", "Bergger", "CineStill",
                "Lomography", "Ferrania", "ORWO", "Tonowanie", "Inne"]
@@ -51,7 +51,7 @@ USER_META = [
 COL = ["Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta"]
 ATTRS = [("Exposure2012", "SGH"), ("Contrast2012", "SGC"), ("Highlights2012", "SG"), ("Shadows2012", "SG"),
          ("Whites2012", "SG"), ("Blacks2012", "SG"), ("Clarity2012", "SG"), ("Texture", "SG"), ("Dehaze", "SG"),
-         ("Vibrance", "SG"), ("Saturation", "SG"),
+         ("Vibrance", "SG"), ("Saturation", "SG"), ("PostCropVignetteAmount", "SG"),
          ("ParametricShadows", "SG"), ("ParametricDarks", "SG"), ("ParametricLights", "SG"), ("ParametricHighlights", "SG"),
          ("ParametricShadowSplit", ""), ("ParametricMidtoneSplit", ""), ("ParametricHighlightSplit", "")]
 ATTRS += [("HueAdjustment" + c, "SG") for c in COL]
@@ -202,6 +202,11 @@ def main(user_dir, repo_dir, out):
             continue
         films.append(e)
 
+    # 3. "Własny look": a film without any values - everything comes from the look sliders of the panel
+    films.append(dict(src="(own look)", brand="Własny", name="Własny look", full="Własny look", iso=0, type=3,
+                      desc="Bez filmu: ustaw suwaki poniżej", kind="Własny look", mono=False, wb_custom=0, temp=0,
+                      tint=0, profile=0, vals=[], cv=[[(0, 0), (255, 255)] for _ in CURVES]))
+
     # grouping: type -> brand -> film (natural order of the names)
     def border(b): return BRAND_ORDER.index(b) if b in BRAND_ORDER else 99
     films.sort(key=lambda f: (f["type"], border(f["brand"]), f["brand"], natkey(f["name"])))
@@ -283,6 +288,7 @@ def main(user_dir, repo_dir, out):
         for k, (idx, v) in enumerate(f["vals"]):
             if k % 6 == 0: w("\n    ")
             w("{%d,%d}, " % (idx, v))
+        if not f["vals"]: w("\n    {0,0}, /* no values: placeholder, nv = 0 */")
         w("\n};\n")
     w("\nstatic const film_t films[] = {     /* base films first (BASE_COUNT), then the push / pull variants */\n")
     for i, f in enumerate(allf):

@@ -2,7 +2,8 @@
  * filmlook.c - film look simulation for Canon EOS 5D Mark II (Magic Lantern module)
  *
  *  INFO opens ONE full-screen panel: type (colour / black & white / slide) -> brand -> film + settings
- *  (Push/Pull slider when the film has push / pull variants, effect strength, grain, contrast).
+ *  (Push/Pull slider when the film has push / pull variants, effect strength, grain, contrast and the "own look"
+ *  sliders: fade, warmth, shadows, highlights, saturation, vignette - a list of 4 rows that scrolls).
  *    both dials and joystick left/right = change value of the chosen row, joystick up/down = next row,
  *    SET = save, INFO / MENU = save & close, half-shutter = close and shoot.
  *  After every photo an IMG_xxxx.xmp sidecar is written (Lightroom / Camera Raw).
@@ -21,10 +22,12 @@
 #include "films.h"
 #include "xmp.h"
 
-#define VERSION "v1.8"
+#define VERSION "v0.5"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
-#define NROWS 7                              /* 0 type, 1 brand, 2 film, 3 push/pull, 4 effect, 5 grain, 6 contrast */
+#define NSL   9                              /* sliders: rows 4..12 */
+#define NROWS (4 + NSL)                      /* 0 type, 1 brand, 2 film, 3 push/pull, 4.. sliders (see sl_def) */
+#define VIS   4                              /* rows 3..12 scroll in a window of 4 */
 
 extern int gui_state;
 extern int lv;
@@ -37,6 +40,34 @@ static int st_push = 0;                   /* push / pull of the film in stops, 0
 static int st_strength = 100;             /* 0..100 */
 static int st_grain = 100;                /* 0..200 */
 static int st_contrast = 0;               /* -50..50 */
+static int st_fade = 0;                   /* Matowość 0..100: lifted blacks */
+static int st_warm = 0;                   /* Ciepło -100..100 */
+static int st_shadow = 0;                 /* Cienie -100..100 */
+static int st_high = 0;                   /* Światła -100..100 */
+static int st_sat = 0;                    /* Nasycenie -100..100 */
+static int st_vig = 0;                    /* Winieta 0..100 */
+
+/* the sliders of the panel: rows 4 .. 12 */
+static const struct { const char *name; short lo, hi, step; unsigned char signed_; } sl_def[NSL] = {
+    { "Efekt",     0, 100, 5, 0 },  { "Ziarno",     0, 200, 5, 0 },  { "Kontrast", -50, 50, 5, 1 },
+    { "Matowość",  0, 100, 5, 0 },  { "Ciepło",  -100, 100, 5, 1 },  { "Cienie", -100, 100, 5, 1 },
+    { "Światła", -100, 100, 5, 1 }, { "Nasycenie", -100, 100, 5, 1 }, { "Winieta", 0, 100, 5, 0 },
+};
+
+static int *sl_var(int j)
+{
+    switch (j) {
+    case 0: return &st_strength;  case 1: return &st_grain;   case 2: return &st_contrast;
+    case 3: return &st_fade;      case 4: return &st_warm;    case 5: return &st_shadow;
+    case 6: return &st_high;      case 7: return &st_sat;     default: return &st_vig;
+    }
+}
+
+static void cur_look(look_t *L)
+{
+    L->strength = st_strength; L->grain = st_grain; L->contrast = st_contrast; L->fade = st_fade; L->warm = st_warm;
+    L->shadow = st_shadow; L->high = st_high; L->sat = st_sat; L->vig = st_vig;
+}
 
 /* panel life cycle: opening and closing need the Canon GUI task to run, so they are done in the
  * shoot task (the key handler only requests them) */
@@ -45,7 +76,8 @@ static int st_contrast = 0;               /* -50..50 */
 #define UI_OPEN     2
 #define UI_CLOSING  3
 static volatile int ui_state = UI_CLOSED;
-static int row = 0;                       /* 0 type, 1 brand, 2 film, 3 push/pull, 4 effect, 5 grain, 6 contrast */
+static int row = 0;                       /* 0 type, 1 brand, 2 film, 3 push/pull, 4.. sliders */
+static int top = 3;                       /* first visible row of the scrolling list (3..NROWS-VIS) */
 static int last_input_ms = 0;
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -151,9 +183,10 @@ static void klog_flush(void)
 /* ------------------------------------------------------------------ settings file */
 static void save_state(void)
 {
-    char t[192];
-    snprintf(t, sizeof(t), "film=%s\npush=%d\nstrength=%d\ngrain=%d\ncontrast=%d\n",
-             st_film > 0 ? films[st_film - 1].full : "Off", st_push, st_strength, st_grain, st_contrast);
+    char t[256];
+    snprintf(t, sizeof(t), "film=%s\npush=%d\nstrength=%d\ngrain=%d\ncontrast=%d\nfade=%d\nwarm=%d\nshadow=%d\nhigh=%d\nsat=%d\nvig=%d\n",
+             st_film > 0 ? films[st_film - 1].full : "Off", st_push, st_strength, st_grain, st_contrast,
+             st_fade, st_warm, st_shadow, st_high, st_sat, st_vig);
     FILE *f = FIO_CreateFile(SETTINGS_PATH);
     if (f) { FIO_WriteFile(f, t, strlen(t)); FIO_CloseFile(f); }
     else flog("save_state: cannot create file", 0);
@@ -193,7 +226,7 @@ static void parse_film(const char *s)
 
 static void load_state(void)
 {
-    static char buf[320];
+    static char buf[400];
     int n = read_file(SETTINGS_PATH, buf, sizeof(buf) - 1);
     if (n > 0) {
         buf[n] = 0;
@@ -202,6 +235,12 @@ static void load_state(void)
         parse_after(buf, "strength", &st_strength);
         parse_after(buf, "grain", &st_grain);
         parse_after(buf, "contrast", &st_contrast);
+        parse_after(buf, "fade", &st_fade);
+        parse_after(buf, "warm", &st_warm);
+        parse_after(buf, "shadow", &st_shadow);
+        parse_after(buf, "high", &st_high);
+        parse_after(buf, "sat", &st_sat);
+        parse_after(buf, "vig", &st_vig);
     }
     st_film = clampi(st_film, 0, BASE_COUNT);
     fix_push();
@@ -209,6 +248,7 @@ static void load_state(void)
     st_strength = clampi(st_strength, 0, 100);
     st_grain = clampi(st_grain, 0, 200);
     st_contrast = clampi(st_contrast, -50, 50);
+    { int j; for (j = 3; j < NSL; j++) *sl_var(j) = clampi(*sl_var(j), sl_def[j].lo, sl_def[j].hi); }
 }
 
 /* ------------------------------------------------------------------ drawing */
@@ -219,8 +259,11 @@ static void load_state(void)
 #define C_SOFT   COLOR_GRAY(60)
 
 /* what has to be redrawn (set from the key handler, handled in the shoot task) */
-#define D_ROW(r) (1 << (r))          /* rows 0..6 */
-#define D_INFO   128                 /* description block under the film row */
+#define D_ROW(r) (1 << (r))          /* rows 0..12 */
+#define D_INFO   (1 << 13)           /* description block under the film row */
+#define D_BAR    (1 << 14)           /* scroll bar of the list */
+#define D_CLR    (1 << 15)           /* the list scrolled: wipe its area before the rows are drawn again */
+#define D_LIST   (D_ROW(3) | D_ROW(4) | D_ROW(5) | D_ROW(6) | D_ROW(7) | D_ROW(8) | D_ROW(9) | D_ROW(10) | D_ROW(11) | D_ROW(12) | D_BAR)
 static volatile int dirty = 0;
 
 /* ---- Polish letters. The stock ML fonts have no ą ę ł ś ź ż ć ń, so ML/FONTS/FILM23.RBF (made by
@@ -235,7 +278,7 @@ static const struct { unsigned char a, b, code, ascii; } pl_map[] = {
     {0xC3,0x93,0x8E,'O'}, {0xC5,0x9A,0x8F,'S'}, {0xC5,0xB9,0x90,'Z'}, {0xC5,0xBB,0x91,'Z'}
 };
 
-static void pl_convert(const char *in, char *out, int cap)
+static void pl_convert(const char *in, char *out, int cap, int polish)
 {
     int o = 0;
     const unsigned char *p = (const unsigned char *)in;
@@ -245,7 +288,7 @@ static void pl_convert(const char *in, char *out, int cap)
             int k, hit = 0;
             for (k = 0; k < (int)(sizeof(pl_map) / sizeof(pl_map[0])); k++) {
                 if (p[0] == pl_map[k].a && p[1] == pl_map[k].b) {
-                    out[o++] = pl_spec ? (char)pl_map[k].code : (char)pl_map[k].ascii;
+                    out[o++] = (pl_spec && polish) ? (char)pl_map[k].code : (char)pl_map[k].ascii;
                     p += 2; hit = 1; break;
                 }
             }
@@ -271,8 +314,9 @@ static int put_text(int font, int fg, int x, int y, const char *s)
 {
     char buf[112];
     int w;
-    pl_convert(s, buf, sizeof(buf));
-    if (pl_spec && (font & 0xFFFF0000) == (FONT_MED & 0xFFFF0000)) font = pl_spec;   /* Polish-capable copy of the 23 px font */
+    int polish = pl_spec && (font & 0xFFFF0000) == (FONT_MED & 0xFFFF0000);      /* only the 23 px font has the letters */
+    pl_convert(s, buf, sizeof(buf), polish);
+    if (polish) font = pl_spec;                                                  /* Polish-capable copy of the 23 px font */
     w = bmp_printf(FONT(font, fg, C_BG), x, y, "%s", buf);
     return w < 0 ? 0 : w;
 }
@@ -291,7 +335,11 @@ static void draw_bar(int x, int y, int w, int v, int lo, int hi, int color)
     bmp_fill(C_BG, x - 4, y + 8, 4, 4);             /* knob at the very ends sticks out beside the track */
     bmp_fill(C_BG, x + w, y + 8, 4, 4);
     bmp_fill(C_DIM, x, y + 8, w, 4);
-    if (fw > 0) bmp_fill(color, x, y + 8, fw, 4);
+    if (lo < 0) {                                   /* bipolar: fill from the middle (the zero) to the knob */
+        int zx = ((0 - lo) * w) / (hi - lo);
+        if (fw > zx) bmp_fill(color, x + zx, y + 8, fw - zx, 4);
+        else if (fw < zx) bmp_fill(color, x + fw, y + 8, zx - fw, 4);
+    } else if (fw > 0) bmp_fill(color, x, y + 8, fw, 4);
     bmp_fill(color, x + fw - 4, y, 8, 20);
 }
 
@@ -320,18 +368,18 @@ static void draw_tabs(void)
 {
     int on = (row == 0);
     int ct = cur_type();
-    int x = 150, i;
+    int x = 122, i;
     const int y = 78;
 
     bmp_fill(on ? C_ACCENT : C_BG, 40, y - 2, 4, 32);
-    text_line(FONT_MED_LARGE, on ? C_ACCENT : C_TEXT, 64, y - 2, 146, 32, "Typ");
+    text_line(FONT_MED_LARGE, on ? C_ACCENT : C_TEXT, 64, y - 2, 118, 32, "Typ");
     for (i = 0; i <= TYPE_COUNT; i++) {
         const char *s = (i == 0) ? "Bez efektu" : types[i - 1].name;
         int sel = (i == ct);
         int c = sel ? (on ? C_ACCENT : C_TEXT) : C_SOFT;
         int w = put_text(FONT_MED, c, x, y, s);
         bmp_fill(sel ? c : C_BG, x, y + 28, w, 3);
-        x += w + 26;
+        x += w + 16;
     }
 }
 
@@ -381,12 +429,12 @@ static void draw_push(void)
 {
     int on = (row == 3);
     int n = n_opts();
-    int y = 262;
+    int y = 262 + (3 - top) * 40;
     int c = (n > 1) ? (on ? C_ACCENT : C_TEXT) : C_DIM;
     const int bx = 252, bw = 170;
 
     bmp_fill(on ? C_ACCENT : C_BG, 40, y + 2, 4, 28);
-    text_line(FONT_MED_LARGE, c, 64, y, 240, 32, "Push/Pull");
+    text_line(FONT_MED, c, 64, y + 4, 240, 28, "Push/Pull");
     bmp_fill(C_BG, bx - 4, y + 4, bw + 8, 8);
     bmp_fill(C_BG, bx - 4, y + 16, bw + 8, 8);
     bmp_fill(C_BG, bx - 4, y + 12, 4, 4);
@@ -409,24 +457,37 @@ static void draw_push(void)
     }
 }
 
-static void draw_row(int r)          /* r = 4..6: sliders */
+static void draw_slider(int r)       /* r = 4..12 */
 {
-    static const char *names[3] = { "Efekt", "Ziarno", "Kontrast" };
-    int i = r - 4;
+    int j = r - 4;
     int on = (row == r);
     int c = on ? C_ACCENT : C_TEXT;
-    int y = 302 + i * 40;
+    int y = 262 + (r - top) * 40;
+    int v = *sl_var(j);
     char tmp[32];
 
     bmp_fill(on ? C_ACCENT : C_BG, 40, y + 2, 4, 28);
-    text_line(FONT_MED_LARGE, c, 64, y, 240, 32, names[i]);
-    if (i == 0) { draw_bar(252, y + 4, 300, st_strength, 0, 100, c);
-                  snprintf(tmp, sizeof(tmp), "%d %%", st_strength); }
-    else if (i == 1) { draw_bar(252, y + 4, 300, st_grain, 0, 200, c);
-                  snprintf(tmp, sizeof(tmp), "%d %%", st_grain); }
-    else { draw_bar(252, y + 4, 300, st_contrast, -50, 50, c);
-           snprintf(tmp, sizeof(tmp), "%s%d", st_contrast >= 0 ? "+" : "", st_contrast); }
-    text_line(FONT_MED_LARGE, c, 592, y, 716, 32, tmp);
+    text_line(FONT_MED, c, 64, y + 4, 240, 28, sl_def[j].name);
+    draw_bar(252, y + 4, 300, v, sl_def[j].lo, sl_def[j].hi, c);
+    if (sl_def[j].signed_) snprintf(tmp, sizeof(tmp), "%s%d", v >= 0 ? "+" : "", v);
+    else                   snprintf(tmp, sizeof(tmp), "%d %%", v);
+    text_line(FONT_MED_LARGE, c, 592, y, 700, 32, tmp);
+}
+
+/* the list of rows 3..12 scrolls in a window of VIS rows; row r is drawn only when it is visible */
+static void draw_slot(int r)
+{
+    if (r < top || r >= top + VIS) return;
+    if (r == 3) draw_push(); else draw_slider(r);
+}
+
+static void draw_scrollbar(void)
+{
+    const int x = 708, y0 = 262, h = 160, th = (h * VIS) / (NROWS - 3);
+    int ty = y0 + ((top - 3) * (h - th)) / (NROWS - 3 - VIS);
+    bmp_fill(C_BG, x, y0, 6, h);
+    bmp_fill(C_DIM, x + 2, y0, 2, h);
+    bmp_fill(C_SOFT, x, ty, 6, th);
 }
 
 static int msg_until = 0;            /* ms clock: show the "saved" message until then */
@@ -453,10 +514,9 @@ static void redraw_dirty(void)
         if (d & D_ROW(1))  draw_sel(1);
         if (d & D_ROW(2))  draw_sel(2);
         if (d & D_INFO)    draw_info();
-        if (d & D_ROW(3))  draw_push();
-        if (d & D_ROW(4))  draw_row(4);
-        if (d & D_ROW(5))  draw_row(5);
-        if (d & D_ROW(6))  draw_row(6);
+        if (d & D_CLR)     bmp_fill(C_BG, 30, 256, 670, 166);
+        { int r; for (r = 3; r < NROWS; r++) if (d & D_ROW(r)) draw_slot(r); }
+        if (d & D_BAR)     draw_scrollbar();
     )
 }
 
@@ -483,10 +543,8 @@ static void paint_all(void)
         draw_sel(1);
         draw_sel(2);
         draw_info();
-        draw_push();
-        draw_row(4);
-        draw_row(5);
-        draw_row(6);
+        { int r; for (r = 3; r < NROWS; r++) draw_slot(r); }
+        draw_scrollbar();
     )
 }
 
@@ -498,6 +556,7 @@ static void do_open(void)
     int i;
     kill_ml_overlay();
     row = (st_film > 0) ? 2 : 0;                        /* start on the film row when a film is chosen */
+    top = 3;
     klog_n = 0;
     msg_until = 0;
     want_save = 0;
@@ -584,15 +643,30 @@ static void change_value(int dir)
             if (ni != i) { st_push = popts[f->pfirst + ni].shift; dirty |= D_ROW(3) | D_INFO; }
         }
     }
-    else if (row == 4) { st_strength = clampi(st_strength + dir * 5, 0, 100); dirty |= D_ROW(4); }
-    else if (row == 5) { st_grain = clampi(st_grain + dir * 5, 0, 200);       dirty |= D_ROW(5); }
-    else               { st_contrast = clampi(st_contrast + dir * 5, -50, 50); dirty |= D_ROW(6); }
+    else {                                               /* a slider */
+        int j = row - 4;
+        int *p = sl_var(j);
+        int nv = clampi(*p + dir * sl_def[j].step, sl_def[j].lo, sl_def[j].hi);
+        if (nv != *p) { *p = nv; dirty |= D_ROW(row); }
+    }
 }
 
 static void set_row(int r)
 {
     r = clampi(r, 0, NROWS - 1);
-    if (r != row) { dirty |= D_ROW(row) | D_ROW(r); row = r; }      /* selection colours change */
+    if (r != row) {
+        dirty |= D_ROW(row) | D_ROW(r);                                /* selection colours change */
+        row = r;
+        {                                                              /* keep the row inside the window */
+            int nt = top;
+            if (r < 3) nt = 3;                                         /* back on the film rows: list from its start */
+            else {
+                if (r < nt) nt = r;
+                if (r >= nt + VIS) nt = r - VIS + 1;
+            }
+            if (nt != top) { top = nt; dirty |= D_LIST | D_CLR; }
+        }
+    }
 }
 
 /* rows that can not be changed right now are skipped: brand / film / push-pull without a film,
@@ -601,7 +675,7 @@ static int row_enabled(int r)
 {
     if (r == 1 || r == 2) return st_film > 0;
     if (r == 3) return n_opts() > 1;
-    return 1;
+    return 1;                                  /* the sliders (also without a film) */
 }
 
 /* joystick up / down */
@@ -665,7 +739,8 @@ typedef struct {
     int used, number, t;
     char dir[40];
     char prefix[8];
-    int film, strength, grain, contrast;
+    int film;
+    look_t look;
 } qitem_t;
 static qitem_t queue[QMAX];
 
@@ -684,7 +759,7 @@ static void on_new_photo(int number)
             if (q->dir[dl - 1] != '/') { q->dir[dl] = '/'; q->dir[dl + 1] = 0; }
             { int k; const char *pp = p ? p : "IMG_"; for (k = 0; k < 4 && pp[k]; k++) q->prefix[k] = pp[k]; q->prefix[k] = 0; }
             q->number = number; q->t = get_ms_clock();
-            q->film = eff_film(); q->strength = st_strength; q->grain = st_grain; q->contrast = st_contrast;
+            q->film = eff_film(); cur_look(&q->look);
             q->used = 1;
             flog_s("photo queued", films[q->film - 1].full);
             return;
@@ -704,7 +779,7 @@ static void write_sidecar(qitem_t *q)
     char path[80];
     int n;
     snprintf(path, sizeof(path), "%s%s%04d.xmp", q->dir, q->prefix, q->number);
-    n = build_xmp(xmp, sizeof(xmp), &films[q->film - 1], q->strength, q->grain, q->contrast);
+    n = build_xmp(xmp, sizeof(xmp), &films[q->film - 1], &q->look);
     if (n > 0) {
         FILE *f = FIO_CreateFile(path);
         if (f) { FIO_WriteFile(f, xmp, n); FIO_CloseFile(f); flog_s("XMP written", path); }
