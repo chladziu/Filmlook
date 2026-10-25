@@ -84,6 +84,7 @@ typedef struct {
     int high;       /* Światła   -100..100  highlights: blue .. amber */
     int sat;        /* Nasycenie -100..100 */
     int vig;        /* Winieta   0..100   dark corners */
+    int hal;        /* Halation  0..100   glow round bright lights (JPG only) */
 } look_t;
 
 static int xa_id(const char *name)
@@ -138,41 +139,13 @@ static void xtint_add(int *val, unsigned char *has, const char *hue_name, const 
     val[si] = xl_clamp((mag + 5) / 10, 0, 100); has[si] = 1;
 }
 
-/* Returns length or -1. f = the film, L = Efekt / Ziarno / Kontrast and the look sliders. */
-static int build_xmp(char *buf, int cap, const film_t *f, const look_t *L)
+/* The numbers of the preset after Efekt, Ziarno, Kontrast and the look sliders: val[id] / has[id] for every attribute.
+ * Shared by the Lightroom sidecar (build_xmp) and the JPG engine (lookbuild.h), so both start from the same values. */
+static void fl_collect(int *val, unsigned char *has, const film_t *f, const look_t *L)
 {
-    static const char *const curve_tag[4] = { "ToneCurvePV2012", "ToneCurvePV2012Red",
-                                              "ToneCurvePV2012Green", "ToneCurvePV2012Blue" };
-    int val[ATTR_COUNT];
-    unsigned char has[ATTR_COUNT];
-    xb_t b; int i, c, custom = 0, lift;
+    int i;
     int strength = xl_clamp(L->strength, 0, 100);
-    b.buf = buf; b.cap = cap; b.n = 0; b.err = 0; buf[0] = 0;
     for (i = 0; i < ATTR_COUNT; i++) { val[i] = 0; has[i] = 0; }
-
-    xb_s(&b, "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n");
-    xb_s(&b, "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n");
-    xb_s(&b, " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n");
-    xb_s(&b, "  <rdf:Description rdf:about=\"\"\n");
-    xb_s(&b, "   xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\"\n");
-    xb_s(&b, "   xmlns:film=\"http://ns.example.com/filmlook/1.0/\"\n");
-    xb_s(&b, "   xmlns:dc=\"http://purl.org/dc/elements/1.1/\"\n");
-    xb_s(&b, "   crs:Version=\"15.4\"\n   crs:ProcessVersion=\"15.4\"\n   crs:HasSettings=\"True\"\n");
-    xb_s(&b, "   film:Name=\""); xb_s(&b, f->full); xb_s(&b, "\"\n");
-    xb_s(&b, "   film:Strength=\""); xb_i(&b, strength, 0); xb_s(&b, "\"\n");
-
-    /* look: black & white conversion, white balance, camera profile */
-    xb_attr_s(&b, "ConvertToGrayscale", (f->mono && strength > 0) ? "True" : "False");
-    if (strength > 0) {
-        if (f->wb_custom) {
-            xb_attr_s(&b, "WhiteBalance", "Custom");
-            xb_attr(&b, "Temperature", f->temp, 0);
-            xb_attr(&b, "Tint", f->tint, 1);
-        }
-        if (f->profile == 1) xb_attr_s(&b, "CameraProfile", "Adobe Standard");
-        else if (f->profile == 2) xb_attr_s(&b, "CameraProfile", "Camera Standard");
-    }
-
     /* 1. numeric values of the preset, scaled by Efekt, with the Kontrast / Ziarno sliders */
     for (i = 0; i < f->nv; i++) {
         int id = f->v[i].id;
@@ -208,6 +181,44 @@ static int build_xmp(char *buf, int cap, const film_t *f, const look_t *L)
     if (L->high != 0)                                    /* amber .. blue in the highlights */
         xtint_add(val, has, "ColorGradeHighlightHue", "ColorGradeHighlightSat", L->high > 0 ? 45 : 215,
                   ((L->high < 0 ? -L->high : L->high) * 40) / 100);
+
+}
+
+/* Returns length or -1. f = the film, L = Efekt / Ziarno / Kontrast and the look sliders. */
+static int build_xmp(char *buf, int cap, const film_t *f, const look_t *L)
+{
+    static const char *const curve_tag[4] = { "ToneCurvePV2012", "ToneCurvePV2012Red",
+                                              "ToneCurvePV2012Green", "ToneCurvePV2012Blue" };
+    int val[ATTR_COUNT];
+    unsigned char has[ATTR_COUNT];
+    xb_t b; int i, c, custom = 0, lift;
+    int strength = xl_clamp(L->strength, 0, 100);
+    b.buf = buf; b.cap = cap; b.n = 0; b.err = 0; buf[0] = 0;
+
+    xb_s(&b, "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n");
+    xb_s(&b, "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n");
+    xb_s(&b, " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n");
+    xb_s(&b, "  <rdf:Description rdf:about=\"\"\n");
+    xb_s(&b, "   xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\"\n");
+    xb_s(&b, "   xmlns:film=\"http://ns.example.com/filmlook/1.0/\"\n");
+    xb_s(&b, "   xmlns:dc=\"http://purl.org/dc/elements/1.1/\"\n");
+    xb_s(&b, "   crs:Version=\"15.4\"\n   crs:ProcessVersion=\"15.4\"\n   crs:HasSettings=\"True\"\n");
+    xb_s(&b, "   film:Name=\""); xb_s(&b, f->full); xb_s(&b, "\"\n");
+    xb_s(&b, "   film:Strength=\""); xb_i(&b, strength, 0); xb_s(&b, "\"\n");
+
+    /* look: black & white conversion, white balance, camera profile */
+    xb_attr_s(&b, "ConvertToGrayscale", (f->mono && strength > 0) ? "True" : "False");
+    if (strength > 0) {
+        if (f->wb_custom) {
+            xb_attr_s(&b, "WhiteBalance", "Custom");
+            xb_attr(&b, "Temperature", f->temp, 0);
+            xb_attr(&b, "Tint", f->tint, 1);
+        }
+        if (f->profile == 1) xb_attr_s(&b, "CameraProfile", "Adobe Standard");
+        else if (f->profile == 2) xb_attr_s(&b, "CameraProfile", "Camera Standard");
+    }
+
+    fl_collect(val, has, f, L);
 
     for (i = 0; i < ATTR_COUNT; i++) {
         const attr_t *a = &attr_defs[i];

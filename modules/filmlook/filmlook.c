@@ -1,13 +1,15 @@
 /*
  * filmlook.c - film look simulation for Canon EOS 5D Mark II (Magic Lantern module)
  *
- *  INFO opens ONE full-screen panel: type (colour / black & white / slide) -> brand -> film + settings
+ *  TRASH opens ONE full-screen panel: type (colour / black & white / slide) -> brand -> film + settings
  *  (Push/Pull slider when the film has push / pull variants, effect strength, grain, contrast and the "own look"
- *  sliders: fade, warmth, shadows, highlights, saturation, vignette - a list of 4 rows that scrolls).
+ *  sliders: fade, warmth, shadows, highlights, saturation, vignette, halation, and the JPG switch - a list of 4 rows
+ *  that scrolls).
  *    both dials and joystick left/right = change value of the chosen row, joystick up/down = next row,
- *    SET = save, INFO / MENU = save & close, half-shutter = close and shoot.
- *  After every photo an IMG_xxxx.xmp sidecar is written (Lightroom / Camera Raw).
- *  RAW / JPEG files are never touched. No Canon property is written.
+ *    SET = save, TRASH / INFO / MENU = save & close, half-shutter = close and shoot.
+ *  After every photo an IMG_xxxx.xmp sidecar is written (Lightroom / Camera Raw) and, when "JPG z efektem" is on,
+ *  a finished JPG with the film look is developed in the background into the FILMLOOK folder of the card.
+ *  RAW / JPEG files of the camera are never touched. No Canon property is written.
  *
  *  While the panel is open Canon's own drawing is switched off (canon_gui_disable_front_buffer),
  *  exactly like ML's own menu does, so nothing flickers.
@@ -21,13 +23,15 @@
 
 #include "films.h"
 #include "xmp.h"
+#include "develop.h"
 
-#define VERSION "v0.5"
+#define VERSION "v0.6"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
-#define NSL   9                              /* sliders: rows 4..12 */
-#define NROWS (4 + NSL)                      /* 0 type, 1 brand, 2 film, 3 push/pull, 4.. sliders (see sl_def) */
-#define VIS   4                              /* rows 3..12 scroll in a window of 4 */
+#define NSL   10                             /* sliders: rows 4..13 */
+#define JROW  (4 + NSL)                      /* row 14: JPG with the effect (off / half size / full size) */
+#define NROWS (JROW + 1)                     /* 0 type, 1 brand, 2 film, 3 push/pull, 4.. sliders (see sl_def), JPG row */
+#define VIS   4                              /* rows 3..14 scroll in a window of 4 */
 
 extern int gui_state;
 extern int lv;
@@ -46,12 +50,15 @@ static int st_shadow = 0;                 /* Cienie -100..100 */
 static int st_high = 0;                   /* Światła -100..100 */
 static int st_sat = 0;                    /* Nasycenie -100..100 */
 static int st_vig = 0;                    /* Winieta 0..100 */
+static int st_hal = 0;                    /* Halation 0..100: glow round bright lights (JPG only) */
+static int st_jpg = 0;                    /* JPG z efektem: 0 off, 1 half size, 2 full size */
 
-/* the sliders of the panel: rows 4 .. 12 */
+/* the sliders of the panel: rows 4 .. 13 */
 static const struct { const char *name; short lo, hi, step; unsigned char signed_; } sl_def[NSL] = {
     { "Efekt",     0, 100, 5, 0 },  { "Ziarno",     0, 200, 5, 0 },  { "Kontrast", -50, 50, 5, 1 },
     { "Matowość",  0, 100, 5, 0 },  { "Ciepło",  -100, 100, 5, 1 },  { "Cienie", -100, 100, 5, 1 },
     { "Światła", -100, 100, 5, 1 }, { "Nasycenie", -100, 100, 5, 1 }, { "Winieta", 0, 100, 5, 0 },
+    { "Halation", 0, 100, 5, 0 },
 };
 
 static int *sl_var(int j)
@@ -59,14 +66,15 @@ static int *sl_var(int j)
     switch (j) {
     case 0: return &st_strength;  case 1: return &st_grain;   case 2: return &st_contrast;
     case 3: return &st_fade;      case 4: return &st_warm;    case 5: return &st_shadow;
-    case 6: return &st_high;      case 7: return &st_sat;     default: return &st_vig;
+    case 6: return &st_high;      case 7: return &st_sat;     case 8: return &st_vig;
+    default: return &st_hal;
     }
 }
 
 static void cur_look(look_t *L)
 {
     L->strength = st_strength; L->grain = st_grain; L->contrast = st_contrast; L->fade = st_fade; L->warm = st_warm;
-    L->shadow = st_shadow; L->high = st_high; L->sat = st_sat; L->vig = st_vig;
+    L->shadow = st_shadow; L->high = st_high; L->sat = st_sat; L->vig = st_vig; L->hal = st_hal;
 }
 
 /* panel life cycle: opening and closing need the Canon GUI task to run, so they are done in the
@@ -183,10 +191,10 @@ static void klog_flush(void)
 /* ------------------------------------------------------------------ settings file */
 static void save_state(void)
 {
-    char t[256];
-    snprintf(t, sizeof(t), "film=%s\npush=%d\nstrength=%d\ngrain=%d\ncontrast=%d\nfade=%d\nwarm=%d\nshadow=%d\nhigh=%d\nsat=%d\nvig=%d\n",
+    char t[320];
+    snprintf(t, sizeof(t), "film=%s\npush=%d\nstrength=%d\ngrain=%d\ncontrast=%d\nfade=%d\nwarm=%d\nshadow=%d\nhigh=%d\nsat=%d\nvig=%d\nhal=%d\njpg=%d\n",
              st_film > 0 ? films[st_film - 1].full : "Off", st_push, st_strength, st_grain, st_contrast,
-             st_fade, st_warm, st_shadow, st_high, st_sat, st_vig);
+             st_fade, st_warm, st_shadow, st_high, st_sat, st_vig, st_hal, st_jpg);
     FILE *f = FIO_CreateFile(SETTINGS_PATH);
     if (f) { FIO_WriteFile(f, t, strlen(t)); FIO_CloseFile(f); }
     else flog("save_state: cannot create file", 0);
@@ -241,6 +249,8 @@ static void load_state(void)
         parse_after(buf, "high", &st_high);
         parse_after(buf, "sat", &st_sat);
         parse_after(buf, "vig", &st_vig);
+        parse_after(buf, "hal", &st_hal);
+        parse_after(buf, "jpg", &st_jpg);
     }
     st_film = clampi(st_film, 0, BASE_COUNT);
     fix_push();
@@ -249,21 +259,68 @@ static void load_state(void)
     st_grain = clampi(st_grain, 0, 200);
     st_contrast = clampi(st_contrast, -50, 50);
     { int j; for (j = 3; j < NSL; j++) *sl_var(j) = clampi(*sl_var(j), sl_def[j].lo, sl_def[j].hi); }
+    st_jpg = clampi(st_jpg, 0, 2);
 }
 
 /* ------------------------------------------------------------------ drawing */
-#define C_BG     COLOR_BLACK
-#define C_TEXT   COLOR_WHITE
-#define C_ACCENT COLOR_ORANGE
-#define C_DIM    COLOR_GRAY(22)
-#define C_SOFT   COLOR_GRAY(60)
+/* Colour scheme: light beige paper (#E5DECA) with dark brown text. The 256 colours of the camera's screen are fixed, so
+ * five of them (PAL_BASE..PAL_BASE+4, not used by the panel otherwise) are re-programmed while the panel is open and
+ * given back to Canon when it closes. */
+#define PAL_BASE 240
+#define C_BG     (PAL_BASE + 0)       /* #E5DECA  paper */
+#define C_TEXT   (PAL_BASE + 1)       /* #26211C  main text */
+#define C_ACCENT (PAL_BASE + 2)       /* #A03E18  selected row, title (rust) */
+#define C_SOFT   (PAL_BASE + 3)       /* #60584A  secondary text */
+#define C_DIM    (PAL_BASE + 4)       /* #968D78  tracks, lines, switched-off rows */
+
+extern int LCD_Palette[];             /* ML / Canon: 3 ints per colour: register 1, register 2, current value */
+extern void EngDrvOut(unsigned int reg, unsigned int value);
+
+static const unsigned char pal_rgb[5][3] = {
+    { 229, 222, 202 }, { 38, 33, 28 }, { 160, 62, 24 }, { 96, 88, 74 }, { 150, 141, 120 }
+};
+
+/* palette entry = opacity, Y, U, V (signed bytes); white is Y 235, so Y is scaled by 235/255 */
+static int pal_entry(const unsigned char *c, int opacity)
+{
+    int r = c[0], g = c[1], b = c[2];
+    int y = (299 * r + 587 * g + 114 * b) / 1000;
+    int u = ((b - y) * 564) / 1000;
+    int v = ((r - y) * 713) / 1000;
+    y = (y * 235) / 255; u = (u * 235) / 255; v = (v * 235) / 255;
+    if (u < -127) u = -127; if (u > 127) u = 127;
+    if (v < -127) v = -127; if (v > 127) v = 127;
+    return ((opacity & 0xFF) << 24) | ((y & 0xFF) << 16) | ((u & 0xFF) << 8) | (v & 0xFF);
+}
+
+static void pal_apply(void)
+{
+    int i, opacity = (LCD_Palette[3 * COLOR_BLACK + 2] >> 24) & 0xFF;
+    if (opacity == 0) opacity = 3;                      /* fully opaque */
+    if (!bmp_is_on()) return;
+    for (i = 0; i < 5; i++) {
+        int e = pal_entry(pal_rgb[i], opacity);
+        EngDrvOut(LCD_Palette[3 * (PAL_BASE + i)], e);
+        EngDrvOut(LCD_Palette[3 * (PAL_BASE + i) + 0x300], e);
+    }
+}
+
+static void pal_restore(void)                           /* back to what Canon had there */
+{
+    int i;
+    for (i = 0; i < 5; i++) {
+        int e = LCD_Palette[3 * (PAL_BASE + i) + 2];
+        EngDrvOut(LCD_Palette[3 * (PAL_BASE + i)], e);
+        EngDrvOut(LCD_Palette[3 * (PAL_BASE + i) + 0x300], e);
+    }
+}
 
 /* what has to be redrawn (set from the key handler, handled in the shoot task) */
-#define D_ROW(r) (1 << (r))          /* rows 0..12 */
-#define D_INFO   (1 << 13)           /* description block under the film row */
-#define D_BAR    (1 << 14)           /* scroll bar of the list */
-#define D_CLR    (1 << 15)           /* the list scrolled: wipe its area before the rows are drawn again */
-#define D_LIST   (D_ROW(3) | D_ROW(4) | D_ROW(5) | D_ROW(6) | D_ROW(7) | D_ROW(8) | D_ROW(9) | D_ROW(10) | D_ROW(11) | D_ROW(12) | D_BAR)
+#define D_ROW(r) (1 << (r))          /* rows 0..14 */
+#define D_INFO   (1 << 15)           /* description block under the film row */
+#define D_BAR    (1 << 16)           /* scroll bar of the list */
+#define D_CLR    (1 << 17)           /* the list scrolled: wipe its area before the rows are drawn again */
+#define D_LIST   (D_ROW(3) | D_ROW(4) | D_ROW(5) | D_ROW(6) | D_ROW(7) | D_ROW(8) | D_ROW(9) | D_ROW(10) | D_ROW(11) | D_ROW(12) | D_ROW(13) | D_ROW(14) | D_BAR)
 static volatile int dirty = 0;
 
 /* ---- Polish letters. The stock ML fonts have no ą ę ł ś ź ż ć ń, so ML/FONTS/FILM23.RBF (made by
@@ -347,7 +404,7 @@ static void draw_bar(int x, int y, int w, int v, int lo, int hi, int color)
 static void draw_hint(const char *msg)
 {
     if (msg) text_line(FONT_MED, C_ACCENT, 40, 440, 700, 28, msg);
-    else     text_line(FONT_MED, C_SOFT, 40, 440, 700, 28, "pokrętło: zmiana  joystick: wiersz  SET: zapis  INFO: zamknij");
+    else     text_line(FONT_MED, C_SOFT, 40, 440, 700, 28, "pokrętło: zmiana  joystick: wiersz  SET: zapis  TRASH: zamknij");
 }
 
 static void draw_static(void)
@@ -355,7 +412,7 @@ static void draw_static(void)
     bmp_fill(C_BG, 0, 0, 720, 480);
     bmp_fill(C_ACCENT, 0, 0, 720, 6);
     bmp_printf(FONT(FONT_MED_LARGE, C_ACCENT, C_BG), 40, 20, "Film Look Simulation");
-    bmp_printf(FONT(FONT_MED, C_DIM, C_BG), 600, 24, VERSION);
+    bmp_printf(FONT(FONT_MED, C_SOFT, C_BG), 600, 24, VERSION);
     bmp_fill(C_DIM, 40, 66, 640, 2);
     bmp_fill(C_DIM, 40, 252, 640, 2);
     bmp_fill(C_DIM, 40, 424, 640, 2);
@@ -457,7 +514,7 @@ static void draw_push(void)
     }
 }
 
-static void draw_slider(int r)       /* r = 4..12 */
+static void draw_slider(int r)       /* r = 4..13 */
 {
     int j = r - 4;
     int on = (row == r);
@@ -474,11 +531,25 @@ static void draw_slider(int r)       /* r = 4..12 */
     text_line(FONT_MED_LARGE, c, 592, y, 700, 32, tmp);
 }
 
-/* the list of rows 3..12 scrolls in a window of VIS rows; row r is drawn only when it is visible */
+/* the list of rows 3..14 scrolls in a window of VIS rows; row r is drawn only when it is visible */
+/* last row: JPG with the film look, developed in the background after every photo */
+static void draw_jpg(void)
+{
+    static const char *const opt[3] = { "wyłączony", "połowa (2808 px)", "pełny (5616 px)" };
+    int on = (row == JROW);
+    int c = on ? C_ACCENT : C_TEXT;
+    int y = 262 + (JROW - top) * 40;
+    bmp_fill(on ? C_ACCENT : C_BG, 40, y + 2, 4, 28);
+    text_line(FONT_MED, c, 64, y + 4, 240, 28, "JPG z efektem");
+    bmp_printf(FONT(FONT_MED_LARGE, on ? C_ACCENT : C_DIM, C_BG), 252, y, "<");
+    text_line(FONT_MED, st_jpg ? c : C_SOFT, 284, y + 4, 640, 28, opt[st_jpg]);
+    bmp_printf(FONT(FONT_MED_LARGE, on ? C_ACCENT : C_DIM, C_BG), 660, y, ">");
+}
+
 static void draw_slot(int r)
 {
     if (r < top || r >= top + VIS) return;
-    if (r == 3) draw_push(); else draw_slider(r);
+    if (r == 3) draw_push(); else if (r == JROW) draw_jpg(); else draw_slider(r);
 }
 
 static void draw_scrollbar(void)
@@ -573,6 +644,7 @@ static void do_open(void)
     canon_gui_disable_front_buffer();
     paint_all();
     bmp_on();
+    pal_apply();
     last_input_ms = get_ms_clock();
     ui_state = UI_OPEN;
     flog("screen opened, film", st_film);
@@ -584,6 +656,7 @@ static void do_close(void)
     want_save = 0;
     save_state();
     klog_flush();
+    pal_restore();
     if (CUR_GUI_MODE != 0) {
         bmp_off();
         SetGUIRequestMode(0);
@@ -643,6 +716,10 @@ static void change_value(int dir)
             if (ni != i) { st_push = popts[f->pfirst + ni].shift; dirty |= D_ROW(3) | D_INFO; }
         }
     }
+    else if (row == JROW) {                              /* JPG with the effect: off / half / full size */
+        int nv = clampi(st_jpg + dir, 0, 2);
+        if (nv != st_jpg) { st_jpg = nv; dirty |= D_ROW(JROW); }
+    }
     else {                                               /* a slider */
         int j = row - 4;
         int *p = sl_var(j);
@@ -695,8 +772,8 @@ static int idle_photo_mode(void)
 static unsigned int filmlook_keypress(unsigned int key)
 {
     if (ui_state == UI_CLOSED) {
-        if (key == MODULE_KEY_INFO && idle_photo_mode()) { ui_state = UI_OPENING; return 0; }
-        if (key == MODULE_KEY_TRASH && idle_photo_mode()) return 0;   /* keeps ML's big menu closed */
+        /* TRASH (photo mode only) opens the panel; ML's own menu stays reachable in live view. INFO is Canon's again */
+        if (key == MODULE_KEY_TRASH && idle_photo_mode()) { ui_state = UI_OPENING; return 0; }
         return 1;
     }
     if (ui_state != UI_OPEN) return 0;           /* opening / closing: swallow everything */
@@ -715,6 +792,7 @@ static unsigned int filmlook_keypress(unsigned int key)
     case MODULE_KEY_PRESS_UP:    move_row(-1); break;       /* joystick up      */
     case MODULE_KEY_PRESS_SET:
     case MODULE_KEY_JOY_CENTER:  want_save = 1; break;      /* SET = save the settings */
+    case MODULE_KEY_TRASH:
     case MODULE_KEY_INFO:
     case MODULE_KEY_MENU:        ui_state = UI_CLOSING; return 0;
     case MODULE_KEY_PRESS_HALFSHUTTER:
@@ -729,7 +807,12 @@ static unsigned int filmlook_shoot_task(unsigned int ctx)
 {
     if (ui_state == UI_OPENING) do_open();
     else if (ui_state == UI_CLOSING) do_close();
-    else if (ui_state == UI_OPEN) redraw_dirty();
+    else if (ui_state == UI_OPEN) {
+        static int pal_t = 0;
+        int now = get_ms_clock();
+        if (now - pal_t > 400) { pal_t = now; pal_apply(); }
+        redraw_dirty();
+    }
     return 0;
 }
 
@@ -740,6 +823,7 @@ typedef struct {
     char dir[40];
     char prefix[8];
     int film;
+    int jpg;                     /* JPG z efektem at the time of the photo: 0 off, 1 half size, 2 full size */
     look_t look;
 } qitem_t;
 static qitem_t queue[QMAX];
@@ -759,7 +843,7 @@ static void on_new_photo(int number)
             if (q->dir[dl - 1] != '/') { q->dir[dl] = '/'; q->dir[dl + 1] = 0; }
             { int k; const char *pp = p ? p : "IMG_"; for (k = 0; k < 4 && pp[k]; k++) q->prefix[k] = pp[k]; q->prefix[k] = 0; }
             q->number = number; q->t = get_ms_clock();
-            q->film = eff_film(); cur_look(&q->look);
+            q->film = eff_film(); cur_look(&q->look); q->jpg = st_jpg;
             q->used = 1;
             flog_s("photo queued", films[q->film - 1].full);
             return;
@@ -771,6 +855,167 @@ static void on_new_photo(int number)
 PROP_HANDLER(PROP_FILE_NUMBER_A)
 {
     on_new_photo(buf[0]);
+}
+
+
+/* ------------------------------------------------------------------ JPG with the film look
+ * develop.h does the work (decode the camera's JPEG or the full size preview inside the CR2, apply the film, encode);
+ * this part only moves bytes: it reads the source and writes FILMLOOK/IMG_xxxx.JPG at the top of the card, in a
+ * low priority task, one photo at a time. Nothing of the camera's own files is changed. */
+#define DEV_Q  4
+#define IOBUF  (64 * 1024)
+typedef struct {
+    int used, tries, film, mode, number;
+    char dir[40], prefix[8];
+    look_t look;
+} dev_job_t;
+static dev_job_t dev_q[DEV_Q];
+static int dev_task_started = 0;
+
+static struct {
+    FILE *in, *out;
+    uint8_t *ibuf, *obuf;
+    uint32_t ibase, ilen;
+    uint32_t on;
+} dio;
+
+static int dev_read(void *ctx, uint32_t off, void *dst, uint32_t n)
+{
+    uint8_t *d = (uint8_t *)dst;
+    (void)ctx;
+    while (n) {
+        uint32_t c;
+        if (off < dio.ibase || off >= dio.ibase + dio.ilen) {          /* the window of 64 KB does not cover it: refill */
+            int got;
+            if (FIO_SeekSkipFile(dio.in, off, SEEK_SET) < 0) return 1;
+            got = FIO_ReadFile(dio.in, dio.ibuf, IOBUF);
+            if (got <= 0) { dio.ilen = 0; return 1; }
+            dio.ibase = off; dio.ilen = (uint32_t)got;
+        }
+        c = dio.ibase + dio.ilen - off;
+        if (c > n) c = n;
+        memcpy(d, dio.ibuf + (off - dio.ibase), c);
+        d += c; off += c; n -= c;
+    }
+    return 0;
+}
+
+static int dev_flush(void)
+{
+    int r = 0;
+    if (dio.on) { r = FIO_WriteFile(dio.out, dio.obuf, dio.on) == (int)dio.on ? 0 : 1; dio.on = 0; }
+    return r;
+}
+
+static int dev_write(void *ctx, const uint8_t *d, size_t n)
+{
+    (void)ctx;
+    while (n) {
+        size_t c = IOBUF - dio.on;
+        if (c > n) c = n;
+        memcpy(dio.obuf + dio.on, d, c);
+        dio.on += (uint32_t)c; d += c; n -= c;
+        if (dio.on == IOBUF && dev_flush()) return 1;
+    }
+    return 0;
+}
+
+/* 0 = done (or hopeless), 1 = try again later (no memory right now) */
+static int dev_run(const dev_job_t *j)
+{
+    char src[96], dst[64];
+    uint32_t size = 0;
+    const film_t *f = &films[j->film - 1];
+    int scale = (j->mode == 2) ? 1 : 2;
+    size_t need = (j->mode == 2) ? fl_mem_needed(5616, 1) : fl_mem_needed(5616, 2);
+    uint8_t *mem;
+    fl_io io;
+    fl_result res;
+    int t0 = get_ms_clock(), root = 0, i;
+
+    snprintf(src, sizeof(src), "%s%s%04d.JPG", j->dir, j->prefix, j->number);        /* the camera's JPG, or ... */
+    if (FIO_GetFileSize(src, &size) != 0 || size < 2000)
+        snprintf(src, sizeof(src), "%s%s%04d.CR2", j->dir, j->prefix, j->number);   /* ... the preview inside the RAW */
+    if (FIO_GetFileSize(src, &size) != 0 || size < 2000) { flog_s("JPG: no source file", src); return 0; }
+    for (i = 0; j->dir[i] && j->dir[i] != '/'; i++) {}
+    root = j->dir[i] == '/' ? i + 1 : 0;                                              /* "B:/" */
+    { char r[8]; int k; for (k = 0; k < root && k < 7; k++) r[k] = j->dir[k]; r[k] = 0;
+      snprintf(dst, sizeof(dst), "%sFILMLOOK/%s%04d.JPG", r, j->prefix, j->number); }
+
+    mem = (uint8_t *)malloc(need);
+    dio.ibuf = (uint8_t *)fio_malloc(IOBUF);
+    dio.obuf = (uint8_t *)fio_malloc(IOBUF);
+    if (!mem || !dio.ibuf || !dio.obuf) {
+        if (mem) free(mem);
+        if (dio.ibuf) fio_free(dio.ibuf);
+        if (dio.obuf) fio_free(dio.obuf);
+        flog("JPG: no memory now, KB needed", (int)(need >> 10));
+        return 1;
+    }
+    dio.in = FIO_OpenFile(src, O_RDONLY | O_SYNC);
+    dio.out = dio.in ? FIO_CreateFile(dst) : 0;
+    dio.ibase = 0; dio.ilen = 0; dio.on = 0;
+    if (!dio.in || !dio.out) {
+        flog_s("JPG: cannot open", dio.in ? dst : src);
+        if (dio.in) FIO_CloseFile(dio.in);
+        if (dio.out) FIO_CloseFile(dio.out);
+    } else {
+        io.read = dev_read; io.rctx = 0; io.src_size = size;
+        io.write = dev_write; io.wctx = 0;
+        io.mem = mem; io.mem_size = need;
+        fl_develop(&io, f, &j->look, scale, 90, &res);
+        if (res.rc == 0 && dev_flush() != 0) res.rc = SE_E_IO;
+        FIO_CloseFile(dio.in);
+        FIO_CloseFile(dio.out);
+        if (res.rc == 0) {
+            flog_s("JPG written", dst);
+            flog("JPG width", res.out_w);
+            flog("JPG ms", get_ms_clock() - t0);
+            flog("JPG arena peak KB", (int)(res.mem_peak >> 10));
+        } else {
+            flog_s("JPG failed, source", src);
+            flog("JPG error code", res.rc);
+            FIO_RemoveFile(dst);
+        }
+    }
+    free(mem);
+    fio_free(dio.ibuf);
+    fio_free(dio.obuf);
+    return 0;
+}
+
+static void dev_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        int i;
+        msleep(1000);
+        for (i = 0; i < DEV_Q; i++) {
+            dev_job_t *j = &dev_q[i];
+            if (!j->used) continue;
+            if (dev_run(j) == 0 || ++j->tries >= 12) j->used = 0;
+            else msleep(5000);
+        }
+    }
+}
+
+static void dev_enqueue(const qitem_t *q)
+{
+    int i;
+    if (q->jpg <= 0) return;
+    for (i = 0; i < DEV_Q; i++) {
+        if (!dev_q[i].used) {
+            dev_job_t *j = &dev_q[i];
+            memset(j, 0, sizeof(*j));
+            strcpy(j->dir, q->dir); strcpy(j->prefix, q->prefix);
+            j->film = q->film; j->mode = q->jpg; j->number = q->number; j->look = q->look;
+            j->used = 1;
+            if (!dev_task_started) { dev_task_started = 1; task_create("fl_dev", 0x1c, 0x6000, dev_task, 0); }
+            flog_s("JPG queued", films[q->film - 1].full);
+            return;
+        }
+    }
+    flog("JPG: queue full", q->number);
 }
 
 static void write_sidecar(qitem_t *q)
@@ -785,6 +1030,7 @@ static void write_sidecar(qitem_t *q)
         if (f) { FIO_WriteFile(f, xmp, n); FIO_CloseFile(f); flog_s("XMP written", path); }
         else flog_s("XMP cannot create", path);
     } else flog("XMP build error", n);
+    dev_enqueue(q);
     q->used = 0;
 }
 

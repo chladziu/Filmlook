@@ -40,6 +40,16 @@ jobs:
           echo $? > "$GITHUB_WORKSPACE/build.rc"
           ls -la build >> "$GITHUB_WORKSPACE/build.log" 2>&1
           arm-none-eabi-gcc --version >> "$GITHUB_WORKSPACE/build.log" 2>&1
+          # every symbol the module needs from the camera must exist in the camera's own list (5D2_212.sym),
+          # otherwise ML refuses to load the module (this catches float helpers, 64-bit divides, ...)
+          if [ "$(cat $GITHUB_WORKSPACE/build.rc)" = "0" ]; then
+            arm-none-eabi-nm -u build/filmlook.mo | awk '{print $2}' | sort -u > /tmp/und.txt
+            sort -u "$GITHUB_WORKSPACE/tools/allowed_symbols.txt" > /tmp/allowed.txt
+            comm -23 /tmp/und.txt /tmp/allowed.txt > /tmp/missing.txt
+            echo "--- symbols the module needs and the camera does not have:" >> "$GITHUB_WORKSPACE/build.log"
+            cat /tmp/missing.txt >> "$GITHUB_WORKSPACE/build.log"
+            if [ -s /tmp/missing.txt ]; then echo 2 > "$GITHUB_WORKSPACE/build.rc"; fi
+          fi
           exit 0
 
       - name: Publish build log to branch "logs"

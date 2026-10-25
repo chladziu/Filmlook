@@ -28,3 +28,15 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+========================================================================
+
+The JPG engine (modules/filmlook/engine/ and develop.h, lookbuild.h) is derived from "Soup Engine"
+(https://github.com/jiijii0/soup-engine, author: luigi manga), licensed under the GNU General Public License,
+version 2. What was taken: the baseline JPEG decoder with half-size decoding and streaming, the JPEG encoder,
+the CR2 preview finder idea and the integer colour pipeline (curves, per-hue colour, split toning, grain,
+halation, vignette). What was changed: floating point and 64-bit arithmetic were replaced by integer code,
+the EXIF writer was made integer-only, halation / vignette / hue tables were adapted, and the film data
+and the panel are new. The complete licence text is in modules/filmlook/engine/LICENSE.
+The module as a whole is therefore distributed under the GPL (version 2), like Magic Lantern itself.
+
