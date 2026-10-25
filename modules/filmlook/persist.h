@@ -19,7 +19,7 @@ static int cfg_build(void)
 {
     int i, j, n;
     if (cur_slot > 0) vals_get(&film_v[cur_slot - 1]);  /* the sliders in use go back to their film first */
-    n = snprintf(cfg_buf, sizeof(cfg_buf), "film=%s\npush=%d\njpg=%d\n", st_film > 0 ? films[st_film - 1].full : "Off", st_push, st_jpg);
+    n = snprintf(cfg_buf, sizeof(cfg_buf), "film=%s\npush=%d\njpg=%d\nplace=%d\n", st_film > 0 ? films[st_film - 1].full : "Off", st_push, st_jpg, st_place);
     for (i = 0; i < BASE_COUNT && n < (int)sizeof(cfg_buf) - 200; i++) {
         const short *v = (const short *)&film_v[i];
         int differs = 0;
@@ -100,6 +100,7 @@ static void cfg_parse(int n)
         parse_film(cfg_buf);
         parse_after(cfg_buf, "push", &st_push);
         parse_after(cfg_buf, "jpg", &st_jpg);
+        parse_after(cfg_buf, "place", &st_place);
         for (s = cfg_buf; *s; ) {                       /* "mod=<film>;<10 numbers>": the sliders of a film the user changed */
             const char *e = s;
             while (*e && *e != '\n') e++;
@@ -149,6 +150,7 @@ static void cfg_parse(int n)
     fix_push();
     remember();
     st_jpg = clampi(st_jpg, 0, 2);
+    st_place = clampi(st_place, 0, 1);
     cur_slot = 0;
     switch_set();                                       /* the sliders of the chosen film */
     list_build();

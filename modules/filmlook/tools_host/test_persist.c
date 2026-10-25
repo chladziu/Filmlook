@@ -24,7 +24,7 @@ static void reload(void)                         /* what happens at the next sta
     char keep[sizeof(cfg_buf)];
     memcpy(keep, cfg_buf, (size_t)n + 1);
     memset(film_v, 0x55, sizeof film_v);        /* nothing may survive in RAM */
-    st_film = 0; st_push = 0; st_jpg = 0;
+    st_film = 0; st_push = 0; st_jpg = 0; st_place = 0;
     st_strength = 7; st_grain = 7; st_contrast = 7; st_fade = 7; st_warm = 7; st_shadow = 7; st_high = 7; st_sat = 7; st_vig = 7; st_hal = 7;
     memcpy(cfg_buf, keep, (size_t)n + 1);
     cfg_parse(n);
@@ -47,7 +47,7 @@ int main(void)
     choose(b); CHECK(st_warm == -15 && st_sat == 40);
     choose(own1); CHECK(is_own(own1) && st_strength == 100); st_grain = 55; st_fade = 10;
     CHECK(mod_n() == 2);                            /* the effect strength of an own preset does not count */
-    choose(b); st_jpg = 2; st_push = 0;
+    choose(b); st_jpg = 2; st_place = 1; st_push = 0;
 
     n = cfg_build();
     CHECK(n > 0 && strstr(cfg_buf, "film=Ilford HP5 Plus\n") && strstr(cfg_buf, "mod=Kodak Portra 400;70,140,20,30,0,0,0,0,0,0\n"));
@@ -55,7 +55,7 @@ int main(void)
     printf("--- settings file:\n%s---\n", cfg_buf);
 
     reload();
-    CHECK(st_film == b && st_warm == -15 && st_sat == 40 && st_jpg == 2);
+    CHECK(st_film == b && st_warm == -15 && st_sat == 40 && st_jpg == 2 && st_place == 1);
     choose(a); CHECK(st_strength == 70 && st_grain == 140 && st_contrast == 20 && st_hal == 30);
     choose(c); CHECK(st_strength == 100 && st_grain == 100 && mod_n() == 0);
     choose(own1); CHECK(st_grain == 55 && st_fade == 10 && st_strength == 100);

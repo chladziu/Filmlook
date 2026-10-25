@@ -52,6 +52,7 @@ int main(int argc, char **argv)
     }
     g_in = fopen(argv[1], "rb"); g_out = fopen(argv[2], "wb");
     if (!g_in || !g_out) { perror("open"); return 1; }
+    memset(&io, 0, sizeof io);
     fseek(g_in, 0, SEEK_END); io.src_size = (uint32_t)ftell(g_in);
     io.read = rd; io.rctx = 0; io.write = wr; io.wctx = 0;
     io.mem_size = fl_mem_needed(6000, scale);

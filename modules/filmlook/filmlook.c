@@ -26,7 +26,7 @@
 #include "xmp.h"
 #include "develop.h"
 
-#define VERSION "v0.7.1"
+#define VERSION "v0.8"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
 extern int gui_state;
@@ -209,15 +209,18 @@ static void pal_mute_all(void)
 }
 
 /* what has to be redrawn (set from the key handler, handled in the shoot task) */
-#define D_ROW(r) (1 << (r))          /* rows 0..15 */
-#define D_INFO   (1 << 16)           /* kind / description block under the film row */
-#define D_BAR    (1 << 17)           /* scroll bar of the list */
-#define D_LISTALL (1 << 18)          /* the whole list: it scrolled, or the rows / the sliders changed with the film */
-#define D_STATUS (1 << 19)           /* the JPG status at the top left */
+#define D_ROW(r) (1 << (r))          /* rows 0..16 */
+#define D_INFO   (1 << 17)           /* kind / description block under the film row */
+#define D_BAR    (1 << 18)           /* scroll bar of the list */
+#define D_LISTALL (1 << 19)          /* the whole list: it scrolled, or the rows / the sliders changed with the film */
+#define D_STATUS (1 << 20)           /* the JPG status at the top left */
+#define D_PROG   (1 << 21)           /* the progress line under the title */
 static volatile int dirty = 0;
 static const char *msg_text = "Zapisano";
 static int dev_pending(void);
 static volatile int dev_last_ms;
+static volatile int dev_phase;                   /* 0 nothing, 1 waits for the camera, 2 makes the JPG, 3 writes it to the card */
+static int dev_prog_now(void);                   /* progress line, 0..1000 */
 
 /* the drawing functions write straight into the screen buffer of the camera (call with BMP_LOCK held) */
 static void ui_attach(void)
@@ -233,10 +236,14 @@ static volatile int want_reset = 0;  /* SET on the row "Ustawienia domyślne" */
 /* the JPG status at the top left: the number of JPGs that wait or are made now, otherwise how long the last one took */
 static char st_last[32] = "?";                  /* what the status field shows now ('?' = not drawn yet) */
 
+static int prog_shown = -1;                      /* what the progress line shows now (-1 = not drawn yet) */
+
 static void status_text(char *t, int n)
 {
-    int pend = dev_pending(), ms = dev_last_ms;
-    if (pend > 0)      snprintf(t, n, "kolejka JPG: %d", pend);
+    int pend = dev_pending(), ms = dev_last_ms, ph = dev_phase;
+    if (pend > 0 && ph == 1)  snprintf(t, n, "czekam na aparat");
+    else if (pend > 0 && ph == 3) snprintf(t, n, "zapis na kartę");
+    else if (pend > 0) snprintf(t, n, "kolejka JPG: %d", pend);
     else if (ms > 0)   snprintf(t, n, "obróbka: %d,%d s", ms / 1000, (ms % 1000) / 100);
     else               t[0] = 0;
 }
@@ -271,6 +278,10 @@ static void redraw_dirty(void)
         status_text(t, sizeof(t));
         if (strcmp(t, st_last) != 0) { strcpy(st_last, t); d |= D_STATUS; dirty |= D_STATUS; }
     }
+    {                                                   /* the progress line grows by itself, too */
+        int pv = dev_prog_now() / 5 * 5;                /* in steps of 0.5 %: a few redraws per second at most */
+        if (pv != prog_shown) { d |= D_PROG; dirty |= D_PROG; }
+    }
     if (!d) return;
     dirty &= ~d;
     BMP_LOCK
@@ -283,6 +294,7 @@ static void redraw_dirty(void)
         if (d & D_LISTALL) draw_list_all();
         else { int r; for (r = 3; r < NROWS; r++) if (d & D_ROW(r)) draw_slot(r); }
         if (d & D_STATUS)  draw_status(st_last);
+        if (d & D_PROG)    { prog_shown = dev_prog_now() / 5 * 5; draw_prog(prog_shown); }
     )
 }
 
@@ -328,6 +340,7 @@ static void do_open(void)
     want_reset = 0;
     msg_text = "Zapisano";
     strcpy(st_last, "?");
+    prog_shown = -1;
     last_input_ms = get_ms_clock();
     dlog_add("open start: GUI mode, live view, ML menu", CUR_GUI_MODE, lv, gui_menu_shown());
     bmp_off();
@@ -438,7 +451,11 @@ static void change_value(int dir)
     }
     else if (row == JROW) {                              /* JPG with the effect: off / half / full size */
         int nv = clampi(st_jpg + dir, 0, 2);
-        if (nv != st_jpg) { st_jpg = nv; dirty |= D_ROW(JROW); }
+        if (nv != st_jpg) { st_jpg = nv; dirty |= D_ROW(JROW) | D_ROW(PROW); }
+    }
+    else if (row == PROW) {                              /* where the JPG goes */
+        int nv = clampi(st_place + dir, 0, 1);
+        if (nv != st_place) { st_place = nv; dirty |= D_ROW(PROW); }
     }
     else {                                               /* a slider */
         int j = row - 4;
@@ -555,6 +572,7 @@ typedef struct {
     char prefix[8];
     int film;
     int jpg;                     /* JPG z efektem at the time of the photo: 0 off, 1 half size, 2 full size */
+    int place;                   /* 0 = FILMLOOK folder, 1 = replace the camera's JPG */
     look_t look;
 } qitem_t;
 static qitem_t queue[QMAX];
@@ -577,7 +595,7 @@ static void on_new_photo(int number)
             if (q->dir[dl - 1] != '/') { q->dir[dl] = '/'; q->dir[dl + 1] = 0; }
             { int k; const char *pp = p ? p : "IMG_"; for (k = 0; k < 4 && pp[k]; k++) q->prefix[k] = pp[k]; q->prefix[k] = 0; }
             q->number = number; q->t = get_ms_clock();
-            q->film = eff_film(); cur_look(&q->look); q->jpg = st_jpg;
+            q->film = eff_film(); cur_look(&q->look); q->jpg = st_jpg; q->place = st_place;
             q->used = 1;
             flog_s("photo queued", films[q->film - 1].full);
             return;
@@ -608,8 +626,10 @@ PROP_HANDLER(PROP_FILE_NUMBER_A)
 #define IOBUF      (64 * 1024)
 #define OUT_CHUNK  (256 * 1024)
 #define MARK_NAME  "FILMLOOK/WRITING.TMP"
+#define REPL_NAME  "FILMLOOK/REPLACE.TMP"
+#define READ_CHUNK (1024 * 1024)
 typedef struct {
-    int used, tries, film, mode, number, t_shot;
+    int used, tries, film, mode, number, t_shot, place;
     char dir[40], prefix[8];
     look_t look;
 } dev_job_t;
@@ -618,6 +638,10 @@ static int dev_task_started = 0;
 static volatile int dev_busy = 0;            /* a job is running right now */
 static volatile int dev_last_ms = 0;         /* how long the last finished JPG took (ms), 0 = none yet */
 static volatile int dev_done_n = 0;          /* finished JPGs since the camera was switched on */
+static volatile int dev_phase = 0;           /* 0 nothing, 1 waits for the camera, 2 makes the JPG, 3 writes it to the card */
+static volatile int dev_prog = 0;            /* how far the JPG that is made now is, 0..1000 (the line under the title) */
+static volatile int dev_end_ms = -100000;    /* when the last JPG was finished: the full line stays a moment */
+static int gate_waited = 0;                  /* ms this job waited for the camera */
 
 static volatile int cam_job = 0;             /* PROP_LAST_JOB_STATE: 0 = the camera is idle, 8 = writing to the card, B = busy */
 static volatile int last_shot_ms = -100000;  /* when the last photo was taken */
@@ -645,14 +669,37 @@ static int gate_left = 0;
 
 static int dev_gate(void)
 {
-    while ((cam_job || get_ms_clock() - last_shot_ms < 2500) && dev_alive() && gate_left > 0) { msleep(50); gate_left -= 50; }
+    int t = get_ms_clock(), ph = dev_phase, waited = 0;
+    while ((cam_job || get_ms_clock() - last_shot_ms < 2500) && dev_alive() && gate_left > 0) {
+        if (!waited) { waited = 1; dev_phase = 1; }
+        msleep(50); gate_left -= 50;
+    }
+    if (waited) { gate_waited += get_ms_clock() - t; dev_phase = ph; }
+    return dev_alive() ? 0 : 1;
+}
+
+/* the line under the title: how far the JPG is (0 = nothing is made), and for 2 s after the end it stays full */
+static int dev_prog_now(void)
+{
+    if (dev_busy) return dev_prog;
+    if (get_ms_clock() - dev_end_ms < 2000) return 1000;
+    return 0;
+}
+
+/* a replacement writes over the camera's JPG: not while the camera shows pictures (playback, quick review) */
+static int dev_gate_play(void)
+{
+    int t = get_ms_clock();
+    while ((is_play_mode() || QR_MODE) && dev_alive() && gate_left > 0) { msleep(100); gate_left -= 100; }
+    gate_waited += get_ms_clock() - t;
     return dev_alive() ? 0 : 1;
 }
 
 static struct {
     FILE *in, *out;
     uint8_t *ibuf, *obuf, *big;
-    uint32_t ibase, ilen;
+    uint32_t ibase, ilen, icap;              /* the window of the source file that is in RAM: where it starts, how long it is, how big it can be */
+    int ms_read, ms_write, inram, place_repl; /* ... place_repl: the camera's JPG is replaced afterwards (the progress is shared by two writes) */            /* time spent on the card (reading / writing), and: the whole JPG is in RAM */
     uint32_t on;                             /* bytes waiting in obuf (streaming) */
     uint32_t cap, len, total;                /* the RAM copy of the JPG: size, used, all bytes made so far */
     int stream;                              /* the file is open and being written */
@@ -665,13 +712,25 @@ static int dev_read(void *ctx, uint32_t off, void *dst, uint32_t n)
     (void)ctx;
     while (n) {
         uint32_t c;
-        if (off < dio.ibase || off >= dio.ibase + dio.ilen) {          /* the window of 64 KB does not cover it: refill */
-            int got;
+        if (off < dio.ibase || off >= dio.ibase + dio.ilen) {          /* the window does not cover it: refill (as much as fits in RAM) */
+            uint32_t have = 0;
+            int t = 0;
             if (dev_gate()) return 1;
+            t = get_ms_clock();
             if (FIO_SeekSkipFile(dio.in, off, SEEK_SET) < 0) return 1;
-            got = FIO_ReadFile(dio.in, dio.ibuf, IOBUF);
-            if (got <= 0) { dio.ilen = 0; return 1; }
-            dio.ibase = off; dio.ilen = (uint32_t)got;
+            while (have < dio.icap) {
+                uint32_t want = dio.icap - have;
+                int got;
+                if (want > READ_CHUNK) want = READ_CHUNK;
+                got = FIO_ReadFile(dio.in, dio.ibuf + have, want);
+                if (got <= 0) break;
+                have += (uint32_t)got;
+                if ((uint32_t)got < want) break;                        /* end of the file */
+            }
+            dio.ms_read += get_ms_clock() - t;
+            if (have == 0) { dio.ilen = 0; return 1; }
+            dio.ibase = off; dio.ilen = have;
+            if (dev_prog < 25) dev_prog = 25;
         }
         c = dio.ibase + dio.ilen - off;
         if (c > n) c = n;
@@ -705,12 +764,19 @@ static int dev_open_out(void)
     dio.out = FIO_CreateFile(dio.dst);
     if (!dio.out) { flog_s("JPG: cannot create", dio.dst); return 1; }
     dio.stream = 1;
-    while (o < dio.len) {
-        uint32_t c = dio.len - o;
-        if (c > OUT_CHUNK) c = OUT_CHUNK;
-        if (!dev_alive()) return 1;
-        if (FIO_WriteFile(dio.out, dio.big + o, c) != (int)c) { flog_s("JPG: card write failed", dio.dst); return 1; }
-        o += c;
+    dev_phase = 3;
+    {
+        int t = get_ms_clock();
+        uint32_t all = dio.len;
+        while (o < all) {
+            uint32_t c = all - o;
+            if (c > OUT_CHUNK) c = OUT_CHUNK;
+            if (!dev_alive()) return 1;
+            if (FIO_WriteFile(dio.out, dio.big + o, c) != (int)c) { flog_s("JPG: card write failed", dio.dst); return 1; }
+            o += c;
+            if (dio.inram) dev_prog = 930 + (int)((o * (dio.place_repl ? 35u : 70u)) / all);
+        }
+        dio.ms_write += get_ms_clock() - t;
     }
     dio.len = 0;
     return 0;
@@ -754,16 +820,84 @@ static int jpg_complete(const char *path)
     return ok;
 }
 
+/* the camera's own JPG is replaced by the finished one. The finished JPG is already complete in FILMLOOK/ (dio.dst) and stays
+ * there; while the camera's file is being rewritten FILMLOOK/REPLACE.TMP names both files, so after an interruption the
+ * next start can put the complete copy back (dev_recover). 0 = replaced and checked, 1 = not done (the camera's JPG is
+ * untouched, or has been restored from the copy) */
+static int dev_replace(const char *target, const char *root)
+{
+    char note[48], txt[200];
+    FILE *m, *o;
+    uint32_t pos = 0, got = 0;
+    int t = get_ms_clock(), ok = 0, werr = 0;
+
+    if (!dio.big || !dio.inram || dio.cap < dio.total || dio.total < 2000) return 1;
+    if (dev_gate_play()) return 1;
+    if (is_play_mode() || QR_MODE) { flog("JPG: the camera is showing pictures, the JPG stays in FILMLOOK", 0); return 1; }
+    if (dev_gate()) return 1;
+    dev_phase = 3;
+    snprintf(note, sizeof(note), "%s%s", root, REPL_NAME);
+    snprintf(txt, sizeof(txt), "%s\n%s\n", dio.dst, target);
+    m = FIO_CreateFile(note);
+    if (!m) { flog_s("JPG: cannot make the replace note", note); return 1; }
+    FIO_WriteFile(m, txt, strlen(txt));
+    FIO_CloseFile(m);
+    o = FIO_CreateFile(target);                          /* the camera's JPG is gone from here until it is written again */
+    if (o) {
+        while (pos < dio.total) {
+            uint32_t c = dio.total - pos;
+            if (c > OUT_CHUNK) c = OUT_CHUNK;
+            if (!dev_alive()) { FIO_CloseFile(o); flog_s("JPG: stopped while replacing, the copy in FILMLOOK is complete", target); return 1; }
+            if (FIO_WriteFile(o, dio.big + pos, c) != (int)c) { werr = 1; break; }
+            pos += c;
+            dev_prog = 965 + (int)((pos * 35u) / dio.total);
+        }
+        FIO_CloseFile(o);
+    } else werr = 1;
+    dio.ms_write += get_ms_clock() - t;
+    if (!werr && FIO_GetFileSize(target, &got) == 0 && got == dio.total && jpg_complete(target)) ok = 1;
+    if (!ok) {                                           /* put the complete copy back, then the note can go */
+        flog_s("JPG: replacing failed, restoring from the copy", target);
+        FIO_RemoveFile(target);
+        if (FIO_CopyFile(dio.dst, target) != 0) { flog_s("JPG: RESTORE FAILED, the complete copy is", dio.dst); return 1; }
+    }
+    FIO_RemoveFile(note);
+    return ok ? 0 : 1;
+}
+
 /* at start: a note left behind means a write was interrupted (power lost, battery out): look at the file it names */
 static void dev_recover(void)
 {
-    static char buf[80];
+    static char buf[200];
     int n = read_text(MARK_NAME, buf, sizeof(buf) - 1);
-    if (n < 0) return;                                   /* no note: nothing was interrupted */
-    buf[n > 0 ? n : 0] = 0;
-    if (n > 0 && !jpg_complete(buf)) { FIO_RemoveFile(buf); flog_s("JPG: removed an unfinished file", buf); }
-    else if (n > 0) flog_s("JPG: the file named in the note is complete, kept", buf);
-    FIO_RemoveFile(MARK_NAME);
+    if (n >= 0) {
+        buf[n > 0 ? n : 0] = 0;
+        if (n > 0 && !jpg_complete(buf)) { FIO_RemoveFile(buf); flog_s("JPG: removed an unfinished file", buf); }
+        else if (n > 0) flog_s("JPG: the file named in the note is complete, kept", buf);
+        FIO_RemoveFile(MARK_NAME);
+    }
+    n = read_text(REPL_NAME, buf, sizeof(buf) - 1);      /* a replacement of the camera's JPG was interrupted */
+    if (n >= 0) {
+        char *copy = buf, *target = 0, *e;
+        buf[n > 0 ? n : 0] = 0;
+        for (e = buf; *e && *e != '\n'; e++) {}
+        if (*e) { *e = 0; target = e + 1; for (e = target; *e && *e != '\n'; e++) {} *e = 0; }
+        if (target && target[0] && jpg_complete(copy) && !jpg_complete(target)) {
+            FIO_RemoveFile(target);
+            if (FIO_CopyFile(copy, target) == 0) flog_s("JPG: the interrupted replacement was finished from the copy", target);
+            else flog_s("JPG: could not finish the replacement, the complete copy is", copy);
+        } else flog("JPG: replace note found, nothing to repair", 0);
+        FIO_RemoveFile(REPL_NAME);
+    }
+}
+
+/* the rows of the picture that the film look has finished: the progress of the line under the title (30 .. 930 of 1000;
+ * before it the source is read, after it the JPG is written) */
+static void dev_progress_cb(void *ctx, int permille)
+{
+    int v = 30 + (permille * 9) / 10;
+    (void)ctx;
+    if (v > dev_prog) dev_prog = v;
 }
 
 /* 0 = done (or hopeless), 1 = try again later (no memory right now, the source is not complete yet, the camera is busy) */
@@ -777,12 +911,14 @@ static int dev_run(const dev_job_t *j)
     uint8_t *mem;
     fl_io io;
     fl_result res;
-    int t0 = 0, t_proc = 0, ok = 0, retry = 0, i, root;
+    int t0 = 0, t_proc = 0, ok = 0, retry = 0, i, root, src_jpg = 0, replaced = -1;
 
+    dev_phase = 2; dev_prog = 3; gate_waited = 0; dev_end_ms = -100000;
     snprintf(src, sizeof(src), "%s%s%04d.JPG", j->dir, j->prefix, j->number);        /* the camera's JPG, or ... */
     if (FIO_GetFileSize(src, &size) != 0 || size < 2000)
         snprintf(src, sizeof(src), "%s%s%04d.CR2", j->dir, j->prefix, j->number);   /* ... the preview inside the RAW */
     else if (!jpg_complete(src)) { flog_s("JPG: the camera has not finished writing", src); return 1; }
+    else src_jpg = 1;
     if (FIO_GetFileSize(src, &size) != 0 || size < 2000) { flog_s("JPG: no source file", src); return 0; }
     for (i = 0; j->dir[i] && j->dir[i] != '/'; i++) {}
     root = j->dir[i] == '/' ? i + 1 : 0;                                              /* "B:/" */
@@ -790,38 +926,47 @@ static int dev_run(const dev_job_t *j)
     r[i] = 0;
     snprintf(dio.dst, sizeof(dio.dst), "%sFILMLOOK/%s%04d.JPG", r, j->prefix, j->number);
     snprintf(dio.mark, sizeof(dio.mark), "%s%s", r, MARK_NAME);
+    if (j->place == 1 && !src_jpg) flog("JPG: nothing to replace (RAW only), the file goes to FILMLOOK", j->number);
 
     mem = (uint8_t *)malloc(need);
-    dio.ibuf = (uint8_t *)fio_malloc(IOBUF);
+    dio.ibuf = 0; dio.icap = 0;
     dio.obuf = (uint8_t *)fio_malloc(IOBUF);
     dio.big = 0; dio.cap = 0;
+    if (mem && dio.obuf) {
+        uint32_t c;                                      /* room for the whole finished JPG, as much as there is */
+        for (c = (j->mode == 2) ? 12u << 20 : 4u << 20; c >= (1u << 20) && !dio.big; c >>= 1)
+            if ((dio.big = (uint8_t *)fio_malloc(c)) != 0) dio.cap = c;
+        for (c = 8u << 20; c >= IOBUF && !dio.ibuf; c >>= 1)      /* and room for the source: it is read in one go, so */
+            if ((dio.ibuf = (uint8_t *)fio_malloc(c)) != 0) dio.icap = c;      /* the card is not touched while the picture is made */
+    }
     if (!mem || !dio.ibuf || !dio.obuf) {
         if (mem) free(mem);
         if (dio.ibuf) fio_free(dio.ibuf);
         if (dio.obuf) fio_free(dio.obuf);
+        if (dio.big) fio_free(dio.big);
         flog("JPG: no memory now, KB needed", (int)(need >> 10));
         return 1;
     }
-    { uint32_t c;                                        /* room for the whole finished JPG, as much as there is */
-      for (c = (j->mode == 2) ? 12u << 20 : 4u << 20; c >= (1u << 20) && !dio.big; c >>= 1)
-          if ((dio.big = (uint8_t *)fio_malloc(c)) != 0) dio.cap = c; }
     dio.in = FIO_OpenFile(src, O_RDONLY | O_SYNC);
     dio.out = 0; dio.stream = 0;
     dio.ibase = 0; dio.ilen = 0; dio.on = 0; dio.len = 0; dio.total = 0;
+    dio.ms_read = 0; dio.ms_write = 0; dio.inram = 0; dio.place_repl = (j->place == 1 && src_jpg);
     if (!dio.in) {
         flog_s("JPG: cannot open", src);
     } else {
         t0 = get_ms_clock();
+        memset(&io, 0, sizeof io);
         io.read = dev_read; io.rctx = 0; io.src_size = size;
         io.write = dev_write; io.wctx = 0;
         io.mem = mem; io.mem_size = need;
+        io.progress = dev_progress_cb; io.pctx = 0;
         fl_develop(&io, f, &j->look, scale, 90, &res);
         t_proc = get_ms_clock() - t0;
         FIO_CloseFile(dio.in);
         if (res.rc == 0 && !dev_alive()) res.rc = SE_E_IO;
         if (res.rc == 0) {                               /* the short part that writes: the rest of the picture, then close */
-            if (!dio.stream && dev_open_out()) res.rc = SE_E_IO;
-            else if (dio.stream && dev_flush()) res.rc = SE_E_IO;
+            if (!dio.stream) { dio.inram = 1; if (dev_open_out()) res.rc = SE_E_IO; }
+            else if (dev_flush()) res.rc = SE_E_IO;
         }
         if (dio.out) FIO_CloseFile(dio.out);
         if (res.rc == 0) {                               /* check what is on the card, then take the note away */
@@ -831,15 +976,26 @@ static int dev_run(const dev_job_t *j)
         }
         if (ok) {
             FIO_RemoveFile(dio.mark);
-            dev_last_ms = get_ms_clock() - t0; dev_done_n++;
-            flog_s("JPG written", dio.dst);
-            flog("JPG width", res.out_w);
-            flog("JPG ms processing (RAM only)", t_proc);
-            flog("JPG ms all, with the writing", dev_last_ms);
-            flog("JPG ms since the shot", get_ms_clock() - j->t_shot);
-            flog("JPG bytes", (int)dio.total);
-            flog("JPG arena peak KB", (int)(res.mem_peak >> 10));
-            flog("JPG made in RAM (1) or on the card (0)", dio.big ? (dio.cap >= dio.total) : 0);
+            if (dio.place_repl) replaced = dev_replace(src, r);          /* the camera's own JPG becomes the finished one */
+            {
+                int all = get_ms_clock() - t0;
+                dev_last_ms = all - gate_waited; if (dev_last_ms < 1) dev_last_ms = 1;
+                dev_done_n++;
+                dev_prog = 1000; dev_end_ms = get_ms_clock();
+                flog_s("JPG written", dio.dst);
+                if (dio.place_repl) flog(replaced == 0 ? "JPG: the camera's JPG was REPLACED" : "JPG: the camera's JPG was NOT replaced (copy kept in FILMLOOK)", j->number);
+                flog("JPG width", res.out_w);
+                flog("JPG ms the picture itself (decode, film, encode)", t_proc - gate_waited > 0 ? t_proc - gate_waited : t_proc);
+                flog("JPG ms waiting for the camera", gate_waited);
+                flog("JPG ms reading the source from the card", dio.ms_read);
+                flog("JPG ms writing to the card", dio.ms_write);
+                flog("JPG ms all, without the waiting", dev_last_ms);
+                flog("JPG ms since the shot", get_ms_clock() - j->t_shot);
+                flog("JPG source window KB", (int)(dio.icap >> 10));
+                flog("JPG bytes", (int)dio.total);
+                flog("JPG arena peak KB", (int)(res.mem_peak >> 10));
+                flog("JPG made in RAM (1) or on the card (0)", dio.big ? (dio.cap >= dio.total) : 0);
+            }
         } else {
             if (dio.stream) { FIO_RemoveFile(dio.dst); FIO_RemoveFile(dio.mark); }
             if (res.rc == SE_E_TRUNCATED) { flog_s("JPG: the source is cut (still being written?), later", src); retry = 1; }
@@ -870,6 +1026,7 @@ static void dev_task(void *arg)
             dev_busy = 1;
             r = dev_run(j);
             dev_busy = 0;
+            dev_phase = 0;
             powersave_permit();
             if (r == 0) j->used = 0;
             else if (++j->tries >= 12) { flog("JPG: giving up, number", j->number); j->used = 0; }
@@ -887,7 +1044,7 @@ static void dev_enqueue(const qitem_t *q)
             dev_job_t *j = &dev_q[i];
             memset(j, 0, sizeof(*j));
             strcpy(j->dir, q->dir); strcpy(j->prefix, q->prefix);
-            j->film = q->film; j->mode = q->jpg; j->number = q->number; j->look = q->look; j->t_shot = q->t;
+            j->film = q->film; j->mode = q->jpg; j->number = q->number; j->look = q->look; j->t_shot = q->t; j->place = q->place;
             j->used = 1;
             if (!dev_task_started) { dev_task_started = 1; task_create("fl_dev", 0x1c, 0x6000, dev_task, 0); }
             flog_s("JPG queued", films[q->film - 1].full);

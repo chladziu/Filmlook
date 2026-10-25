@@ -8,8 +8,9 @@
 
 #define NSL   10                             /* sliders: rows 4..13 */
 #define JROW  (4 + NSL)                      /* row 14: JPG with the effect (off / half size / full size) */
-#define RROW  (JROW + 1)                     /* row 15: back to the default settings of this film */
-#define NROWS (RROW + 1)                     /* 0 type, 1 brand, 2 film, 3 push/pull, 4.. sliders (see sl_def), JPG row, reset row */
+#define PROW  (JROW + 1)                     /* row 15: where the JPG goes (folder FILMLOOK / instead of the camera's JPG) */
+#define RROW  (PROW + 1)                     /* row 16: back to the default settings of this film */
+#define NROWS (RROW + 1)                     /* 0 type, 1 brand, 2 film, 3 push/pull, 4.. sliders (see sl_def), JPG row, place row, reset row */
 #define VIS   5                              /* rows 3..15 scroll in a window of 5 */
 
 /* ------------------------------------------------------------------ state */
@@ -26,6 +27,7 @@ static int st_sat = 0;                    /* Nasycenie -100..100 */
 static int st_vig = 0;                    /* Winieta 0..100 */
 static int st_hal = 0;                    /* Halation 0..100: glow round bright lights (JPG only) */
 static int st_jpg = 0;                    /* JPG z efektem: 0 off, 1 half size, 2 full size */
+static int st_place = 0;                  /* where the JPG goes: 0 = folder FILMLOOK, 1 = replaces the camera's own JPG (when there is one) */
 
 /* the sliders of the panel: rows 4 .. 13 */
 static const struct { const char *name; short lo, hi, step; unsigned char signed_; } sl_def[NSL] = {

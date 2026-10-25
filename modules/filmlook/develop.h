@@ -21,6 +21,8 @@ typedef struct {
     void *wctx;
     uint8_t *mem;                                                      /* working memory */
     size_t   mem_size;
+    void (*progress)(void *ctx, int permille);                         /* optional: how far the rows are, 0..1000 */
+    void *pctx;
 } fl_io;
 
 typedef struct {
@@ -139,6 +141,7 @@ typedef struct {
     se_jpeg *enc;
     se_look_run *run;
     int ow, err;
+    int rows, oh;                                       /* output rows made so far, and all of them */
 } fl_ctx;
 
 static int fl_src_read(void *ctx, uint32_t off, void *dst, uint32_t n)
@@ -166,6 +169,8 @@ static int fl_look_rows(void *ctx, const uint8_t *rgb, int nrows, int width)
     fl_ctx *c = (fl_ctx *)ctx;
     if (width != c->ow) { c->err = 1; return -1; }
     if (se_look_rows(c->run, rgb, nrows, fl_look_emit, c) != SE_OK) { c->err = 1; return -1; }
+    c->rows += nrows;
+    if (c->io->progress) c->io->progress(c->io->pctx, c->rows >= c->oh ? 1000 : (c->rows * 1000) / c->oh);
     return 0;
 }
 
@@ -224,7 +229,7 @@ static void fl_develop(const fl_io *io, const film_t *f, const look_t *L, int ds
         if (rc != SE_OK) { res->rc = rc; return; }
     }
 
-    c.io = io; c.base = poff; c.ow = ow; c.err = 0;
+    c.io = io; c.base = poff; c.ow = ow; c.err = 0; c.rows = 0; c.oh = oh > 0 ? oh : 1;
     c.enc = SE_NEW(&ar, se_jpeg, 1);
     strip = SE_NEW(&ar, uint8_t, (size_t)8 * ow * 3);
     if (!c.enc || !strip) { res->rc = SE_E_NOMEM; return; }

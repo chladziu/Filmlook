@@ -82,6 +82,17 @@ static const char *const tab_label[] = { "Bez efektu", "C-41", "BW", "Slajd", "W
 
 static void draw_rule(int y) { ui_fill(PC_DIM, M_L, y, M_R - M_L, 1); }
 
+/* the line under the title: always there (1 px); while a JPG is made a thicker (3 px) part grows from the left.
+ * permille 0..1000. Only the new piece is drawn when it grows, so nothing flickers. */
+#define PROG_W (M_R - M_L)
+static int prog_w = 0;                               /* width of the thick part that is on the screen now */
+static void draw_prog(int permille)
+{
+    int w = permille <= 0 ? 0 : (permille >= 1000 ? PROG_W : (permille * PROG_W) / 1000);
+    if (w < prog_w) { ui_fill(PC_BG, M_L, Y_RULE_A - 1, PROG_W, 3); draw_rule(Y_RULE_A); prog_w = 0; }
+    if (w > prog_w) { ui_fill(PC_MOD, M_L + prog_w, Y_RULE_A - 1, w - prog_w, 3); prog_w = w; }
+}
+
 static void draw_hint(const char *msg)
 {
     if (msg) sf_line(&sf_xxs, M_L, M_R, Y_HINT, 17, 5, msg, PC_ACCENT, SF_CENTER);
@@ -101,6 +112,7 @@ static void draw_static(void)
     sf_line(&sf_title, 130, 590, Y_TITLE, 28, 3, "\001", PC_ACCENT, SF_CENTER);          /* centred on the screen (360) */
     sf_line(&sf_xxs, M_R - 90, M_R3, Y_TITLE, 17, 5, VERSION, PC_SOFT, SF_RIGHT);
     draw_rule(Y_RULE_A);
+    prog_w = 0;                                       /* (the thick part is drawn again by the redraw that follows) */
     draw_rule(Y_RULE_B);
     draw_rule(Y_RULE_C);
     draw_hint(0);
@@ -285,6 +297,18 @@ static void draw_jpg(void)
     sf_line(&sf_sml, BAR_X - 12, M_R3, yb, 25, 7, tmp, on ? PC_ACCENT : (st_jpg ? PC_TEXT : PC_SOFT), SF_RIGHT);
 }
 
+/* where the JPG goes: its own folder, or in place of the camera's JPG (RAW+JPG or JPG shooting; with RAW alone there is no
+ * JPG to replace and the file goes to FILMLOOK) */
+static void draw_place(void)
+{
+    static const char *const opt[2] = { "folder FILMLOOK", "podmień JPG aparatu" };
+    int on = (row == PROW), yb = slot_y(PROW);
+    char tmp[48];
+    list_row_frame(PROW, on, "Miejsce JPG", on ? PC_ACCENT : (st_jpg ? PC_TEXT : PC_SOFT));
+    snprintf(tmp, sizeof(tmp), "\xE2\x80\xB9  %s  \xE2\x80\xBA", opt[st_place]);
+    sf_line(&sf_sml, BAR_X - 12, M_R3, yb, 25, 7, tmp, on ? PC_ACCENT : (st_jpg ? (st_place ? PC_MOD : PC_TEXT) : PC_SOFT), SF_RIGHT);
+}
+
 /* last row: back to the defaults of the chosen film. SET does it. No bar here, so the line uses the whole width:
  * the name at the left, what SET does at the right */
 static void draw_reset(void)
@@ -301,7 +325,7 @@ static void draw_slot(int r)
 {
     int p = lst_pos(r);
     if (p < top || p >= top + VIS) return;           /* (also when the row does not exist for this film: p = -1) */
-    if (r == 3) draw_push(); else if (r == JROW) draw_jpg(); else if (r == RROW) draw_reset(); else draw_slider(r);
+    if (r == 3) draw_push(); else if (r == JROW) draw_jpg(); else if (r == PROW) draw_place(); else if (r == RROW) draw_reset(); else draw_slider(r);
 }
 
 /* a place of the list without a row: paper (and, without a film, a short note in the second place) */
