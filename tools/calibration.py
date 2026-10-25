@@ -40,6 +40,52 @@ ADJ = {
     "AgfaChrome RS 100":               {"Contrast2012": -60, "Saturation": 5, "Exposure2012": 17, "Blacks2012": -20},
 }
 
+# v0.10 "wow": the looks of the short list are pushed so that each one has a clear character of its own (the presets are made
+# for a raw converter and are often shy). ADD = added to the value the preset has, SET = replaces it. Colour grading hues are
+# degrees on the wheel (0 red, 60 yellow, 120 green, 180 cyan, 240 blue, 300 magenta). Everything is visible in the contact
+# sheets of tools/ (see the project notes), the numbers were chosen by looking at the rendered pictures.
+WOW_ADD = {
+    "Kodak Portra 400":       {"Contrast2012": -2, "Blacks2012": 10, "Vibrance": 16, "Saturation": 6, "SaturationAdjustmentOrange": 10,
+                               "LuminanceAdjustmentOrange": 10, "SaturationAdjustmentGreen": 10, "SaturationAdjustmentYellow": 10},
+    "Kodak Ektar 100":        {"Saturation": 16, "Vibrance": 12, "Contrast2012": 20, "Blacks2012": -10, "SaturationAdjustmentRed": 10,
+                               "SaturationAdjustmentOrange": -10, "SaturationAdjustmentBlue": 10, "LuminanceAdjustmentBlue": -8},
+    "Kodak Gold 200":         {"Saturation": 18, "SaturationAdjustmentYellow": 15, "PostCropVignetteAmount": -12},
+    "Fuji Superia X-TRA 400": {"Saturation": 12, "SaturationAdjustmentGreen": 30, "Contrast2012": 14},
+    "Kodak Vision3 500T":     {"Contrast2012": 24, "Blacks2012": 6, "Saturation": -18},
+    "Kodachrome 64":          {"Saturation": 4, "Contrast2012": 20, "SaturationAdjustmentRed": 20, "SaturationAdjustmentYellow": 10,
+                               "SaturationAdjustmentBlue": -8},
+    "Fuji Astia 100F":        {"Contrast2012": 24, "Vibrance": 6},
+    "Kodak Ektachrome 100VS": {"Saturation": -14, "Contrast2012": 15, "SaturationAdjustmentAqua": 20, "SaturationAdjustmentBlue": 15},
+    "Fuji Velvia 50":         {"Saturation": -6, "SaturationAdjustmentOrange": -8},
+    "Kodak Tri-X 400":        {"Contrast2012": 20, "Blacks2012": -10, "Whites2012": 8},
+    "Ilford HP5 Plus":        {"Contrast2012": 8},
+    "Ilford XP2 Super":       {"Contrast2012": 10, "GrainAmount": -8},
+    "Ilford Delta 3200":      {"Blacks2012": 10, "Contrast2012": 12, "GrainAmount": 10},
+}
+WOW_SET = {
+    "Kodak Portra 400":       {"ColorGradeHighlightHue": 38, "ColorGradeHighlightSat": 44, "ColorGradeShadowHue": 195, "ColorGradeShadowSat": 22,
+                               "ColorGradeMidtoneHue": 25, "ColorGradeMidtoneSat": 12},
+    "Kodak Ektar 100":        {"ColorGradeShadowHue": 215, "ColorGradeShadowSat": 14, "ColorGradeHighlightHue": 48, "ColorGradeHighlightSat": 14},
+    "Kodak Gold 200":         {"ColorGradeShadowHue": 25, "ColorGradeShadowSat": 22, "ColorGradeMidtoneHue": 40, "ColorGradeMidtoneSat": 16,
+                               "ColorGradeHighlightHue": 48, "ColorGradeHighlightSat": 36},
+    "Fuji Superia X-TRA 400": {"ColorGradeShadowHue": 150, "ColorGradeShadowSat": 24, "ColorGradeMidtoneHue": 140, "ColorGradeMidtoneSat": 8,
+                               "ColorGradeHighlightHue": 335, "ColorGradeHighlightSat": 14},
+    "Kodak Vision3 500T":     {"ColorGradeShadowHue": 190, "ColorGradeShadowSat": 60, "ColorGradeMidtoneHue": 35, "ColorGradeMidtoneSat": 10,
+                               "ColorGradeHighlightHue": 28, "ColorGradeHighlightSat": 70},
+    "Kodachrome 64":          {"ColorGradeShadowHue": 12, "ColorGradeShadowSat": 28, "ColorGradeHighlightHue": 42, "ColorGradeHighlightSat": 40},
+    "Fuji Astia 100F":        {"ColorGradeHighlightHue": 25, "ColorGradeHighlightSat": 14},
+    "Kodak Ektachrome 100VS": {"ColorGradeShadowHue": 225, "ColorGradeShadowSat": 40, "ColorGradeHighlightHue": 195, "ColorGradeHighlightSat": 26},
+    "Ilford XP2 Super":       {"ColorGradeHighlightHue": 40, "ColorGradeHighlightSat": 8},
+}
+
+# films that are made from another film of the list: everything of the base film (sliders, HSL, curves, white balance) is
+# copied after the base film's own corrections, then the differences are added; grain stays the film's own (GRAIN above).
+# "Kodak Royal Gold 400" = Gold 200 with richer colour and deeper blacks (the 400 was the more saturated emulsion).
+DERIVE = {
+    "Kodak Royal Gold 400": ("Kodak Gold 200", {"Contrast2012": 8, "Saturation": 10, "Vibrance": 5, "Blacks2012": -6}),
+}
+KEEP_OWN = ("GrainAmount", "GrainSize", "GrainFrequency")
+
 OWN = {"GrainAmount": 25, "GrainSize": 30, "GrainFrequency": 50}
 
 
@@ -83,6 +129,25 @@ def apply(allf, INDEX):
             _set(f, ga, max(0, min(100, int(round(_get(f, ga) * want / ob)))))
     for full, adj in ADJ.items():
         fs = [f for f in allf if f["full"] == full]
-        if not fs: raise SystemExit("calibration: no film called " + full)
+        if not fs: continue                                # the film is not in the (short) list
         for n, v in adj.items(): _set(fs[0], INDEX[n], v)
+    for full, adj in WOW_SET.items():
+        fs = [f for f in allf if f["full"] == full]
+        if fs:
+            for n, v in adj.items(): _set(fs[0], INDEX[n], v)
+    for full, adj in WOW_ADD.items():
+        fs = [f for f in allf if f["full"] == full]
+        if fs:
+            for n, v in adj.items(): _set(fs[0], INDEX[n], _get(fs[0], INDEX[n]) + v)
+    for child, (parent, delta) in DERIVE.items():
+        c = [f for f in allf if f["full"] == child]
+        p = [f for f in allf if f["full"] == parent]
+        if not c or not p: continue
+        c, p = c[0], p[0]
+        own = {n: _get(c, INDEX[n]) for n in KEEP_OWN}
+        c["vals"] = list(p["vals"])
+        c["cv"] = [list(x) for x in p["cv"]]
+        for k in ("wb_custom", "temp", "tint", "profile"): c[k] = p[k]
+        for n, v in own.items(): _set(c, INDEX[n], v)
+        for n, dv in delta.items(): _set(c, INDEX[n], _get(c, INDEX[n]) + dv)
     return report, missing

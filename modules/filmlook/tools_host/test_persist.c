@@ -40,7 +40,7 @@ int main(void)
     CHECK(st_film == 0 && st_strength == 100 && st_grain == 100 && st_hal == 0);
 
     choose(a); st_strength = 70; st_grain = 140; st_contrast = 20; st_hal = 30;
-    CHECK(mod_n() == 4);
+    CHECK(mod_n() == 3);                              /* (Halacja is not shown any more and does not count) */
     choose(b); CHECK(st_strength == 100 && st_grain == 100 && st_contrast == 0 && mod_n() == 0);   /* the other film is untouched */
     st_warm = -15; st_sat = 40;
     choose(a); CHECK(st_strength == 70 && st_grain == 140 && st_contrast == 20 && st_hal == 30 && st_warm == 0);
@@ -62,7 +62,7 @@ int main(void)
     choose(own5); CHECK(mod_n() == 0);
 
     /* the reset: only this film, the others keep their changes */
-    choose(a); CHECK(reset_film() == 4); CHECK(mod_n() == 0 && st_strength == 100 && st_hal == 0);
+    choose(a); CHECK(reset_film() == 3); CHECK(mod_n() == 0 && st_strength == 100 && st_hal == 0);
     n = cfg_build(); CHECK(!strstr(cfg_buf, "mod=Kodak Portra 400"));
     CHECK(strstr(cfg_buf, "mod=Ilford HP5 Plus;"));
     choose(own1); CHECK(reset_film() == 2); CHECK(st_grain == 100 && st_fade == 0 && st_strength == 100);
@@ -71,6 +71,30 @@ int main(void)
     snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nplace=9\njpg=1\n"); n = (int)strlen(cfg_buf); st_place = 0; cfg_parse(n); CHECK(st_place == 2);
     snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nplace=-3\njpg=1\n"); n = (int)strlen(cfg_buf); st_place = 2; cfg_parse(n); CHECK(st_place == 0);
     st_place = 2; n = cfg_build(); CHECK(strstr(cfg_buf, "place=2\n"));
+    /* the look of the panel: 0 cream, 1 night; anything else is cut to that, a file without the key leaves the default */
+    snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\ntheme=7\n"); n = (int)strlen(cfg_buf); st_theme = 0; cfg_parse(n); CHECK(st_theme == 1);
+    snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\ntheme=-4\n"); n = (int)strlen(cfg_buf); st_theme = 1; cfg_parse(n); CHECK(st_theme == 0);
+    st_theme = 0; n = cfg_build(); CHECK(strstr(cfg_buf, "theme=0\n"));
+    st_theme = 1;
+    snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nlang=5\n"); n = (int)strlen(cfg_buf); st_lang = 0; cfg_parse(n); CHECK(st_lang == 5);
+    snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nlang=99\n"); n = (int)strlen(cfg_buf); st_lang = 0; cfg_parse(n); CHECK(st_lang == NLANG - 1);
+    snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nlang=-3\n"); n = (int)strlen(cfg_buf); st_lang = 3; cfg_parse(n); CHECK(st_lang == 0);
+    st_lang = 7; n = cfg_build(); CHECK(strstr(cfg_buf, "lang=7\n"));
+    st_lang = 0;
+
+    /* every film back to the defaults (tab Ustawienia) */
+    memo_init(); sets_init(); st_film = 0; cur_slot = 0;
+    choose(a); st_grain = 130; choose(b); st_sat = 20; choose(own1); st_fade = 5; st_hal = 40;
+    CHECK(films_mod_n() == 3);
+    CHECK(reset_all() == 3); CHECK(films_mod_n() == 0 && st_fade == 0 && st_hal == 0);
+    choose(a); CHECK(st_grain == 100); choose(b); CHECK(st_sat == 0);
+    /* the rows of the list: under a film the sliders and the reset of the film, in the tab Ustawienia the five rows of the settings */
+    choose(a); st_set = 0; list_build();
+    CHECK(lst_n == 10 && lst[0] == 4 && lst[lst_n - 1] == RROW && lst_pos(HROW) < 0 && lst_pos(JROW) < 0);
+    choose(own1); list_build(); CHECK(lst_n == 9 && lst[0] == 5);
+    st_set = 1; list_build();
+    CHECK(lst_n == 5 && lst[0] == JROW && lst[1] == PROW && lst[2] == TROW && lst[3] == LROW && lst[4] == AROW && cur_tab() == TAB_SET);
+    st_set = 0; list_build(); CHECK(cur_tab() == cur_type());
 
     /* limits: a damaged file never gives values outside the sliders */
     snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nmod=Kodak Portra 400;500,900,-900,900,900,-900,900,-900,900,900\nmod=No such film;1,2,3,4,5,6,7,8,9,10\nmod=Ilford HP5 Plus;1,2\n");

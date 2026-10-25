@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""make_serif_font.py <Bethany_Elingston.otf> <title font.ttf> <films.index.json> <out serif_data.h>
+"""make_serif_font.py <Bethany_Elingston.otf> <title font.ttf> <films.index.json> <out serif_data.h> [title stroke in 1/8 px]
 
 Draws the serif letters of the panel (one bitmap per letter, 4 levels of grey = 2 bits per pixel) so that the camera can
 print them without any font engine:
   big / mid   film names (two sizes: the long names use the smaller one)
   med         tabs, row names, values, kind of the film
   sml         description, key help, version
-  title       the whole text "Film Look Simulation" as one picture (heavy retro serif, free font Caprasimo, OFL)
+  title       the whole text "Film Look Simulation" as one picture (retro serif, free font Young Serif, OFL; the stroke argument makes it heavier)
 Polish letters the font does not have (ą ć ę ń ś ź ż and capitals) are composed from the letter and the mark of the font
 (acute, dot above, ogonek); their place is copied from the font's own ó / Ó.
 Kerning of the font (GPOS) is stored once, in 1/1000 em.
 Needs Pillow (with raqm), numpy, fontTools.
 """
-import json, sys
+import json, os, re, sys, unicodedata
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from fontTools.ttLib import TTFont
@@ -27,6 +27,34 @@ POLISH = {"ą": "a", "ć": "c", "ę": "e", "ń": "n", "ś": "s", "ź": "z", "ż"
           "Ą": "A", "Ć": "C", "Ę": "E", "Ń": "N", "Ś": "S", "Ź": "Z", "Ż": "Z"}
 MARK = {"ć": "acute", "ń": "acute", "ś": "acute", "ź": "acute", "Ć": "acute", "Ń": "acute", "Ś": "acute", "Ź": "acute",
         "ż": "dot", "Ż": "dot", "ą": "ogonek", "ę": "ogonek", "Ą": "ogonek", "Ę": "ogonek"}
+
+
+def kbase(ch):
+    """the letter whose kerning a letter uses: 'ć' -> 'c' (Polish table), 'á' -> 'a', 'İ' -> 'I'; letters without a base keep themselves"""
+    if ch in POLISH: return POLISH[ch]
+    d = unicodedata.normalize("NFD", ch)
+    return d[0] if len(d) > 1 and ord(d[0]) < 0x80 else ch
+
+
+def ui_chars(here, tabs_only=False, ids=None):
+    """every letter that the texts of the panel can show: i18n.h (nine languages), the names of the languages, the kind and the
+    description of the films (films_i18n.py)"""
+    txt = open(os.path.join(here, "i18n.h"), encoding="utf-8").read()
+    lines = [l for l in txt.split("\n") if l.lstrip().startswith("X(S_")]
+    if ids:
+        lines = [l for l in lines if any(l.lstrip().startswith("X(" + i + ",") for i in ids)]
+        return set("".join(re.findall(r'"((?:[^"\\]|\\.)*)"', "\n".join(lines)))) - set("\\")
+    if tabs_only:
+        lines = [l for l in lines if l.lstrip().startswith("X(S_TAB_")]
+        return set("".join(re.findall(r'"((?:[^"\\]|\\.)*)"', "\n".join(lines)))) - set("\\")
+    chars = set("".join(re.findall(r'"((?:[^"\\]|\\.)*)"', "\n".join(lines)))) - set("\\")
+    m = re.search(r"lang_names\[NLANG\] = \{([^}]*)\}", txt)
+    if m: chars |= set(m.group(1)) - set('", ')
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
+    import films_i18n as FI
+    for t in list(FI.KIND.values()) + list(FI.DESC.values()):
+        chars |= set("".join(t))
+    return {c for c in chars if c >= " "}
 
 
 class Face:
@@ -52,10 +80,10 @@ class Face:
 
     def hi(self, text):
         """hi-res coverage (0..1) of text on a canvas with the origin at (PAD, baseline = PAD + asc/K) in px"""
-        w = int(self.f.getlength(text, features=["-liga", "-aalt"])) + 2 * PAD * K
+        w = int(self.f.getlength(text, features=["-liga", "-aalt", "lnum"])) + 2 * PAD * K
         h = self.by + int(self.size * K * 0.45)
         im = Image.new("L", (w, h), 0)
-        ImageDraw.Draw(im).text((PAD * K, self.by), text, font=self.f, fill=255, anchor="ls", features=["-liga", "-aalt"],
+        ImageDraw.Draw(im).text((PAD * K, self.by), text, font=self.f, fill=255, anchor="ls", features=["-liga", "-aalt", "lnum"],
                                 stroke_width=self.stroke, stroke_fill=255)
         return np.asarray(im, dtype=np.float32) / 255
 
@@ -185,7 +213,7 @@ def build_font(name, face, chars, extra_glyphs=None):
             y = int(round(-cap / 2.0 - h / 2.0))
         off = len(bits)
         bits += pack(q)
-        kc = ord(POLISH.get(ch, ch))
+        kc = ord(kbase(ch))
         glyphs.append((ord(ch), int(round(face.adv(ch) * face.size * 16 / 1000)), w, h, x, y, off, kc))
         asc = max(asc, -y); desc = max(desc, y + h)
     return dict(name=name, size=face.size, glyphs=glyphs, bits=bits, asc=asc, desc=desc, track=face.track)
@@ -195,7 +223,7 @@ def kerning(face, chars):
     pairs = []
     em = face.size * K
     chars = [c for c in sorted(set(chars), key=ord) if face.has(c) and c != " "]
-    ft = ["-liga", "-aalt"]
+    ft = ["-liga", "-aalt", "lnum"]
     singles = {c: face.f.getlength(c, features=ft) for c in chars}
     for a in chars:
         for b in chars:
@@ -234,12 +262,23 @@ def emit(fonts, kern, out):
     open(out, "w").write("\n".join(o) + "\n")
 
 
-def main(beth, titlef, idxp, out):
+def main(beth, titlef, idxp, out, tstroke="0"):
     idx = json.load(open(idxp))
     import string
     name_chars = set("".join(f["name"] + f["brand"] for f in idx)) | set(string.ascii_letters + string.digits + " ‹›.-+/&()'")
+    here0 = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/modules/filmlook"
+    if os.path.exists(os.path.join(here0, "i18n.h")):
+        name_chars |= ui_chars(here0, ids=["S_TAB_SET", "S_TAB_NONE"])      # the big line also shows the name of the tab "Ustawienia" / "Bez efektu" in every language
     all_chars = [chr(c) for c in range(0x20, 0x7F)] + list("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ·‹›–—…°×")
-    SIZES = dict(big=(56, 1.0, 0.0), mid=(46, 1.0, 0.0), sml=(25, 0.78, 0.4), xs=(21, 0.72, 0.4), xxs=(18, 0.65, 0.5))
+    kern_chars = list(all_chars)                                     # the kerning table is made for these; the other letters use the pairs of their base letter
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/modules/filmlook"
+    if os.path.exists(os.path.join(here, "i18n.h")):
+        extra = ui_chars(here)
+        all_chars = sorted(set(all_chars) | extra, key=ord)
+        print("letters for the texts of nine languages:", len(all_chars))
+    SIZES = dict(big=(76, 1.0, 0.0), mid=(60, 1.0, 0.0), sml=(25, 0.78, 0.4), xs=(21, 0.72, 0.4), xxs=(18, 0.65, 0.5))
+    bs = float(os.environ.get("BODY_SCALE", "1"))                    # another body font is wider / taller: scale all sizes
+    SIZES = {k: (int(round(v[0] * bs)), v[1], v[2]) for k, v in SIZES.items()}
     fonts = []
     kern = None
     for nm, (sz, gm, tr) in SIZES.items():
@@ -248,14 +287,14 @@ def main(beth, titlef, idxp, out):
         print(nm, sz, len(chars))
         fonts.append(build_font(nm, face, chars))
         if kern is None:
-            kern = kerning(face, all_chars)
+            kern = kerning(face, kern_chars)
     # bold (selected tab, selected brand): the same size with a stroke round the letters; only the letters it needs
-    bold_chars = name_chars | set("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ")
-    bface = Face(beth, 21, 0.72, 0.4, None, 3)
-    print("xsb", 21, len(bold_chars))
+    bold_chars = name_chars | set("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ") | (ui_chars(here, True) if os.path.exists(os.path.join(here, "i18n.h")) else set())
+    bface = Face(beth, int(round(21 * bs)), 0.72, 0.4, None, 3)
+    print("xsb", int(round(21 * bs)), len(bold_chars))
     fonts.append(build_font("xsb", bface, bold_chars))
     # title: the whole text as one picture
-    tface = Face(titlef, 33, 0.9, 0.0)
+    tface = Face(titlef, 33, 0.9, 0.0, None, int(tstroke))
     hi = tface.hi("Film Look Simulation")
     q, x, y = glyph_bitmap(tface, "T", hi)
     h, w = q.shape
@@ -269,4 +308,4 @@ def main(beth, titlef, idxp, out):
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:5])
+    main(*sys.argv[1:6])

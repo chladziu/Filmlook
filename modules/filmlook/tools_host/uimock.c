@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define VERSION "v0.9"
+#define VERSION "v0.10"
 #include "../films.h"
 #include "../state.h"
 #include "../panel.h"
@@ -43,6 +43,10 @@ int main(int argc, char **argv)
         else if (!strncmp(a, "vig=", 4)) st_vig = v;
         else if (!strncmp(a, "jpg=", 4)) st_jpg = v;
         else if (!strncmp(a, "place=", 6)) st_place = v;
+        else if (!strncmp(a, "theme=", 6)) st_theme = v;
+        else if (!strncmp(a, "lang=", 5)) st_lang = v;
+        else if (!strncmp(a, "set=", 4)) st_set = v;
+        else if (!strncmp(a, "armed=", 6)) reset_armed = v;
     }
     fix_push();
     cur_slot = st_film;                                 /* the numbers given above are the sliders of this film */

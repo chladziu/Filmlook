@@ -2,8 +2,10 @@
 # -*- coding: utf-8 -*-
 """preset2films.py - turns Lightroom presets (.xmp, crs: attributes) into modules/filmlook/films.h
 
-usage:  preset2films.py <folder with the user's own .xmp presets | -> <EmulsionPresets checkout> <output films.h>
+usage:  preset2films.py <folder with the user's own .xmp presets | -> <EmulsionPresets checkout> <output films.h> [all]
         "-" = leave the user's own presets out (state of v1.6); pass the folder to put the 17 back in.
+        Since v0.10 only the CURATED short list (below) is written. "all" as the last argument writes every film as before
+        (the old long list, with push / pull variants).
 
 Sources
   1. the user's own presets (the 17 files listed in USER_META)
@@ -23,6 +25,18 @@ FOLDER_TYPE = {"Color-Negative": 0, "Black-White": 1, "Slide": 2}
 BRAND_ORDER = ["Kodak", "Ilford", "Fuji", "Agfa", "Foma", "Adox", "Rollei", "Kentmere", "Bergger", "CineStill",
                "Lomography", "Ferrania", "ORWO", "Tonowanie", "Inne"]
 KIND = {0: "Film kolorowy negatywowy", 1: "Film czarno-biały negatywowy", 2: "Film kolorowy slajdowy"}
+
+# --- v0.10: the short list of the most popular films whose looks are clearly different from each other (chosen by measuring
+#     the distance between the looks on three test photos, tools/ + notes in the project docs: every pair at least ~4 apart
+#     in colour, ~3 in B&W, ~3.8 in slides; Royal Gold is made from Gold 200, see calibration.DERIVE). The order here is the order in the
+#     panel. Not in it: expired films, digital film simulations of Fuji cameras, push / pull variants, prints, toning.
+CURATED = {
+    0: ["Kodak Portra 400", "Kodak Ektar 100", "Kodak Gold 200", "Kodak Royal Gold 400", "Fuji Superia X-TRA 400",
+        "Kodak Vision3 500T"],
+    1: ["Kodak Tri-X 400", "Ilford HP5 Plus", "Ilford XP2 Super", "Ilford Delta 3200"],
+    2: ["Fuji Velvia 50", "Kodachrome 64", "Fuji Astia 100F", "Kodak Ektachrome 100VS"],
+}
+CURATED_ISO = {"Fuji Provia 100F": 100}               # the preset has no ISO in its name
 
 # --- the user's own presets: (file, brand, short name, ISO, type 0/1/2, Polish description <= 52 chars)
 USER_META = [
@@ -110,6 +124,16 @@ def cstr(s):
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+import films_i18n as I18N
+_DESC_BY_PL = {v[0]: v for v in I18N.DESC.values()}
+
+
+def lstr(pl, table):
+    """{ "pl", "en", "de", "es", "cs", "it", "fr" } for a Polish text; a text without a translation stays Polish in all languages"""
+    t = table.get(pl) or (_DESC_BY_PL.get(pl) if table is I18N.DESC else None) or (pl,) * len(I18N.LANGS)
+    return "{ " + ", ".join(cstr(x) for x in t) + " }"
+
+
 def natkey(s):
     return [int(p) if p.isdigit() else p.lower() for p in re.split(r'(\d+)', s)]
 
@@ -165,7 +189,9 @@ def build_entry(a, curves, brand, name, full, iso, typ, desc, kind, src):
                 profile=PROFILE.get(a.get("CameraProfile", ""), 0), vals=vals, cv=cv)
 
 
-def main(user_dir, repo_dir, out):
+def main(user_dir, repo_dir, out, mode=""):
+    everything = (mode == "all")
+    keep_order = {(t, n): i for t, l in CURATED.items() for i, n in enumerate(l)}
     films = []
     # 1. the user's own presets (skipped when the folder is "-")
     for fname, brand, name, iso, typ, desc in (USER_META if user_dir != "-" else []):
@@ -184,12 +210,14 @@ def main(user_dir, repo_dir, out):
         if p["category"] not in wanted: continue
         pname = p["name"]
         typ = FOLDER_TYPE[wanted[p["category"]]]
+        if not everything and (typ, pname) not in keep_order: continue
         a, curves = parse(os.path.join(repo_dir, p["file"]))
         if (a.get("ConvertToGrayscale") == "True") != (typ == 1): raise SystemExit("%s: B&W flag vs folder" % pname)
         brand, name, = split_brand(pname)[0], split_brand(pname)[1]
         if pname in M.BRAND_OVERRIDE: brand = M.BRAND_OVERRIDE[pname]
         if pname in M.NAME_OVERRIDE: name = M.NAME_OVERRIDE[pname]
         iso = M.ISO_OVERRIDE.get(pname, guess_iso(pname))
+        if iso == 0: iso = CURATED_ISO.get(pname, 0)
         desc = M.DESC[pname]
         if len(desc) > 52: raise SystemExit("description too long (%d): %s" % (len(desc), desc))
         kind = M.KIND_OVERRIDE.get(pname, KIND[typ])
@@ -197,8 +225,9 @@ def main(user_dir, repo_dir, out):
         taken.add((typ, brand, name))
         full = name if (brand in ("Inne", "Tonowanie") or name.startswith(brand)) else brand + " " + name
         e = build_entry(a, curves, brand, name, full, iso, typ, desc, kind, pname)
+        e["order"] = keep_order.get((typ, pname), 0)
         mv = re.match(r'^(.*) ([+-][12])$', pname)
-        if mv and (p["category"], mv.group(1)) in names:      # "Kodak Tri-X 400 +1": variant of "Kodak Tri-X 400"
+        if everything and mv and (p["category"], mv.group(1)) in names:      # "Kodak Tri-X 400 +1": variant of "Kodak Tri-X 400"
             pending.append((mv.group(1), int(mv.group(2)), mv.group(2), e))
             continue
         films.append(e)
@@ -207,12 +236,13 @@ def main(user_dir, repo_dir, out):
     #    panel, every slot keeps its own set of sliders (the module stores them in the settings file)
     for k in range(1, OWN_SLOTS + 1):
         films.append(dict(src="(own look %d)" % k, brand="Własne presety", name="Preset %d" % k, full="Własny preset %d" % k,
-                          iso=0, type=3, desc="Twój własny look: ustaw suwaki, SET zapisuje", kind="Własny preset", mono=False,
+                          iso=0, type=3, desc="", kind="Własny preset", mono=False, order=k,
                           wb_custom=0, temp=0, tint=0, profile=0, vals=[], cv=[[(0, 0), (255, 255)] for _ in CURVES]))
 
     # grouping: type -> brand -> film (natural order of the names)
     def border(b): return BRAND_ORDER.index(b) if b in BRAND_ORDER else 99
-    films.sort(key=lambda f: (f["type"], border(f["brand"]), f["brand"], natkey(f["name"])))
+    if everything: films.sort(key=lambda f: (f["type"], border(f["brand"]), f["brand"], natkey(f["name"])))
+    else:          films.sort(key=lambda f: (f["type"], f.get("order", 0)))             # the curated order of the panel
     groups = []
     for i, f in enumerate(films):
         if not groups or groups[-1]["type"] != f["type"] or groups[-1]["brand"] != f["brand"]:
@@ -264,11 +294,11 @@ def main(user_dir, repo_dir, out):
     for n, fl in ATTRS:
         w('    { "%s", %d },\n' % (n, sum(FLAGBITS[c] for c in fl)))
     w("};\n#define ATTR_COUNT ((int)(sizeof(attr_defs) / sizeof(attr_defs[0])))\n\n")
-    w("typedef struct { unsigned char id; short v; } fv_t;\n\n#define CURVE_MAX %d\n" % MAXPTS)
+    w("typedef struct { unsigned char id; short v; } fv_t;\n\n#define CURVE_MAX %d\n#define FILM_LANGS %d      /* languages of the kind / description texts: see i18n.h */\n" % (MAXPTS, len(I18N.LANGS)))
     w("typedef struct {\n    unsigned short group;     /* index into groups[] */\n"
       "    const char *name;         /* shown in the Film row (UTF-8, Polish letters are converted for the font) */\n"
       "    const char *full;         /* brand + name: goes into the XMP and the keyword */\n"
-      "    const char *kind;         /* shown under the name */\n    const char *desc;         /* short description */\n"
+      "    const char *kind[FILM_LANGS];   /* shown under the name, in every language (pl en de es cs it fr) */\n    const char *desc[FILM_LANGS];   /* short description, same order */\n"
       "    short iso;                /* 0 = not shown */\n"
       "    unsigned char mono, wb_custom, profile;   /* profile: 0 none, 1 Adobe Standard, 2 Camera Standard */\n"
       "    short temp, tint;\n    unsigned char nv;\n    const fv_t *v;\n"
@@ -300,7 +330,7 @@ def main(user_dir, repo_dir, out):
     w("\nstatic const film_t films[] = {     /* base films first (BASE_COUNT), then the push / pull variants */\n")
     for i, f in enumerate(allf):
         w("    { %d, %s, %s,\n      %s,\n      %s, %d,\n      %d, %d, %d, %d, %d,\n      %d, fv_%d,\n      { %s },\n      {\n"
-          % (f["group"], cstr(f["name"]), cstr(f["full"]), cstr(f["kind"]), cstr(f["desc"]), f["iso"],
+          % (f["group"], cstr(f["name"]), cstr(f["full"]), lstr(f["kind"], I18N.KIND), lstr(f["desc"], I18N.DESC), f["iso"],
              1 if f["mono"] else 0, f["wb_custom"], f["profile"], f["temp"], f["tint"],
              len(f["vals"]), i, ", ".join(str(len(c)) for c in f["cv"])))
         for c in f["cv"]:
@@ -327,5 +357,5 @@ def main(user_dir, repo_dir, out):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4: raise SystemExit(__doc__)
+    if len(sys.argv) not in (4, 5): raise SystemExit(__doc__)
     main(*sys.argv[1:])

@@ -1,0 +1,211 @@
+[
+{
+"src": "Kodak Portra 400",
+"full": "Kodak Portra 400",
+"name": "Portra 400",
+"desc": "Ciepły, miękki, ceniony za skórę i pastele",
+"kind": "Film kolorowy negatywowy",
+"iso": 400,
+"type": 0,
+"brand": "Kodak",
+"mono": false
+},
+{
+"src": "Kodak Ektar 100",
+"full": "Kodak Ektar 100",
+"name": "Ektar 100",
+"desc": "Mocno nasycony, bardzo drobne ziarno, kontrast",
+"kind": "Film kolorowy negatywowy",
+"iso": 100,
+"type": 0,
+"brand": "Kodak",
+"mono": false
+},
+{
+"src": "Kodak Gold 200",
+"full": "Kodak Gold 200",
+"name": "Gold 200",
+"desc": "Ciepły, złoty klasyk, żywe żółcie",
+"kind": "Film kolorowy negatywowy",
+"iso": 200,
+"type": 0,
+"brand": "Kodak",
+"mono": false
+},
+{
+"src": "Kodak Royal Gold 400",
+"full": "Kodak Royal Gold 400",
+"name": "Royal Gold 400",
+"desc": "Bogate nasycenie, drobniejsze ziarno niż Gold",
+"kind": "Film kolorowy negatywowy",
+"iso": 400,
+"type": 0,
+"brand": "Kodak",
+"mono": false
+},
+{
+"src": "Fuji Superia X-TRA 400",
+"full": "Fuji Superia X-TRA 400",
+"name": "Superia X-TRA 400",
+"desc": "Wyraziste zielenie, chłodne cienie, uniwersalny",
+"kind": "Film kolorowy negatywowy",
+"iso": 400,
+"type": 0,
+"brand": "Fuji",
+"mono": false
+},
+{
+"src": "Kodak Vision3 500T",
+"full": "Kodak Vision3 500T",
+"name": "Vision3 500T",
+"desc": "Kino 500T w C-41: zmiana barw, kinowe ziarno",
+"kind": "Film kinowy kolorowy",
+"iso": 500,
+"type": 0,
+"brand": "Kodak",
+"mono": false
+},
+{
+"src": "Kodak Tri-X 400",
+"full": "Kodak Tri-X 400",
+"name": "Tri-X 400",
+"desc": "Król reportażu: charakterystyczne ziarno, kontrast",
+"kind": "Film czarno-biały negatywowy",
+"iso": 400,
+"type": 1,
+"brand": "Kodak",
+"mono": true
+},
+{
+"src": "Ilford HP5 Plus",
+"full": "Ilford HP5 Plus",
+"name": "HP5 Plus",
+"desc": "Klasyczny reportażowy 400, wyraźne ziarno",
+"kind": "Film czarno-biały negatywowy",
+"iso": 400,
+"type": 1,
+"brand": "Ilford",
+"mono": true
+},
+{
+"src": "Ilford XP2 Super",
+"full": "Ilford XP2 Super",
+"name": "XP2 Super",
+"desc": "C-41, ziarno barwnikowe, gładkie światła",
+"kind": "Film czarno-biały (proces C-41)",
+"iso": 400,
+"type": 1,
+"brand": "Ilford",
+"mono": true
+},
+{
+"src": "Ilford Delta 3200",
+"full": "Ilford Delta 3200",
+"name": "Delta 3200",
+"desc": "Grube ziarno, podniesiona czerń, niski kontrast",
+"kind": "Film czarno-biały negatywowy",
+"iso": 3200,
+"type": 1,
+"brand": "Ilford",
+"mono": true
+},
+{
+"src": "Fuji Velvia 50",
+"full": "Fuji Velvia 50",
+"name": "Velvia 50",
+"desc": "Ekstremalne nasycenie, głębokie zielenie, kontrast",
+"kind": "Film kolorowy slajdowy",
+"iso": 50,
+"type": 2,
+"brand": "Fuji",
+"mono": false
+},
+{
+"src": "Kodachrome 64",
+"full": "Kodak Kodachrome 64",
+"name": "Kodachrome 64",
+"desc": "Klasyczny slajd: głębokie błękity, ciepłe czerwienie",
+"kind": "Film kolorowy slajdowy",
+"iso": 64,
+"type": 2,
+"brand": "Kodak",
+"mono": false
+},
+{
+"src": "Fuji Astia 100F",
+"full": "Fuji Astia 100F",
+"name": "Astia 100F",
+"desc": "Miękki, portretowy, neutralna skóra",
+"kind": "Film kolorowy slajdowy",
+"iso": 0,
+"type": 2,
+"brand": "Fuji",
+"mono": false
+},
+{
+"src": "Kodak Ektachrome 100VS",
+"full": "Kodak Ektachrome 100VS",
+"name": "Ektachrome 100VS",
+"desc": "Wersja Vivid: mocne czerwienie i błękity",
+"kind": "Film kolorowy slajdowy",
+"iso": 100,
+"type": 2,
+"brand": "Kodak",
+"mono": false
+},
+{
+"src": "(own look 1)",
+"full": "Własny preset 1",
+"name": "Preset 1",
+"desc": "",
+"kind": "Własny preset",
+"iso": 0,
+"type": 3,
+"brand": "Własne presety",
+"mono": false
+},
+{
+"src": "(own look 2)",
+"full": "Własny preset 2",
+"name": "Preset 2",
+"desc": "",
+"kind": "Własny preset",
+"iso": 0,
+"type": 3,
+"brand": "Własne presety",
+"mono": false
+},
+{
+"src": "(own look 3)",
+"full": "Własny preset 3",
+"name": "Preset 3",
+"desc": "",
+"kind": "Własny preset",
+"iso": 0,
+"type": 3,
+"brand": "Własne presety",
+"mono": false
+},
+{
+"src": "(own look 4)",
+"full": "Własny preset 4",
+"name": "Preset 4",
+"desc": "",
+"kind": "Własny preset",
+"iso": 0,
+"type": 3,
+"brand": "Własne presety",
+"mono": false
+},
+{
+"src": "(own look 5)",
+"full": "Własny preset 5",
+"name": "Preset 5",
+"desc": "",
+"kind": "Własny preset",
+"iso": 0,
+"type": 3,
+"brand": "Własne presety",
+"mono": false
+}
+]

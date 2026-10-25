@@ -26,7 +26,7 @@
 #include "xmp.h"
 #include "develop.h"
 
-#define VERSION "v0.9"
+#define VERSION "v0.10"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
 extern int gui_state;
@@ -41,7 +41,8 @@ extern int get_config_var(const char *name);
 static void cur_look(look_t *L)
 {
     L->strength = st_strength; L->grain = st_grain; L->contrast = st_contrast; L->fade = st_fade; L->warm = st_warm;
-    L->shadow = st_shadow; L->high = st_high; L->sat = st_sat; L->vig = st_vig; L->hal = st_hal;
+    L->shadow = st_shadow; L->high = st_high; L->sat = st_sat; L->vig = st_vig;
+    L->hal = 0;                    /* halation is switched off completely (v0.10): the slider is hidden, so an old saved value must not act */
 }
 
 /* ------------------------------------------------------------------ log */
@@ -209,14 +210,15 @@ static void pal_mute_all(void)
 }
 
 /* what has to be redrawn (set from the key handler, handled in the shoot task) */
-#define D_ROW(r) (1 << (r))          /* rows 0..16 */
-#define D_INFO   (1 << 17)           /* kind / description block under the film row */
-#define D_BAR    (1 << 18)           /* scroll bar of the list */
-#define D_LISTALL (1 << 19)          /* the whole list: it scrolled, or the rows / the sliders changed with the film */
-#define D_STATUS (1 << 20)           /* the JPG status at the top left */
-#define D_PROG   (1 << 21)           /* the progress line under the title */
+#define D_ROW(r) (1 << (r))          /* rows 0..19 */
+#define D_INFO   (1 << 20)           /* kind / description block under the film row */
+#define D_BAR    (1 << 21)           /* scroll bar of the list */
+#define D_LISTALL (1 << 22)          /* the whole list: it scrolled, or the rows / the sliders changed with the film */
+#define D_STATUS (1 << 23)           /* the JPG status at the top left */
+#define D_PROG   (1 << 24)           /* the progress line under the title */
+#define D_FULL   (1 << 25)           /* the look or the language of the panel changed: new palette / new texts, everything is drawn again */
 static volatile int dirty = 0;
-static const char *msg_text = "Zapisano";
+static int msg_id = S_MSG_SAVED;     /* the text (i18n.h) that the next save shows in the hint line */
 static int dev_pending(void);
 static volatile int dev_last_ms;
 static volatile int dev_phase;                   /* 0 nothing, 1 waits for the camera, 2 makes the JPG, 3 writes it to the card */
@@ -231,7 +233,10 @@ static void ui_attach(void)
 
 static int msg_until = 0;            /* ms clock: show the message in the hint line until then */
 static volatile int want_save = 0;
-static volatile int want_reset = 0;  /* SET on the row "Ustawienia domyślne" */
+static volatile int want_reset = 0;  /* SET on the row "Domyślne tego filmu" */
+static volatile int want_reset_all = 0;   /* the second SET on the row "Domyślne wszystkich filmów" */
+static volatile int arm_new = 0;     /* the first SET on that row: the hint line asks for the second one */
+static int arm_t = 0;                /* ms clock of the first SET */
 
 /* the JPG status at the top left: the number of JPGs that wait or are made now, otherwise how long the last one took */
 static char st_last[32] = "?";                  /* what the status field shows now ('?' = not drawn yet) */
@@ -241,10 +246,10 @@ static int prog_shown = -1;                      /* what the progress line shows
 static void status_text(char *t, int n)
 {
     int pend = dev_pending(), ms = dev_last_ms, ph = dev_phase;
-    if (pend > 0 && ph == 1)  snprintf(t, n, "czekam na aparat");
-    else if (pend > 0 && ph == 3) snprintf(t, n, "zapis na kartę");
-    else if (pend > 0) snprintf(t, n, "kolejka JPG: %d", pend);
-    else if (ms > 0)   snprintf(t, n, "obróbka: %d,%d s", ms / 1000, (ms % 1000) / 100);
+    if (pend > 0 && ph == 1)  snprintf(t, n, "%s", TR(S_ST_WAIT));
+    else if (pend > 0 && ph == 3) snprintf(t, n, "%s", TR(S_ST_WRITE));
+    else if (pend > 0) snprintf(t, n, TR(S_ST_QUEUE), pend);
+    else if (ms > 0)   snprintf(t, n, TR(S_ST_BUSY), ms / 1000, (ms % 1000) / 100);
     else               t[0] = 0;
 }
 
@@ -259,15 +264,34 @@ static void redraw_dirty(void)
         d |= D_LISTALL;
         want_save = 1;
         flog("defaults restored, sliders changed", k);
-        if (k == 0) msg_text = "Ustawienia są już domyślne";
-        else        msg_text = "Przywrócono ustawienia domyślne filmu";
+        msg_id = k == 0 ? S_MSG_ALRDY : S_MSG_RSTF;
+    }
+    if (want_reset_all) {                               /* the second SET on "Domyślne wszystkich filmów" */
+        int k;
+        want_reset_all = 0;
+        reset_armed = 0;
+        k = reset_all();
+        dirty |= D_LISTALL;
+        d |= D_LISTALL;
+        want_save = 1;
+        flog("defaults of all films restored, films changed", k);
+        msg_id = k == 0 ? S_MSG_ALRDY : S_MSG_RSTA;
+    }
+    if (arm_new) {                                      /* the first SET: ask for the second one (the row itself changed its text, see draw_reset_all) */
+        arm_new = 0;
+        msg_until = get_ms_clock() + 5000;
+        BMP_LOCK ( ui_attach(); draw_hint(TR(S_MSG_ARM)); )
+    }
+    if (reset_armed && get_ms_clock() - arm_t > 5000) {   /* nobody pressed the second SET: the question is gone */
+        reset_armed = 0;
+        d |= D_ROW(AROW); dirty |= D_ROW(AROW);
     }
     if (want_save) {
         want_save = 0;
         save_state();
         msg_until = get_ms_clock() + 1500;
-        BMP_LOCK ( ui_attach(); draw_hint(msg_text); )
-        msg_text = "Zapisano";
+        BMP_LOCK ( ui_attach(); draw_hint(TR(msg_id)); )
+        msg_id = S_MSG_SAVED;
         flog_s("settings saved, film", st_film > 0 ? films[eff_film() - 1].full : "Off");
     } else if (msg_until && get_ms_clock() > msg_until) {
         msg_until = 0;
@@ -284,6 +308,11 @@ static void redraw_dirty(void)
     }
     if (!d) return;
     dirty &= ~d;
+    if (d & D_FULL) {                                   /* the colours or the language changed: new palette entries / texts, the whole panel again */
+        BMP_LOCK ( ui_attach(); pal_build(); pal_apply(); draw_static(); paint_rows(); draw_status(st_last); draw_prog(prog_shown > 0 ? prog_shown : 0); )
+        want_save = 1;                                  /* the choice is kept at once */
+        return;
+    }
     BMP_LOCK
     (
         ui_attach();
@@ -331,6 +360,7 @@ static void do_open(void)
 {
     int i, t_mode = 0, t0 = get_ms_clock();
     kill_ml_overlay();
+    st_set = 0;                                         /* the panel always opens on the film, never on the settings */
     row = (st_film > 0) ? 2 : 0;                        /* start on the film row when a film is chosen */
     top = 0;
     list_build();
@@ -338,7 +368,8 @@ static void do_open(void)
     msg_until = 0;
     want_save = 0;
     want_reset = 0;
-    msg_text = "Zapisano";
+    msg_id = S_MSG_SAVED;
+    reset_armed = 0; arm_new = 0; want_reset_all = 0;
     strcpy(st_last, "?");
     prog_shown = -1;
     last_input_ms = get_ms_clock();
@@ -405,10 +436,15 @@ static int film_changed(void)
 
 static void change_value(int dir)
 {
-    if (row == 0) {                                      /* type: 0 = no effect, 1.. = colour / b&w / slide / own */
-        int ct = cur_type();
-        int nt = clampi(ct + dir, 0, TYPE_COUNT);
-        if (nt != ct) {
+    if (row == 0) {                                      /* tabs: 0 = no effect, 1.. = colour / b&w / slide / own, the last one = Ustawienia */
+        int ct = cur_tab();
+        int nt = clampi(ct + dir, 0, TAB_SET);
+        if (nt != ct && (nt == TAB_SET || ct == TAB_SET)) {   /* to / from the settings: the chosen film (an own preset) stays chosen */
+            st_set = (nt == TAB_SET);
+            list_build();
+            top = 0;
+            dirty |= D_ROW(0) | D_ROW(1) | D_ROW(2) | D_INFO | D_LISTALL;
+        } else if (nt != ct) {
             remember();
             if (nt == 0) st_film = 0;
             else {
@@ -447,6 +483,16 @@ static void change_value(int dir)
         int nv = clampi(st_place + dir, 0, 2);
         if (nv != st_place) { st_place = nv; dirty |= D_ROW(PROW); }
     }
+    else if (row == TROW) {                              /* the look of the panel */
+        int nv = clampi(st_theme + dir, 0, 1);
+        if (nv != st_theme) { st_theme = nv; dirty |= D_FULL; }
+    }
+    else if (row == LROW) {                              /* the language of the panel */
+        int nv = clampi(st_lang + dir, 0, NLANG - 1);
+        if (nv != st_lang) { st_lang = nv; strcpy(st_last, "?"); dirty |= D_FULL; }
+    }
+    else if (row == AROW) {                              /* the dial does nothing here: SET (twice) restores the defaults of all films */
+    }
     else {                                               /* a slider */
         int j = row - 4;
         int *p = sl_var(j);
@@ -460,6 +506,7 @@ static void set_row(int r)
     r = clampi(r, 0, NROWS - 1);
     if (r != row) {
         dirty |= D_ROW(row) | D_ROW(r);                                /* selection colours change */
+        if (reset_armed) { reset_armed = 0; msg_until = 1; }           /* left the row after the first SET: the question is gone (and its hint) */
         row = r;
         {                                                              /* keep the row inside the window */
             int nt = top, p = lst_pos(r);
@@ -479,10 +526,8 @@ static int row_enabled(int r)
 {
     if (r == 0) return 1;
     if (r == 1) return 0;
-    if (r == 2) return st_film > 0;
-    if (lst_pos(r) < 0) return 0;
-    if (r == 3) return n_opts() > 1;
-    return 1;
+    if (r == 2) return st_film > 0 && !st_set;
+    return lst_pos(r) >= 0;
 }
 
 /* joystick up / down */
@@ -529,7 +574,12 @@ static unsigned int filmlook_keypress(unsigned int key)
     case MODULE_KEY_PRESS_UP:    move_row(-1); break;       /* joystick up      */
     case MODULE_KEY_PRESS_SET:
     case MODULE_KEY_JOY_CENTER:                             /* SET = save the settings; on the last row: back to the defaults */
-        if (row == RROW) want_reset = 1; else want_save = 1;
+        if (row == RROW) want_reset = 1;
+        else if (row == AROW) {                                 /* the first SET asks, the second one (within 5 s) does it */
+            if (reset_armed) want_reset_all = 1;
+            else { reset_armed = 1; arm_t = get_ms_clock(); arm_new = 1; dirty |= D_ROW(AROW); }
+        }
+        else want_save = 1;
         break;
     case MODULE_KEY_TRASH:
     case MODULE_KEY_INFO:
@@ -1049,7 +1099,7 @@ static int shrink_jpg(const uint8_t *src, uint32_t slen, uint8_t *dst, uint32_t 
     se_jpeg_scaled_size(ji.width, ji.height, 2, &ow, &oh);
     s.buf = dst; s.cap = dcap; s.len = 0;
     s.enc = SE_NEW(&ar, se_jpeg, 1);
-    strip = SE_NEW(&ar, uint8_t, (size_t)8 * ow * 3);
+    strip = SE_NEW(&ar, uint8_t, SE_JPEG_STRIP_BYTES(ow));
     if (!s.enc || !strip) return 1;
     rc = se_jpeg_begin(s.enc, ow, oh, quality, strip, 0, shrink_sink, &s);
     if (rc == SE_OK) rc = se_jpeg_decode_scaled(src, slen, 2, &ar, shrink_rows, &s, &ji);
@@ -1243,6 +1293,10 @@ static int dev_run(const dev_job_t *j)
                 flog("JPG ms writing to the card", dio.ms_write);
                 flog("JPG ms all, without the waiting", dev_last_ms);
                 flog("JPG ms since the shot", get_ms_clock() - j->t_shot);
+                if (ui_state == UI_CLOSED && !is_play_mode() && !QR_MODE) {          /* a short note on the screen: the JPG is ready (nothing is drawn over the panel or the pictures) */
+                    NotifyBox(3500, "Film Look: %04d ready, %d.%d s%s%s", j->number % 10000, dev_last_ms / 1000, (dev_last_ms % 1000) / 100,
+                              (j->place >= 1 && src_jpg && replaced == 0) ? ", JPG replaced" : "", (want_prev && patched == 0) ? ", RAW preview" : "");
+                }
                 flog("JPG source window KB", (int)(dio.icap >> 10));
                 flog("JPG bytes", (int)dio.total);
                 flog("JPG arena peak KB", (int)(res.mem_peak >> 10));

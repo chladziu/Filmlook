@@ -178,7 +178,7 @@ static int fl_look_rows(void *ctx, const uint8_t *rgb, int nrows, int width)
 static size_t fl_mem_needed(int src_w, int dscale)
 {
     size_t ow = (size_t)((src_w + dscale - 1) / dscale);
-    return FL_HDR_BYTES + ow * 3 * 8 + 8 * 1024 + ow * 16 * 6 + 16 * 1024 + SE_LOOK_BUDGET + 12 * 1024 + ow * 4 + 4096;
+    return FL_HDR_BYTES + ow * 3 * SE_JPEG_MCU + 8 * 1024 + ow * 16 * 6 + 16 * 1024 + SE_LOOK_BUDGET + 12 * 1024 + ow * 4 + 4096;
 }
 
 /* dscale: 1, 2 or 4. quality: JPEG quality of the result. */
@@ -231,7 +231,7 @@ static void fl_develop(const fl_io *io, const film_t *f, const look_t *L, int ds
 
     c.io = io; c.base = poff; c.ow = ow; c.err = 0; c.rows = 0; c.oh = oh > 0 ? oh : 1;
     c.enc = SE_NEW(&ar, se_jpeg, 1);
-    strip = SE_NEW(&ar, uint8_t, (size_t)8 * ow * 3);
+    strip = SE_NEW(&ar, uint8_t, SE_JPEG_STRIP_BYTES(ow));
     if (!c.enc || !strip) { res->rc = SE_E_NOMEM; return; }
 
     memset(&ex, 0, sizeof ex);

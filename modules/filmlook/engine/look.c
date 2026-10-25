@@ -198,9 +198,33 @@ static void gamut_fit(int *rr, int *gg, int *bb)
 
 /* ------------------------------------------------------- the run ----- */
 
+static int smooth256(int t);
+static int gnoise(unsigned gx, unsigned gy, unsigned seed);
+
+/* one layer of the film grain (see noise_layer): everything that does not change from row to row is made once */
+typedef struct {
+    uint16_t *tx, *gi;        /* per pixel: the smooth weight between two lattice points (0..256) and the left lattice point */
+    int      *n0, *n1, *vv;   /* noise of the lattice row gy and gy + 1, and the blend of both for the row that is made now */
+    int       nl, gyc;        /* lattice points in a row, the gy of n0 (-1 = none yet) */
+    unsigned  inc, seed;
+    int       weight;
+} gl_t;
+
+static int grain_layer_begin(gl_t *g, se_arena *ar, int w, unsigned inc, unsigned seed, int weight);
+
+/* Colour table: the whole per-pixel stage (hue, saturation, split tone, chroma rolloff, gamut) depends only on the colour the curves
+ * produce, so it is evaluated once for LUT_N^3 colours per photo (with the original code, grade_row_direct) and every pixel then
+ * interpolates between them (tetrahedral, like a cube LUT of a colourist's software): about 70 instead of 250 instructions. */
+#ifndef LUT_N
+#define LUT_N      25
+#endif
+#define LUT_BYTES  ((size_t)LUT_N * LUT_N * LUT_N * 3)
+static void lut_build(uint8_t *lut, const se_look *lk);
+
 struct se_look_run {
     se_look  lk;
     int      w;
+    uint8_t *lut;             /* LUT_N^3 x 3 bytes, r slowest, b fastest; NULL = grade every pixel directly */
     int      y_out;           /* rows emitted                            */
 
     int      on;              /* halation enabled: a delay line is live  */
@@ -215,17 +239,29 @@ struct se_look_run {
 
     uint8_t *flat;            /* !on only: the one row we grade into     */
     int     *gn;              /* grain: the noise of one row              */
+    gl_t     gl[2];           /* grain: the coarse and the fine layer     */
+    int      ngl;
 
     int     *vx2;             /* vignette: squared horizontal distance of every column, pre-shifted */
     int      vshift;          /* right shift that brings the squared distance below 65536 */
     int      vscale;          /* 255 * 65536 / (max squared distance >> vshift) */
 };
 
+/* lattice points of one grain layer in a row of `width` pixels */
+static int grain_lattice(unsigned inc, int width) { return (int)(((unsigned)(width - 1) * inc) >> 16) + 2; }
+
+static size_t grain_layer_bytes(int inc, int width)
+{
+    return (size_t)width * 2 * sizeof(uint16_t) + (size_t)grain_lattice((unsigned)inc, width) * 3 * sizeof(int) + 64;
+}
+
 size_t se_look_bytes(const se_look *lk, int width)
 {
     size_t n;
     size_t vig = lk->vig_amount > 0 ? (size_t)width * sizeof(int) + 16 : 0;
-    if (lk->grain > 0) vig += (size_t)width * sizeof(int) + 16;
+    if (lk->grain > 0) vig += (size_t)width * sizeof(int) + 16 + grain_layer_bytes(lk->grain_inc_a, width) +
+                              (lk->grain_w_b > 0 ? grain_layer_bytes(lk->grain_inc_b, width) : 0);
+    vig += LUT_BYTES + 16;                                           /* the colour table */
     if (lk->hal_amount <= 0)
         return sizeof(struct se_look_run) + (size_t)width * 3 + 32 + vig;
     n  = sizeof(struct se_look_run) + 16 + vig;
@@ -278,6 +314,12 @@ se_err se_look_begin(se_look_run **out, const se_look *lk,
     memset(r, 0, sizeof *r);
     r->lk = *lk;
     r->w  = width;
+#ifdef SE_NO_LUT                                             /* (PC tests only: the old way, to compare with) */
+    r->lut = 0;
+#else
+    r->lut = SE_NEW(ar, uint8_t, LUT_BYTES);                 /* (a failed allocation only means: grade every pixel directly) */
+    if (r->lut) lut_build(r->lut, &r->lk);
+#endif
 
     if (lk->hal_amount > 0) {
         r->r      = lk->hal_radius;
@@ -308,6 +350,9 @@ se_err se_look_begin(se_look_run **out, const se_look *lk,
     if (lk->grain > 0) {
         r->gn = SE_NEW(ar, int, width);
         if (!r->gn) return SE_E_NOMEM;
+        r->ngl = lk->grain_w_b > 0 ? 2 : 1;
+        if (grain_layer_begin(&r->gl[0], ar, width, (unsigned)lk->grain_inc_a, 0x5EEDu, lk->grain_w_a)) return SE_E_NOMEM;
+        if (r->ngl > 1 && grain_layer_begin(&r->gl[1], ar, width, (unsigned)lk->grain_inc_b, 0xB10Cu, lk->grain_w_b)) return SE_E_NOMEM;
     }
     if (lk->vig_amount > 0 && lk->vig_h > 1 && width > 1) {
         int x, h = lk->vig_h;
@@ -330,7 +375,7 @@ se_err se_look_begin(se_look_run **out, const se_look *lk,
 
 /* Curves, saturation and split tone: everything that needs only the pixel
  * itself. Writes in place. */
-static void grade_row(const se_look *lk, uint8_t *row, int w)
+static void grade_row_direct(const se_look *lk, uint8_t *row, int w)
 {
     int x;
     for (x = 0; x < w; x++) {
@@ -435,6 +480,94 @@ static void grade_row(const se_look *lk, uint8_t *row, int w)
     }
 }
 
+/* the colour table of this photo: grade_row_direct on the LUT_N^3 colours (the curves are applied outside, so the nodes are the colours
+ * AFTER the curves; the node k stands for the value k * 255 / (LUT_N - 1)) */
+static void lut_build(uint8_t *lut, const se_look *lk)
+{
+    se_look id = *lk;
+    uint8_t row[LUT_N * 3];
+    int c, v, ri, gi, bi;
+    for (c = 0; c < 3; c++) for (v = 0; v < 256; v++) id.map[c][v] = (uint8_t)v;
+    for (ri = 0; ri < LUT_N; ri++)
+        for (gi = 0; gi < LUT_N; gi++) {
+            for (bi = 0; bi < LUT_N; bi++) {
+                row[bi * 3 + 0] = (uint8_t)((ri * 255 + (LUT_N - 1) / 2) / (LUT_N - 1));
+                row[bi * 3 + 1] = (uint8_t)((gi * 255 + (LUT_N - 1) / 2) / (LUT_N - 1));
+                row[bi * 3 + 2] = (uint8_t)((bi * 255 + (LUT_N - 1) / 2) / (LUT_N - 1));
+            }
+            grade_row_direct(&id, row, LUT_N);
+            memcpy(lut + ((size_t)(ri * LUT_N + gi) * LUT_N) * 3, row, (size_t)LUT_N * 3);
+        }
+}
+
+/* the same as grade_row_direct, from the table: curves, then tetrahedral interpolation. The position of a value c on the table is
+ * c * (LUT_N - 1) / 255 in 1/256 of a node: (c * (LUT_N - 1) * 257) >> 8 (255 -> the last node exactly). */
+static void grade_row_lut(const se_look *lk, const uint8_t *lut, uint8_t *row, int w)
+{
+    const unsigned K = (LUT_N - 1) * 257;
+    int x;
+    for (x = 0; x < w; x++) {
+        unsigned pr = ((unsigned)lk->map[0][row[x * 3 + 0]] * K) >> 8;
+        unsigned pg = ((unsigned)lk->map[1][row[x * 3 + 1]] * K) >> 8;
+        unsigned pb = ((unsigned)lk->map[2][row[x * 3 + 2]] * K) >> 8;
+        unsigned fr = pr & 255, fg = pg & 255, fb = pb & 255;
+        const uint8_t *n0 = lut + ((((pr >> 8) * LUT_N + (pg >> 8)) * LUT_N + (pb >> 8)) * 3);
+        /* the three axes, the biggest fraction first: node offsets 867 (r), 51 (g), 3 (b) */
+        unsigned f1, f2, f3, o1, o2;
+        const unsigned sr = LUT_N * LUT_N * 3, sg = LUT_N * 3, sb = 3;
+        if (fr >= fg) {
+            if (fg >= fb)      { f1 = fr; f2 = fg; f3 = fb; o1 = sr; o2 = sg; }
+            else if (fr >= fb) { f1 = fr; f2 = fb; f3 = fg; o1 = sr; o2 = sb; }
+            else               { f1 = fb; f2 = fr; f3 = fg; o1 = sb; o2 = sr; }
+        } else {
+            if (fr >= fb)      { f1 = fg; f2 = fr; f3 = fb; o1 = sg; o2 = sr; }
+            else if (fg >= fb) { f1 = fg; f2 = fb; f3 = fr; o1 = sg; o2 = sb; }
+            else               { f1 = fb; f2 = fg; f3 = fr; o1 = sb; o2 = sg; }
+        }
+        {
+            const uint8_t *na = n0 + o1, *nb = na + o2, *nc = n0 + (sr + sg + sb);
+            int k;
+            for (k = 0; k < 3; k++) {
+                int v = ((int)n0[k] << 8) + (int)f1 * ((int)na[k] - (int)n0[k]) + (int)f2 * ((int)nb[k] - (int)na[k]) + (int)f3 * ((int)nc[k] - (int)nb[k]);
+                row[x * 3 + k] = (uint8_t)((v + 128) >> 8);
+            }
+        }
+    }
+}
+
+#ifdef SE_LUT_CHECK                                    /* PC test: how far is the table from the direct grading? */
+#include <stdio.h>
+#include <stdlib.h>
+static long lc_n, lc_sum, lc_max, lc_hist[8];
+static void lc_report(void)
+{
+    fprintf(stderr, "LUT check: %ld values, mean abs error %.3f, max %ld, error 0:%ld 1:%ld 2:%ld 3:%ld 4+:%ld\n", lc_n, (double)lc_sum / (double)lc_n,
+            lc_max, lc_hist[0], lc_hist[1], lc_hist[2], lc_hist[3], lc_hist[4] + lc_hist[5] + lc_hist[6] + lc_hist[7]);
+}
+#endif
+static void grade_row(const se_look *lk, const uint8_t *lut, uint8_t *row, int w)
+{
+    if (!lut) { grade_row_direct(lk, row, w); return; }
+#ifdef SE_LUT_CHECK
+    {
+        static int reg;
+        uint8_t *ref = (uint8_t *)malloc((size_t)w * 3);
+        int i;
+        if (!reg) { reg = 1; atexit(lc_report); }
+        memcpy(ref, row, (size_t)w * 3);
+        grade_row_direct(lk, ref, w);
+        grade_row_lut(lk, lut, row, w);
+        for (i = 0; i < w * 3; i++) {
+            long e = row[i] > ref[i] ? row[i] - ref[i] : ref[i] - row[i];
+            lc_n++; lc_sum += e; if (e > lc_max) lc_max = e; lc_hist[e > 7 ? 7 : e]++;
+        }
+        free(ref);
+        return;
+    }
+#endif
+    grade_row_lut(lk, lut, row, w);
+}
+
 /*
  * The highlight mask for one graded row, blurred horizontally.
  *
@@ -533,45 +666,63 @@ static int gnoise(unsigned gx, unsigned gy, unsigned seed)
     return (int)(grain_hash(gx, gy, seed) & 0xFFFF) - 32768;
 }
 
-/* one layer for row y into out[0..w): `first` writes it, otherwise it is added; weight is 256 = 1.0 */
-static void noise_layer(int *out, int w, int y, unsigned inc, unsigned seed, int weight, int first)
+/* a layer is made once per frame: the weights between the lattice points of every pixel do not change from row to row */
+static int grain_layer_begin(gl_t *g, se_arena *ar, int w, unsigned inc, unsigned seed, int weight)
 {
-    unsigned fy = (unsigned)y * inc, gy = fy >> 16, gx = 0, fx = 0;
-    int ty = smooth256((int)((fy >> 8) & 255));
-    int a0 = gnoise(0, gy, seed), a1 = gnoise(0, gy + 1, seed);
-    int b0 = gnoise(1, gy, seed), b1 = gnoise(1, gy + 1, seed);
     int x;
+    g->inc = inc; g->seed = seed; g->weight = weight; g->gyc = -1;
+    g->nl = grain_lattice(inc, w);
+    g->tx = SE_NEW(ar, uint16_t, w);
+    g->gi = SE_NEW(ar, uint16_t, w);
+    g->n0 = SE_NEW(ar, int, g->nl);
+    g->n1 = SE_NEW(ar, int, g->nl);
+    g->vv = SE_NEW(ar, int, g->nl);
+    if (!g->tx || !g->gi || !g->n0 || !g->n1 || !g->vv) return 1;
     for (x = 0; x < w; x++) {
-        int tx = smooth256((int)((fx >> 8) & 255));
-        int top = a0 + (((b0 - a0) * tx) >> 8);
-        int bot = a1 + (((b1 - a1) * tx) >> 8);
-        int n = (top + (((bot - top) * ty) >> 8)) * weight >> 8;
-        if (first) out[x] = n; else out[x] += n;
-        fx += inc;
-        if (fx >= 65536u) {                       /* inc < 65536 for the coarse layer; the fine one may be 65536: one step */
-            gx += fx >> 16; fx &= 0xFFFFu;
-            a0 = b0; a1 = b1;
-            b0 = gnoise(gx + 1, gy, seed); b1 = gnoise(gx + 1, gy + 1, seed);
-        }
+        unsigned fx = (unsigned)x * inc;
+        g->gi[x] = (uint16_t)(fx >> 16);
+        g->tx[x] = (uint16_t)smooth256((int)((fx >> 8) & 255));
     }
+    return 0;
+}
+
+/* the lattice of row y: the noise of the lattice rows gy and gy + 1 (kept from the row before when gy did not change, or
+ * moved by one), blended for the position of y between them */
+static void grain_layer_row(gl_t *g, int y)
+{
+    unsigned fy = (unsigned)y * g->inc;
+    int gy = (int)(fy >> 16), ty = smooth256((int)((fy >> 8) & 255)), i, nl = g->nl;
+    if (gy != g->gyc) {
+        if (g->gyc >= 0 && gy == g->gyc + 1) { int *s = g->n0; g->n0 = g->n1; g->n1 = s; }
+        else for (i = 0; i < nl; i++) g->n0[i] = gnoise((unsigned)i, (unsigned)gy, g->seed);
+        for (i = 0; i < nl; i++) g->n1[i] = gnoise((unsigned)i, (unsigned)gy + 1, g->seed);
+        g->gyc = gy;
+    }
+    for (i = 0; i < nl; i++) { int a = g->n0[i]; g->vv[i] = a + (((g->n1[i] - a) * ty) >> 8); }
 }
 
 static void grain_row(const se_look *lk, se_look_run *r, uint8_t *row, int w, int y)
 {
-    int x, *gn = r->gn;
+    int x;
     /* 0..100 -> about +-15 at full strength. */
     int amp = (lk->grain * SE_GRAIN_AMP) / 100;
-    if (amp <= 0 || !gn) return;
-    noise_layer(gn, w, y, (unsigned)lk->grain_inc_a, 0x5EEDu, lk->grain_w_a, 1);
-    if (lk->grain_w_b > 0) noise_layer(gn, w, y, (unsigned)lk->grain_inc_b, 0xB10Cu, lk->grain_w_b, 0);
+    gl_t *A = &r->gl[0], *B = &r->gl[1];
+    if (amp <= 0 || !r->gn) return;
+    grain_layer_row(A, y);
+    if (r->ngl > 1) grain_layer_row(B, y);
     for (x = 0; x < w; x++) {
-        int c, d = (gn[x] * amp) >> 15;
-        for (c = 0; c < 3; c++) {
-            int v = row[x * 3 + c];
-            /* 4v(1-v), in eighths, so grain fades out at both ends */
-            int wgt = (v * (255 - v)) >> 6;     /* 0..254 */
-            row[x * 3 + c] = (uint8_t)clamp8(v + ((d * wgt) >> 8));
+        int g = A->gi[x], a = A->vv[g], n = ((a + (((A->vv[g + 1] - a) * A->tx[x]) >> 8)) * A->weight) >> 8;
+        int d, v, wgt;
+        if (r->ngl > 1) {
+            g = B->gi[x]; a = B->vv[g];
+            n += ((a + (((B->vv[g + 1] - a) * B->tx[x]) >> 8)) * B->weight) >> 8;
         }
+        d = (n * amp) >> 15;
+        if (!d) continue;
+        /* 4v(1-v), in eighths, so grain fades out at both ends */
+        v = row[x * 3 + 0]; wgt = (v * (255 - v)) >> 6; row[x * 3 + 0] = (uint8_t)clamp8(v + ((d * wgt) >> 8));
+        v = row[x * 3 + 1]; wgt = (v * (255 - v)) >> 6; row[x * 3 + 1] = (uint8_t)clamp8(v + ((d * wgt) >> 8));
+        v = row[x * 3 + 2]; wgt = (v * (255 - v)) >> 6; row[x * 3 + 2] = (uint8_t)clamp8(v + ((d * wgt) >> 8));
     }
 }
 
@@ -645,7 +796,7 @@ static se_err push_row(se_look_run *r, const uint8_t *src,
         for (x = 0; x < w; x++) r->colsum[x] -= msk[x];
 
     memcpy(dly, src, (size_t)w * 3);
-    grade_row(&r->lk, dly, w);
+    grade_row(&r->lk, r->lut, dly, w);
     mask_row(&r->lk, dly, w, r->scratch, msk);
 
     for (x = 0; x < w; x++) r->colsum[x] += msk[x];
@@ -682,7 +833,7 @@ se_err se_look_rows(se_look_run *r, const uint8_t *rgb, int nrows,
              * The caller's rows are const and may be the decoder's own
              * scratch, so the grade lands in our row, never in theirs. */
             memcpy(r->flat, src, (size_t)r->w * 3);
-            grade_row(&r->lk, r->flat, r->w);
+            grade_row(&r->lk, r->lut, r->flat, r->w);
             e = emit_one(r, r->flat, emit, ctx);
             if (e != SE_OK) return e;
             continue;

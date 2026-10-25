@@ -409,44 +409,42 @@ static void fdct(int32_t *d)
 
 /* --------------------------------------------------------- encoding --- */
 
-static int magnitude(int v)
+/* number of bits of |v|: the Huffman magnitude category (clz is one instruction on the ARM9E) */
+static inline int magnitude(int v)
 {
-    int n = 0;
-    if (v < 0) v = -v;
-    while (v) { n++; v >>= 1; }
-    return n;
+    unsigned a = (unsigned)(v < 0 ? -v : v);
+    return a ? 32 - __builtin_clz(a) : 0;
 }
 
 static void encode_block(se_jpeg *j, int32_t *blk, int qtbl, int comp,
                          const uint32_t *dc, const uint32_t *ac)
 {
-    int32_t  q[64];
-    int      i, k, run, dcdiff, m;
+    const uint32_t *rc = j->qrecip[qtbl];
+    int      k, run, dcdiff, m, q0;
     uint32_t c;
 
     fdct(blk);
 
-    for (i = 0; i < 64; i++) {
-        int32_t  v = blk[i];
-        uint32_t r = j->qrecip[qtbl][i];
-        /* reciprocal multiply instead of a divide: no hardware divider here */
-        if (v >= 0) q[i] =  (int32_t)(((int64_t) v * r + 32768) >> 16);
-        else        q[i] = -(int32_t)(((int64_t)-v * r + 32768) >> 16);
-    }
-
     /* --- DC: differential against the previous block of this component -- */
-    dcdiff = q[0] - j->dcpred[comp];
-    j->dcpred[comp] = q[0];
+    /* reciprocal multiply instead of a divide: no hardware divider here; |coefficient| < 2^15 and the reciprocal < 2^13,
+     * so the product stays inside 32 bits */
+    q0 = blk[0] >= 0 ? (int)(((uint32_t)blk[0] * rc[0] + 32768u) >> 16)
+                     : -(int)(((uint32_t)(-blk[0]) * rc[0] + 32768u) >> 16);
+    dcdiff = q0 - j->dcpred[comp];
+    j->dcpred[comp] = q0;
     m = magnitude(dcdiff);
     c = dc[m];
     jo_bits(j, c & 0xffff, (int)(c >> 16));
     if (m)
         jo_bits(j, (uint32_t)(dcdiff < 0 ? dcdiff - 1 : dcdiff) & ((1u << m) - 1), m);
 
-    /* --- AC, in zig-zag order ------------------------------------------ */
+    /* --- AC, in zig-zag order, quantised on the way ---------------------- */
     run = 0;
     for (k = 1; k < 64; k++) {
-        int32_t v = q[g_zigzag[k]];
+        int      i = g_zigzag[k];
+        int32_t  s = blk[i], v;
+        if (s >= 0) v =  (int32_t)(((uint32_t)s * rc[i] + 32768u) >> 16);
+        else        v = -(int32_t)(((uint32_t)(-s) * rc[i] + 32768u) >> 16);
         if (v == 0) { run++; continue; }
         while (run > 15) {
             c = ac[0xf0];                       /* ZRL: 16 zeroes */
@@ -541,7 +539,7 @@ se_err se_jpeg_begin(se_jpeg *j, int width, int height, int quality,
     jo_byte(j, 0x01);
     for (i = 0; i < 64; i++) jo_byte(j, j->qt[1][g_zigzag[i]]);
 
-    /* SOF0, 4:4:4 */
+    /* SOF0, 4:2:0: Y 2x2, Cb and Cr 1x1 */
     jo_u16(j, 0xffc0);
     jo_u16(j, 8 + 3 * 3);
     jo_byte(j, 8);
@@ -550,7 +548,7 @@ se_err se_jpeg_begin(se_jpeg *j, int width, int height, int quality,
     jo_byte(j, 3);
     for (i = 0; i < 3; i++) {
         jo_byte(j, (uint8_t)(i + 1));
-        jo_byte(j, 0x11);                       /* no subsampling */
+        jo_byte(j, (uint8_t)(i == 0 ? 0x22 : 0x11));   /* sampling factors */
         jo_byte(j, (uint8_t)(i == 0 ? 0 : 1));  /* quant table id */
     }
 
@@ -571,25 +569,32 @@ se_err se_jpeg_begin(se_jpeg *j, int width, int height, int quality,
     return j->failed ? SE_E_IO : SE_OK;
 }
 
-/* Encode the 8 rows currently held in j->strip. */
+/* Encode the 16 rows currently held in j->strip: one MCU = 16 x 16 pixels = 4 luma blocks + 1 Cb + 1 Cr (4:2:0). */
 static void encode_strip(se_jpeg *j)
 {
     int w = j->width;
-    int mcux, bx, by;
+    int mcux, cx, cy;
 
-    for (mcux = 0; mcux * 8 < w; mcux++) {
-        int32_t Y[64], Cb[64], Cr[64];
-        int x0 = mcux * 8;
+    for (mcux = 0; mcux * 16 < w; mcux++) {
+        int32_t Y[4][64], Cb[64], Cr[64];
+        int x0 = mcux * 16;
 
-        for (by = 0; by < 8; by++) {
-            const uint8_t *src = j->strip + (size_t)by * w * 3;
-            for (bx = 0; bx < 8; bx++) {
-                int x = x0 + bx;
-                int r, g, b, o = by * 8 + bx;
-                if (x >= w) x = w - 1;           /* replicate the right edge */
-                r = src[x * 3 + 0];
-                g = src[x * 3 + 1];
-                b = src[x * 3 + 2];
+        for (cy = 0; cy < 8; cy++) {
+            const uint8_t *s0 = j->strip + (size_t)(2 * cy) * w * 3;
+            const uint8_t *s1 = s0 + (size_t)w * 3;
+            for (cx = 0; cx < 8; cx++) {
+                int xa = x0 + 2 * cx, xb = xa + 1;
+                int r0, g0, b0, r1, g1, b1, r2, g2, b2, r3, g3, b3;
+                int blk = ((2 * cy) >> 3) * 2 + ((2 * cx) >> 3);
+                int o = ((2 * cy) & 7) * 8 + ((2 * cx) & 7);
+                const uint8_t *p;
+                int sr, sg, sb;
+                if (xa >= w) xa = w - 1;             /* replicate the right edge */
+                if (xb >= w) xb = w - 1;
+                p = s0 + xa * 3; r0 = p[0]; g0 = p[1]; b0 = p[2];
+                p = s0 + xb * 3; r1 = p[0]; g1 = p[1]; b1 = p[2];
+                p = s1 + xa * 3; r2 = p[0]; g2 = p[1]; b2 = p[2];
+                p = s1 + xb * 3; r3 = p[0]; g3 = p[1]; b3 = p[2];
                 /*
                  * Rec.601 RGB -> YCbCr in Q16, already level-shifted by -128:
                  * Y drops the +128 offset, and Cb/Cr are naturally signed.
@@ -597,13 +602,21 @@ static void encode_strip(se_jpeg *j)
                  * arithmetic shift biases every sample half a count low,
                  * which costs real PSNR across the whole frame.
                  */
-                Y [o] = (( 19595 * r + 38470 * g +  7471 * b + 32768) >> 16) - 128;
-                Cb[o] =  (-11056 * r - 21712 * g + 32768 * b + 32768) >> 16;
-                Cr[o] =  ( 32768 * r - 27440 * g -  5328 * b + 32768) >> 16;
+                Y[blk][o]     = (( 19595 * r0 + 38470 * g0 +  7471 * b0 + 32768) >> 16) - 128;
+                Y[blk][o + 1] = (( 19595 * r1 + 38470 * g1 +  7471 * b1 + 32768) >> 16) - 128;
+                Y[blk][o + 8] = (( 19595 * r2 + 38470 * g2 +  7471 * b2 + 32768) >> 16) - 128;
+                Y[blk][o + 9] = (( 19595 * r3 + 38470 * g3 +  7471 * b3 + 32768) >> 16) - 128;
+                /* chroma of the mean of the 2 x 2 pixels: the sums are four times too big, hence the shift by 18 */
+                sr = r0 + r1 + r2 + r3; sg = g0 + g1 + g2 + g3; sb = b0 + b1 + b2 + b3;
+                Cb[cy * 8 + cx] = (-11056 * sr - 21712 * sg + 32768 * sb + 131072) >> 18;
+                Cr[cy * 8 + cx] = ( 32768 * sr - 27440 * sg -  5328 * sb + 131072) >> 18;
             }
         }
 
-        encode_block(j, Y,  0, 0, g_dc_lum, g_ac_lum);
+        encode_block(j, Y[0], 0, 0, g_dc_lum, g_ac_lum);
+        encode_block(j, Y[1], 0, 0, g_dc_lum, g_ac_lum);
+        encode_block(j, Y[2], 0, 0, g_dc_lum, g_ac_lum);
+        encode_block(j, Y[3], 0, 0, g_dc_lum, g_ac_lum);
         encode_block(j, Cb, 1, 1, g_dc_chr, g_ac_chr);
         encode_block(j, Cr, 1, 2, g_dc_chr, g_ac_chr);
     }
@@ -620,7 +633,7 @@ se_err se_jpeg_write_rows(se_jpeg *j, const uint8_t *rgb, int nrows)
                (size_t)j->width * 3);
         j->strip_rows++;
         j->rows_done++;
-        if (j->strip_rows == 8) {
+        if (j->strip_rows == SE_JPEG_MCU) {
             encode_strip(j);
             j->strip_rows = 0;
         }
@@ -633,7 +646,7 @@ se_err se_jpeg_end(se_jpeg *j)
     if (j->strip_rows) {
         /* pad the final partial MCU row by repeating the last line */
         int w = j->width;
-        while (j->strip_rows < 8) {
+        while (j->strip_rows < SE_JPEG_MCU) {
             memcpy(j->strip + (size_t)j->strip_rows * w * 3,
                    j->strip + (size_t)(j->strip_rows - 1) * w * 3,
                    (size_t)w * 3);

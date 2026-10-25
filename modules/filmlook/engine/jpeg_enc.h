@@ -1,7 +1,8 @@
 /*
  * jpeg_enc.h - baseline JPEG encoder, streaming and integer-only.
  *
- * Writes 4:4:4 baseline sequential JPEG. Rows are pushed in 8-line strips
+ * Writes 4:2:0 baseline sequential JPEG (the chroma planes at half width and height: half the encoding work of 4:4:4,
+ * and the picture does not show it). Rows are pushed in 16-line strips
  * so the encoder never holds more than one MCU row, which is what lets the
  * whole pipeline run in a band rather than a frame.
  *
@@ -17,7 +18,9 @@
 /* Sink for encoded bytes. Returns 0 on success. */
 typedef int (*se_jpeg_sink)(void *ctx, const uint8_t *data, size_t len);
 
-#define SE_JPEG_MCU 8
+#define SE_JPEG_MCU 16
+/* bytes of the strip the caller supplies */
+#define SE_JPEG_STRIP_BYTES(width) ((size_t)SE_JPEG_MCU * (size_t)(width) * 3)
 
 /*
  * Metadata written as an EXIF APP1 block. Two reasons this matters: the
@@ -52,8 +55,8 @@ typedef struct {
 
     int      dcpred[3];
 
-    /* one MCU row of input, 8 lines of RGB8 */
-    uint8_t *strip;            /* 8 * width * 3, supplied by the caller */
+    /* one MCU row of input, 16 lines of RGB8 */
+    uint8_t *strip;            /* SE_JPEG_STRIP_BYTES(width), supplied by the caller */
     int      strip_rows;
 
     int      rows_done;
@@ -73,7 +76,7 @@ typedef struct {
  */
 
 /*
- * `strip` must point at 8 * width * 3 bytes of scratch owned by the caller
+ * `strip` must point at SE_JPEG_STRIP_BYTES(width) bytes of scratch owned by the caller
  * and must stay valid until se_jpeg_end().
  */
 se_err se_jpeg_begin(se_jpeg *j, int width, int height, int quality,

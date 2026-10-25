@@ -6,12 +6,19 @@
 #ifndef STATE_H
 #define STATE_H
 
+#include "i18n.h"
+typedef char films_and_texts_have_the_same_languages[(FILM_LANGS == NLANG) ? 1 : -1];     /* films.h (kind / desc) and i18n.h (the panel) */
+
 #define NSL   10                             /* sliders: rows 4..13 */
-#define JROW  (4 + NSL)                      /* row 14: JPG with the effect (off / half size / full size) */
-#define PROW  (JROW + 1)                     /* row 15: where the JPG goes (folder FILMLOOK / instead of the camera's JPG) */
-#define RROW  (PROW + 1)                     /* row 16: back to the default settings of this film */
-#define NROWS (RROW + 1)                     /* 0 type, 1 maker (only shown), 2 film, 3 push/pull, 4.. sliders (see sl_def), JPG row, place row, reset row */
-#define VIS   5                              /* rows 3..15 scroll in a window of 5 */
+#define RROW  (4 + NSL)                      /* row 14: back to the default settings of THIS film (last row under the sliders) */
+#define JROW  (RROW + 1)                     /* row 15: tab "Ustawienia": JPG with the effect (off / half size / full size) */
+#define PROW  (JROW + 1)                     /* row 16: tab "Ustawienia": where the JPG goes (folder FILMLOOK / instead of the camera's JPG) */
+#define TROW  (PROW + 1)                     /* row 17: tab "Ustawienia": the look of the panel (cream / night) */
+#define LROW  (TROW + 1)                     /* row 18: tab "Ustawienia": the language of the panel */
+#define AROW  (LROW + 1)                     /* row 19: tab "Ustawienia": every film back to its default settings (SET twice) */
+#define NROWS (AROW + 1)                     /* 0 tabs, 1 maker (only shown), 2 film, 3 (not used any more), 4.. sliders (see sl_def), reset row of the film;
+                                              * the rows 15..19 belong to the tab "Ustawienia" */
+#define VIS   3                              /* rows of the list in a window of 3 (it scrolls) */
 
 /* ------------------------------------------------------------------ state */
 static int st_film = 0;                   /* 0 = Off, 1.. = index into films[] + 1 (always a base film) */
@@ -27,14 +34,17 @@ static int st_sat = 0;                    /* Nasycenie -100..100 */
 static int st_vig = 0;                    /* Winieta 0..100 */
 static int st_hal = 0;                    /* Halation 0..100: glow round bright lights (JPG only) */
 static int st_jpg = 0;                    /* JPG z efektem: 0 off, 1 half size, 2 full size */
+static int st_theme = 1;                  /* the look of the panel: 0 = cream paper, 1 = night (black) */
+static int st_set = 0;                    /* the tab "Ustawienia" (the last one) is shown: the settings that count for all films. Not saved: the panel opens on the film */
+static int reset_armed = 0;               /* the row "all films back to the defaults" got its first SET and waits for the second one */
 static int st_place = 0;                  /* where the JPG goes: 0 = folder FILMLOOK, 1 = replaces the camera's own JPG (when there is one), 2 = also the preview inside the RAW */
 
-/* the sliders of the panel: rows 4 .. 13 */
-static const struct { const char *name; short lo, hi, step; unsigned char signed_; } sl_def[NSL] = {
-    { "Efekt",     0, 100, 5, 0 },  { "Ziarno",     0, 200, 5, 0 },  { "Kontrast", -50, 50, 5, 1 },
-    { "Halacja",   0, 100, 5, 0 },
-    { "Matowość",  0, 100, 5, 0 },  { "Ciepło",  -100, 100, 5, 1 },  { "Cienie", -100, 100, 5, 1 },
-    { "Światła", -100, 100, 5, 1 }, { "Nasycenie", -100, 100, 5, 1 }, { "Winieta", 0, 100, 5, 0 },
+/* the sliders of the panel: rows 4 .. 13 (their names are the texts S_SL_EFFECT + j of i18n.h) */
+static const struct { short lo, hi, step; unsigned char signed_; } sl_def[NSL] = {
+    { 0, 100, 5, 0 },  { 0, 200, 5, 0 },  { -50, 50, 5, 1 },          /* Efekt, Ziarno, Kontrast */
+    { 0, 100, 5, 0 },                                                  /* Halacja (not shown) */
+    { 0, 100, 5, 0 },  { -100, 100, 5, 1 },  { -100, 100, 5, 1 },      /* Matowość, Ciepło, Cienie */
+    { -100, 100, 5, 1 }, { -100, 100, 5, 1 }, { 0, 100, 5, 0 },        /* Światła, Nasycenie, Winieta */
 };
 
 static int *sl_var(int j)
@@ -79,6 +89,10 @@ static int type_films(int t) { const group_t *g = &groups[types[t].first_group +
 
 /* 0 = no effect, 1.. = type + 1 */
 static int cur_type(void) { return st_film > 0 ? groups[films[st_film - 1].group].type + 1 : 0; }
+
+/* the tab that is shown: the type of the film, or (the last one) "Ustawienia". The film stays chosen while the settings are open */
+#define TAB_SET (TYPE_COUNT + 1)
+static int cur_tab(void) { return st_set ? TAB_SET : cur_type(); }
 
 /* push / pull: a base film may have variants (Tri-X +1, Portra 400 -1 ...) that are not in the Film list.
  * popts[f->pfirst .. +f->np-1] are its options sorted by shift, the normal film among them */
@@ -188,7 +202,7 @@ static int mod_n(void)
 {
     int j, n = 0;
     if (st_film == 0) return 0;
-    for (j = is_own(st_film) ? 1 : 0; j < NSL; j++) if (*sl_var(j) != sl_default[j]) n++;
+    for (j = is_own(st_film) ? 1 : 0; j < NSL; j++) if (j != 3 && *sl_var(j) != sl_default[j]) n++;     /* (3 = Halacja: not shown) */
     return n;
 }
 
@@ -201,17 +215,50 @@ static int reset_film(void)
     return n;
 }
 
-/* the rows of the list under the film (3 push / pull, 4.. sliders, JPG row, reset row) that exist for the chosen film:
- * no effect: none; own preset: no push / pull and no effect strength */
+/* how many films have a slider that is not at its default (the one that is chosen now counts with its st_* values) */
+static int films_mod_n(void)
+{
+    int i, j, n = 0;
+    vals_t cur;
+    vals_defaults(&cur);
+    if (cur_slot > 0) vals_get(&cur);
+    for (i = 0; i < BASE_COUNT; i++) {
+        vals_t *v = (i + 1 == cur_slot) ? &cur : &film_v[i];
+        for (j = is_own(i + 1) ? 1 : 0; j < NSL; j++)
+            if (j != 3 && *vp(v, j) != sl_default[j]) { n++; break; }
+    }
+    return n;
+}
+
+/* every film back to the defaults (the chosen one too); returns how many films were changed */
+static int reset_all(void)
+{
+    int i, n = films_mod_n();
+    for (i = 0; i < BASE_COUNT; i++) vals_defaults(&film_v[i]);
+    if (cur_slot > 0) vals_put(&film_v[cur_slot - 1]);
+    return n;
+}
+
+/* the rows of the list: under a film (4.. sliders, reset row of the film) those that exist for the chosen film: no effect: none;
+ * own preset: no effect strength. In the tab "Ustawienia": the four rows JROW..AROW. Since v0.10 there is no push / pull row and
+ * no halation row (halation is switched off completely: HROW), the values stay in the settings file only so that older files are
+ * still read */
+#define HROW  (4 + 3)                        /* the Halacja slider (index 3 of sl_def) */
 static int lst[NROWS], lst_n = 0;
 
 static void list_build(void)
 {
     int r, own = is_own(st_film);
     lst_n = 0;
+    if (st_set) {
+        for (r = JROW; r <= AROW; r++) lst[lst_n++] = r;
+        top = 0;
+        return;
+    }
     if (st_film == 0) return;
-    for (r = 3; r < NROWS; r++) {
-        if (own && (r == 3 || r == 4)) continue;
+    for (r = 4; r <= RROW; r++) {
+        if (r == HROW) continue;
+        if (own && r == 4) continue;
         lst[lst_n++] = r;
     }
     top = clampi(top, 0, lst_n > VIS ? lst_n - VIS : 0);

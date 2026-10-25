@@ -43,18 +43,16 @@ The module as a whole is therefore distributed under the GPL (version 2), like M
 
 ========================================================================
 
-The panel text of v0.6 is drawn from small pre-rendered letter pictures (modules/filmlook/serif_data.h, made by
-tools/make_serif_font.py):
+Since v0.10 all text of the panel (the title "Film Look Simulation", the film names, labels and values) is drawn from small
+pre-rendered letter pictures (modules/filmlook/serif_data.h, made by tools/make_serif_font.py) of ONE font, Young Serif:
 
-  * The title "Film Look Simulation" was rendered from the font Caprasimo
-    (Copyright 2023 The Caprasimo Project Authors, https://github.com/docrepair-fonts/caprasimo-fonts),
-    licensed under the SIL Open Font License 1.1 (text below). Only a picture of the title text is in the module;
-    the font itself is not distributed.
+  * Young Serif, Copyright 2023 The Young Serif Project Authors (https://github.com/noirblancrouge/YoungSerif),
+    licensed under the SIL Open Font License 1.1 (text below). Only pictures of the letters are in the module; the font
+    file itself is not distributed. (Earlier versions used the fonts Caprasimo (OFL) for the title and a font supplied
+    by the owner of the project for the rest; neither is used any more.)
 
-  * The film names, labels and values were rendered from the font "Bethany Elingston", which the owner of this
-    project supplied. Its licence is NOT known to the author of this module: before the module is published or
-    given to anybody else, the licence of that font (private / commercial use, embedding of pictures of letters)
-    has to be checked, or the font replaced with a free one (tools/make_serif_font.py takes any .otf / .ttf).
+  * The colours of the panel are chosen from the "70's Vibes" colour palette the owner of the project pointed to; the
+    palette contains no code or artwork, only colour values.
 
 -----------------------------------------------------------
 SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007

@@ -338,26 +338,37 @@ static void jd_idct(const int *in, uint8_t *out, int stride)
  * downscale than the 2x2 box filter it replaces -- a box filter is a poor
  * lowpass, and this one is the DCT's own.
  */
+/* One 4-point inverse DCT of the coefficients i0..i3 (the basis jd_ct[2u][x], x < 4). The even basis functions (u = 0, 2) are symmetric
+ * round the middle of the 4 samples and the odd ones (u = 1, 3) are antisymmetric, so 4 sums give all four results:
+ * r0 = e0 + o0, r1 = e1 + o1, r2 = e1 - o1, r3 = e0 - o0. Exactly the same numbers as the 4 x 4 products of the plain loops. */
+static void jd_idct4_1d(int i0, int i1, int i2, int i3, int *r)
+{
+    int e0 = jd_ct[0][0] * i0 + jd_ct[4][0] * i2;
+    int e1 = jd_ct[0][1] * i0 + jd_ct[4][1] * i2;
+    int o0 = jd_ct[2][0] * i1 + jd_ct[6][0] * i3;
+    int o1 = jd_ct[2][1] * i1 + jd_ct[6][1] * i3;
+    r[0] = e0 + o0; r[1] = e1 + o1; r[2] = e1 - o1; r[3] = e0 - o0;
+}
+
 static void jd_idct4(const int *in, uint8_t *out, int stride)
 {
     int tmp[16];
-    int u, x, y;
+    int x, y;
 
     if (jd_flat(in, 4)) { jd_fill_block(out, stride, 4, in[0]); return; }
 
-    for (x = 0; x < 4; x++) {
-        for (y = 0; y < 4; y++) {
-            int acc = 0;
-            for (u = 0; u < 4; u++) acc += jd_ct[u * 2][y] * in[u * 8 + x];
-            tmp[y * 4 + x] = JD_DESCALE(acc, 11);
-        }
+    for (x = 0; x < 4; x++) {                            /* columns: the vertical frequencies in[x], in[8 + x], in[16 + x], in[24 + x] */
+        int r[4];
+        jd_idct4_1d(in[x], in[8 + x], in[16 + x], in[24 + x], r);
+        tmp[0 + x] = JD_DESCALE(r[0], 11); tmp[4 + x] = JD_DESCALE(r[1], 11);
+        tmp[8 + x] = JD_DESCALE(r[2], 11); tmp[12 + x] = JD_DESCALE(r[3], 11);
     }
     for (y = 0; y < 4; y++) {
         uint8_t *o = out + y * stride;
+        int r[4];
+        jd_idct4_1d(tmp[y * 4], tmp[y * 4 + 1], tmp[y * 4 + 2], tmp[y * 4 + 3], r);
         for (x = 0; x < 4; x++) {
-            int acc = 0;
-            for (u = 0; u < 4; u++) acc += jd_ct[u * 2][x] * tmp[y * 4 + u];
-            acc = JD_DESCALE(acc, 17) + 128;
+            int acc = JD_DESCALE(r[x], 17) + 128;
             o[x] = (uint8_t)(acc < 0 ? 0 : acc > 255 ? 255 : acc);
         }
     }

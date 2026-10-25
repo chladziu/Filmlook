@@ -11,6 +11,10 @@
 #ifndef FL_LOOKBUILD_H
 #define FL_LOOKBUILD_H
 
+#ifndef FL_HALATION
+#define FL_HALATION 0       /* v0.10: halation is off (the code stays; set to 1 to bring it back) */
+#endif
+
 #include "xmp.h"
 #include "engine/look.h"
 
@@ -326,7 +330,7 @@ static int fl_build_look(se_look *lk, se_arena *ar, const film_t *f, const look_
     }
 
     /* halation: the film's own (Cinestill 800T ...) plus the slider */
-    hal = lb_clamp(lb_film_halation(f) + L->hal, 0, 100);
+    hal = FL_HALATION ? lb_clamp(lb_film_halation(f) + L->hal, 0, 100) : 0;       /* v0.10: halation is switched off completely */
     if (hal > 0) {
         lk->hal_amount = hal * 3;
         lk->hal_thresh = 180;

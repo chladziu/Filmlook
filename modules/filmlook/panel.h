@@ -22,15 +22,29 @@
 #include "serif.h"
 
 /* ------------------------------------------------------------------ colours */
+/* Two looks, chosen in the last rows of the list: 0 = cream paper with dark brown ink, 1 = night (black, cream ink). Both are
+ * one flat colour with one accent for what is selected and a teal for what was changed: no bars, no frames. The tones are
+ * saturated on purpose: the LCD of the camera washes light colours out, a pale beige looked white on it. */
 enum { PC_BG, PC_TEXT, PC_ACCENT, PC_SOFT, PC_DIM, PC_TRACK, PC_MOD, PC_N };
-static const unsigned char pc_rgb[PC_N][3] = {
-    { 229, 222, 202 },        /* PC_BG     paper  #E5DECA */
-    {  38,  33,  28 },        /* PC_TEXT   ink    #26211C */
-    { 160,  62,  24 },        /* PC_ACCENT rust   #A03E18 */
-    {  96,  88,  74 },        /* PC_SOFT   #60584A */
-    { 150, 141, 120 },        /* PC_DIM    lines, switched-off rows #968D78 */
-    { 207, 198, 174 },        /* PC_TRACK  empty part of a bar */
-    {  46, 111, 106 },        /* PC_MOD    teal #2E6F6A: the part of a bar that differs from the default of the film */
+static const unsigned char pc_themes[2][PC_N][3] = {
+  {  /* 0: cream paper, from the "70's Vibes" palette */
+    { 240, 208, 160 },        /* PC_BG     cream #F0D0A0 (the palette's #F4DAB5, a little deeper: the LCD washes light tones out) */
+    {  58,  36,  18 },        /* PC_TEXT   dark brown ink #3A2412 (#603C1F, darker) */
+    { 159,  72,  21 },        /* PC_ACCENT rust #9F4815: the title, the selected row */
+    { 110,  76,  46 },        /* PC_SOFT   #6E4C2E */
+    { 181, 138,  94 },        /* PC_DIM    lines, switched-off rows #B58A5E */
+    { 224, 186, 136 },        /* PC_TRACK  empty part of a bar #E0BA88 */
+    {  29, 100, 113 },        /* PC_MOD    teal #1D6471: the part of a bar that differs from the default of the film */
+  },
+  {  /* 1: night, from the same palette */
+    {  26,  23,  24 },        /* PC_BG     near black, warm #1A1718 (the palette's #3D393A, much darker) */
+    { 244, 218, 181 },        /* PC_TEXT   cream #F4DAB5 */
+    { 244, 161,   2 },        /* PC_ACCENT amber #F4A102: the title, the selected row */
+    { 201, 170, 139 },        /* PC_SOFT   #C9AA8B */
+    { 112,  96,  84 },        /* PC_DIM    #706054 */
+    {  62,  55,  52 },        /* PC_TRACK  #3E3734 */
+    {  95, 176, 160 },        /* PC_MOD    teal-green #5FB0A0 (the palette's #768F77 / #1D6471, lighter) */
+  },
 };
 #define PAL_BASE   232                         /* first palette index used (the camera gets them back when the panel closes) */
 #define PAL_COUNT  (PC_N + 2 * (PC_N - 1))     /* 7 colours + 2 half tones of each of the 6 inks = 19 */
@@ -39,12 +53,13 @@ static unsigned char pal_rgb[PAL_COUNT][3];    /* the colour of palette index PA
 
 static void pal_build(void)
 {
+    const unsigned char (*pc)[3] = pc_themes[st_theme];
     int c, k, j;
-    for (c = 0; c < PC_N; c++) for (j = 0; j < 3; j++) pal_rgb[c][j] = pc_rgb[c][j];
+    for (c = 0; c < PC_N; c++) for (j = 0; j < 3; j++) pal_rgb[c][j] = pc[c][j];
     for (c = 1; c < PC_N; c++)
         for (k = 1; k <= 2; k++)
             for (j = 0; j < 3; j++)
-                pal_rgb[PC_N + 2 * (c - 1) + (k - 1)][j] = (unsigned char)(pc_rgb[0][j] + ((pc_rgb[c][j] - pc_rgb[0][j]) * k) / 3);
+                pal_rgb[PC_N + 2 * (c - 1) + (k - 1)][j] = (unsigned char)(pc[0][j] + ((pc[c][j] - pc[0][j]) * k) / 3);
     for (c = 0; c < PC_N; c++) {
         ui_ramp[c][0] = PAL_BASE + PC_BG;
         ui_ramp[c][3] = PAL_BASE + c;
@@ -62,23 +77,24 @@ static void pal_build(void)
 
 #define Y_TITLE   38                  /* baselines */
 #define Y_RULE_A  48
-#define Y_TABS    78
-#define Y_BRAND   112
-#define Y_NAME    172
-#define Y_KIND    210
-#define Y_DESC    241
-#define Y_RULE_B  255
-#define SL_Y0     260                 /* top of the list */
-#define SL_PITCH  35
-#define Y_RULE_C  440
-#define Y_HINT    465
+#define Y_TABS    80
+#define Y_BRAND   126                 /* the maker: a little lower, about halfway between the tabs and the name */
+#define Y_NAME    200                 /* the name of the film: large, with room above and below */
+#define NAME_TOP  64
+#define NAME_BOT  14
+#define Y_KIND    240
+#define Y_DESC    270
+#define Y_RULE_B  290
+#define SL_Y0     302                 /* top of the list (3 rows: the list scrolls) */
+#define SL_PITCH  40
+#define Y_RULE_C  436
+#define Y_HINT    466
 
 #define BAR_X     210
 #define BAR_W     330
 #define BAR_H     12
 #define VAL_X     560
 
-static const char *const tab_label[] = { "Bez efektu", "C-41", "BW", "Slajd", "Własny" };
 
 static void draw_rule(int y) { ui_fill(PC_DIM, M_L, y, M_R - M_L, 1); }
 
@@ -96,7 +112,7 @@ static void draw_prog(int permille)
 static void draw_hint(const char *msg)
 {
     if (msg) sf_line(&sf_xxs, M_L, M_R, Y_HINT, 17, 5, msg, PC_ACCENT, SF_CENTER);
-    else     sf_line(&sf_xxs, M_L, M_R3, Y_HINT, 17, 5, "pokrętło: zmiana\tjoystick: wiersz\tSET: zapis\tkosz: zamknij", PC_SOFT, SF_JUST);
+    else     sf_line(&sf_xxs, M_L, M_R3, Y_HINT, 17, 5, TR(S_HINT_KEYS), PC_SOFT, SF_JUST);
 }
 
 /* top left: how many JPGs are waiting / made now, or how long the last one took (empty = nothing to say) */
@@ -128,11 +144,11 @@ static void draw_mark(int on, int y, int h)
  * the gap), so nothing moves when the choice changes, and the slots plus a blank at both ends cover the whole row:
  * every pixel is rewritten in one pass, no wiping before. The chosen tab is bold (and rust while the row is selected). */
 #define TAB_GAP 24
-static const char *tab_text(int i) { return i < 5 ? tab_label[i] : types[i - 1].name; }
+static const char *tab_text(int i) { return TR(S_TAB_NONE + i); }     /* 0 no effect, 1..TYPE_COUNT the types, TYPE_COUNT + 1 the settings */
 
 static void tab_layout(int *x, int *w)           /* x[i], w[i]: slot of tab i (x[n] = end of the last slot) */
 {
-    int i, n = TYPE_COUNT + 1, tot = 0, s0;
+    int i, n = TYPE_COUNT + 2, tot = 0, s0;
     for (i = 0; i < n; i++) { w[i] = sf_width(&sf_xsb, tab_text(i)) + TAB_GAP; tot += w[i]; }
     s0 = (M_L + M_R) / 2 - tot / 2;
     for (i = 0; i < n; i++) { x[i] = s0; s0 += w[i]; }
@@ -141,7 +157,7 @@ static void tab_layout(int *x, int *w)           /* x[i], w[i]: slot of tab i (x
 
 static void draw_tabs(void)
 {
-    int on = (row == 0), ct = cur_type(), i, n = TYPE_COUNT + 1;
+    int on = (row == 0), ct = cur_tab(), i, n = TYPE_COUNT + 2;
     int x[9], w[8];
     tab_layout(x, w);
     draw_mark(on, Y_TABS - 22, 28);
@@ -158,23 +174,23 @@ static void draw_tabs(void)
  * row 2: the film name, large, the arrows right next to it */
 static void draw_sel(int r)
 {
-    int on = (row == r);
-    int off = (st_film == 0);
+    int on = (row == r) && !st_set;
+    int off = (st_film == 0) || st_set;                  /* (the tab "Ustawienia": the name row is only a heading, without arrows) */
 
     if (r == 1) {
-        sf_line(&sf_xs, M_L, M_R3, Y_BRAND, 24, 7, off ? " " : groups[films[st_film - 1].group].brand, PC_SOFT, SF_CENTER);
+        sf_line(&sf_xs, M_L, M_R3, Y_BRAND, 24, 7, (off || is_own(st_film)) ? " " : groups[films[st_film - 1].group].brand, PC_SOFT, SF_CENTER);     /* no maker for the own presets */
     } else {
         sf_run run[3];
-        const char *name = off ? "Bez efektu" : films[st_film - 1].name;
+        const char *name = st_set ? TR(S_TAB_SET) : (off ? TR(S_TAB_NONE) : films[st_film - 1].name);
         const sf_font *f = &sf_big;
-        int c = off ? PC_DIM : (on ? PC_ACCENT : PC_TEXT);
+        int c = st_set ? PC_TEXT : (off ? PC_DIM : (on ? PC_ACCENT : PC_TEXT));
         int ca = off ? PC_BG : (on ? PC_ACCENT : PC_DIM);
         if (sf_width(f, name) > M_R - M_L - 100) f = &sf_mid;
-        draw_mark(on, Y_NAME - 40, 48);
+        draw_mark(on, Y_NAME - 50, 62);
         run[0].f = &sf_big; run[0].s = off ? " " : "\xE2\x80\xB9 "; run[0].col = ca;
         run[1].f = f;       run[1].s = name;                      run[1].col = c;
         run[2].f = &sf_big; run[2].s = off ? " " : " \xE2\x80\xBA"; run[2].col = ca;
-        sf_line_runs(M_L, M_R3, Y_NAME, 50, 14, run, 3, SF_CENTER);
+        sf_line_runs(M_L, M_R3, Y_NAME, NAME_TOP, NAME_BOT, run, 3, SF_CENTER);
     }
 }
 
@@ -182,14 +198,17 @@ static void draw_sel(int r)
 static void draw_info(void)
 {
     char tmp[96], num[24];
-    if (st_film > 0) {
+    if (st_set) {
+        sf_line(&sf_xs, M_L, M_R3, Y_KIND, 24, 7, TR(S_SET_NOTE1), PC_ACCENT, SF_CENTER);
+        sf_line(&sf_xs, M_L, M_R3, Y_DESC, 24, 7, TR(S_SET_NOTE2), PC_TEXT, SF_CENTER);
+    } else if (st_film > 0) {
         const film_t *f = &films[st_film - 1];
         const int ty = groups[f->group].type;
-        const char *d = films[eff_film() - 1].desc;
+        const char *d = films[eff_film() - 1].desc[st_lang];
         const sf_font *kf = &sf_xs, *df = &sf_xs;
         sf_run run[2];
-        if (f->iso > 0) snprintf(tmp, sizeof(tmp), "%s \xC2\xB7 ISO %d", f->kind, f->iso);
-        else            snprintf(tmp, sizeof(tmp), "%s", f->kind);
+        if (f->iso > 0) snprintf(tmp, sizeof(tmp), "%s \xC2\xB7 ISO %d", f->kind[st_lang], f->iso);
+        else            snprintf(tmp, sizeof(tmp), "%s", f->kind[st_lang]);
         snprintf(num, sizeof(num), "   \xC2\xB7   %d / %d", st_film - type_first(ty), type_films(ty));
         run[0].f = kf; run[0].s = tmp; run[0].col = PC_ACCENT;
         run[1].f = kf; run[1].s = num; run[1].col = PC_SOFT;
@@ -198,12 +217,12 @@ static void draw_info(void)
         if (sf_width(df, d) > M_R - M_L) df = &sf_xxs;                          /* very long descriptions use the smallest size */
         sf_para(df, M_L, M_R3, Y_DESC, 24, 7, 30, 1, d, PC_TEXT, 1);
     } else {
-        sf_line(&sf_xs, M_L, M_R3, Y_KIND, 24, 7, "Efekt filmu wyłączony", PC_ACCENT, SF_CENTER);
-        sf_line(&sf_xs, M_L, M_R3, Y_DESC, 24, 7, "Zdjęcia zostają bez zmian, plik XMP nie powstaje", PC_TEXT, SF_CENTER);
+        sf_line(&sf_xs, M_L, M_R3, Y_KIND, 24, 7, TR(S_OFF_NOTE), PC_ACCENT, SF_CENTER);
+        sf_line(&sf_xs, M_L, M_R3, Y_DESC, 24, 7, " ", PC_BG, SF_CENTER);
     }
 }
 
-/* ------------------------------------------------------------------ list of 5 rows */
+/* ------------------------------------------------------------------ list of 3 rows (it scrolls) */
 static int slot_y(int r) { return SL_Y0 + (lst_pos(r) - top) * SL_PITCH + 27; }          /* baseline of row r */
 
 static void list_row_frame(int r, int on, const char *label, int lcol)
@@ -225,7 +244,7 @@ static void draw_slider(int r)                  /* r = 4 .. 13 */
     int yb = slot_y(r), x0, x1, ra, rb, zx, dx, vx, mx0 = 0, mx1 = 0, mra = 0, mrb = 0, mtop = 0;
     char tmp[16];
 
-    list_row_frame(r, on, sl_def[j].name, on ? PC_ACCENT : PC_TEXT);
+    list_row_frame(r, on, TR(S_SL_EFFECT + j), on ? PC_ACCENT : PC_TEXT);
     zx = bar_pos(0, lo, hi);
     dx = bar_pos(dv, lo, hi);
     vx = bar_pos(v, lo, hi);
@@ -278,46 +297,74 @@ static void draw_push(void)
     sf_line(&sf_sml, VAL_X, M_R3, yb, 25, 7, val, c, SF_RIGHT);
 }
 
-/* last row: JPG with the film look, developed in the background after every photo */
+/* the rows of the tab "Ustawienia" that offer a choice: label at the left, "‹ value ›" at the right (no bar here, so the label
+ * may be long: the two rectangles meet at CH_X) */
+#define CH_X (M_L + 250)
+static void draw_choice(int r, const char *label, const char *val, int lcol, int vcol)
+{
+    int on = (row == r), yb = slot_y(r);
+    char tmp[80];
+    draw_mark(on, yb - 22, 26);
+    sf_line(&sf_sml, M_L, CH_X, yb, 25, 7, label, on ? PC_ACCENT : lcol, SF_LEFT);
+    snprintf(tmp, sizeof(tmp), "\xE2\x80\xB9  %s  \xE2\x80\xBA", val);
+    sf_line(&sf_sml, CH_X, M_R3, yb, 25, 7, tmp, on ? PC_ACCENT : vcol, SF_RIGHT);
+}
+
+/* JPG with the film look, developed in the background after every photo */
 static void draw_jpg(void)
 {
-    static const char *const opt[3] = { "wyłączony", "połowa (2808 px)", "pełny (5616 px)" };
-    int on = (row == JROW), yb = slot_y(JROW);
-    char tmp[48];
-    list_row_frame(JROW, on, "JPG z efektem", on ? PC_ACCENT : PC_TEXT);
-    snprintf(tmp, sizeof(tmp), "\xE2\x80\xB9  %s  \xE2\x80\xBA", opt[st_jpg]);
-    sf_line(&sf_sml, BAR_X - 12, M_R3, yb, 25, 7, tmp, on ? PC_ACCENT : (st_jpg ? PC_TEXT : PC_SOFT), SF_RIGHT);
+    draw_choice(JROW, TR(S_LBL_JPG), TR(S_JPG_OFF + st_jpg), PC_TEXT, st_jpg ? PC_TEXT : PC_SOFT);
 }
 
 /* where the JPG goes: its own folder, or in place of the camera's JPG (RAW+JPG or JPG shooting; with RAW alone there is no
  * JPG to replace and the file goes to FILMLOOK) */
 static void draw_place(void)
 {
-    static const char *const opt[3] = { "folder FILMLOOK", "podmień JPG aparatu", "JPG i podgląd RAW" };
-    int on = (row == PROW), yb = slot_y(PROW);
-    char tmp[48];
-    list_row_frame(PROW, on, "Miejsce JPG", on ? PC_ACCENT : (st_jpg ? PC_TEXT : PC_SOFT));
-    snprintf(tmp, sizeof(tmp), "\xE2\x80\xB9  %s  \xE2\x80\xBA", opt[st_place]);
-    sf_line(&sf_sml, BAR_X - 12, M_R3, yb, 25, 7, tmp, on ? PC_ACCENT : (st_jpg ? (st_place ? PC_MOD : PC_TEXT) : PC_SOFT), SF_RIGHT);
+    draw_choice(PROW, TR(S_LBL_PLACE), TR(S_PL_FOLDER + st_place), st_jpg ? PC_TEXT : PC_SOFT, st_jpg ? (st_place ? PC_MOD : PC_TEXT) : PC_SOFT);
 }
 
-/* last row: back to the defaults of the chosen film. SET does it. No bar here, so the line uses the whole width:
- * the name at the left, what SET does at the right */
+/* the look of the panel: cream paper / night. The dial changes it at once (the whole panel is drawn again) */
+static void draw_theme(void)
+{
+    draw_choice(TROW, TR(S_LBL_LOOK), TR(S_TH_CREAM + st_theme), PC_TEXT, PC_TEXT);
+}
+
+/* the language of the panel: the dial changes it at once (the whole panel is drawn again). The names are written in their own language */
+static void draw_lang(void)
+{
+    draw_choice(LROW, TR(S_LBL_LANG), lang_names[st_lang], PC_TEXT, PC_TEXT);
+}
+
+/* a line with no bar, so it uses the whole width: the name at the left, what SET does at the right */
+static void draw_reset_line(int r, const char *name, int n, int armed)
+{
+    int on = (row == r), yb = slot_y(r);
+    char tmp[160];
+    draw_mark(on, yb - 22, 26);
+    if (armed)       snprintf(tmp, sizeof(tmp), "%s\t%s", name, TR(S_RST_CONF));
+    else if (n > 0) { char num[96]; snprintf(num, sizeof(num), TR(S_RST_N), n); snprintf(tmp, sizeof(tmp), "%s\t%s", name, num); }
+    else             snprintf(tmp, sizeof(tmp), "%s\t%s", name, TR(S_RST_NONE));
+    sf_line(&sf_sml, M_L, M_R3, yb, 25, 7, tmp, on ? PC_ACCENT : (n > 0 ? PC_TEXT : PC_SOFT), SF_JUST);
+}
+
+/* last row under the sliders of a film: back to the defaults of THIS film. SET does it */
 static void draw_reset(void)
 {
-    int on = (row == RROW), yb = slot_y(RROW), n = mod_n();
-    char tmp[64];
-    draw_mark(on, yb - 22, 26);
-    if (n > 0) snprintf(tmp, sizeof(tmp), "Ustawienia domyślne\tSET: przywróć (zmienione: %d)", n);
-    else       snprintf(tmp, sizeof(tmp), "Ustawienia domyślne\tbez zmian");
-    sf_line(&sf_sml, M_L, M_R3, yb, 25, 7, tmp, on ? PC_ACCENT : (n > 0 ? PC_TEXT : PC_SOFT), SF_JUST);
+    draw_reset_line(RROW, TR(S_RST_FILM), mod_n(), 0);
+}
+
+/* tab "Ustawienia", last row: every film back to its defaults. The first SET only asks (the line changes), the second one,
+ * within a few seconds, does it */
+static void draw_reset_all(void)
+{
+    draw_reset_line(AROW, TR(S_RST_ALL), films_mod_n(), reset_armed);
 }
 
 static void draw_slot(int r)
 {
     int p = lst_pos(r);
     if (p < top || p >= top + VIS) return;           /* (also when the row does not exist for this film: p = -1) */
-    if (r == 3) draw_push(); else if (r == JROW) draw_jpg(); else if (r == PROW) draw_place(); else if (r == RROW) draw_reset(); else draw_slider(r);
+    if (r == 3) draw_push(); else if (r == JROW) draw_jpg(); else if (r == PROW) draw_place(); else if (r == TROW) draw_theme(); else if (r == LROW) draw_lang(); else if (r == RROW) draw_reset(); else if (r == AROW) draw_reset_all(); else draw_slider(r);
 }
 
 /* a place of the list without a row: paper (and, without a film, a short note in the second place) */
@@ -336,14 +383,14 @@ static void draw_scrollbar(void)
         memset(ui_fb + (SL_Y0 + r) * ui_pitch + x, ui_ramp[n <= VIS ? PC_BG : ((r >= ty && r < ty + th) ? PC_SOFT : PC_TRACK)][3], 4);
 }
 
-/* the whole list: every place of the 5 is rewritten (rows, empty places, note), then the scroll bar */
+/* the whole list: every place of the 3 is rewritten (rows, empty places, note), then the scroll bar */
 static void draw_list_all(void)
 {
     int i;
     for (i = 0; i < VIS; i++) {
         int p = top + i;
         if (p < lst_n) draw_slot(lst[p]);
-        else draw_empty_slot(i, (lst_n == 0 && i == 1) ? "Wybierz typ filmu, żeby ustawić efekt" : 0);
+        else draw_empty_slot(i, 0);
     }
     draw_scrollbar();
 }
