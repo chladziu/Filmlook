@@ -291,10 +291,25 @@ static int fl_build_look(se_look *lk, se_arena *ar, const film_t *f, const look_
     }
 
     /* grain */
+#ifndef GRAIN_K
+#define GRAIN_K 285       /* overall weight of the coarse layer: set so that the grain is as strong (rms) as the old square blocks were */
+#endif
     lk->grain = lb_clamp(lb_val(val, "GrainAmount", ""), 0, 100);
-    lk->grain_cell = 1 + lb_val(val, "GrainSize", "") / 12;
-    if (scale > 1) lk->grain_cell = (lk->grain_cell + scale - 1) / scale;
-    if (lk->grain_cell < 1) lk->grain_cell = 1;
+    {
+        /* spacing of the coarse lattice in 1/16 pixel: 1 px .. 9.3 px at full size (GrainSize 0..100), smaller when the
+         * frame is delivered smaller, but never below 1.5 px (a lattice finer than the pixels is only white noise) */
+        int size = lb_val(val, "GrainSize", ""), rough = lb_val(val, "GrainFrequency", "");
+        int sa = (16 + (size * 4) / 3) / (scale > 0 ? scale : 1), sb, wb;
+        if (sa < 24) sa = 24;
+        sb = (sa * 5) / 8;                                       /* the fine layer: 0.625 of it, not below 1 px */
+        if (sb < 16) sb = 16;
+        lk->grain_inc_a = (16 * 65536) / sa;
+        lk->grain_inc_b = (16 * 65536) / sb;
+        rough = lb_clamp(rough, 0, 100);
+        wb = 51 + (rough * 179) / 100;                           /* the fine layer: 0.2 .. 0.9 of the coarse one */
+        lk->grain_w_a = GRAIN_K;
+        lk->grain_w_b = (GRAIN_K * wb) / 256;
+    }
 
     /* vignette: Lightroom's PostCropVignetteAmount is negative for dark corners */
     {

@@ -100,7 +100,11 @@ typedef struct {
     int      hal_tint[3];    /* its colour, 0..255; red for remjet-less */
 
     int      grain;          /* 0..100, 0 = none                         */
-    int      grain_cell;     /* 1..9 pixels                              */
+    /* Grain is soft noise made of two layers (see grain_row): a coarse one and a fine one, each a lattice of random
+     * values that is interpolated smoothly. inc = how far the lattice moves per pixel (16.16, 65536 = one lattice
+     * step per pixel), w = how much of each layer (256 = 1.0). */
+    int      grain_inc_a, grain_inc_b;
+    int      grain_w_a, grain_w_b;
 
     /* Vignette: vig_tab[i] is the brightness (256 = unchanged) at i / 255 of the squared distance to the corner. */
     int      vig_amount;     /* 0 = none                                  */

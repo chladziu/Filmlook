@@ -214,6 +214,7 @@ struct se_look_run {
     uint8_t *scratch;         /* one row of mask, pre-blur               */
 
     uint8_t *flat;            /* !on only: the one row we grade into     */
+    int     *gn;              /* grain: the noise of one row              */
 
     int     *vx2;             /* vignette: squared horizontal distance of every column, pre-shifted */
     int      vshift;          /* right shift that brings the squared distance below 65536 */
@@ -224,6 +225,7 @@ size_t se_look_bytes(const se_look *lk, int width)
 {
     size_t n;
     size_t vig = lk->vig_amount > 0 ? (size_t)width * sizeof(int) + 16 : 0;
+    if (lk->grain > 0) vig += (size_t)width * sizeof(int) + 16;
     if (lk->hal_amount <= 0)
         return sizeof(struct se_look_run) + (size_t)width * 3 + 32 + vig;
     n  = sizeof(struct se_look_run) + 16 + vig;
@@ -302,6 +304,10 @@ se_err se_look_begin(se_look_run **out, const se_look *lk,
     } else {
         r->flat = SE_NEW(ar, uint8_t, (size_t)width * 3);
         if (!r->flat) return SE_E_NOMEM;
+    }
+    if (lk->grain > 0) {
+        r->gn = SE_NEW(ar, int, width);
+        if (!r->gn) return SE_E_NOMEM;
     }
     if (lk->vig_amount > 0 && lk->vig_h > 1 && width > 1) {
         int x, h = lk->vig_h;
@@ -507,21 +513,59 @@ static void add_glow(const se_look *lk, uint8_t *row, int w,
     }
 }
 
-static void grain_row(const se_look *lk, uint8_t *row, int w, int y)
+/*
+ * Grain: soft, round and a little uneven, like silver halide seen through a scanner -- not square blocks.
+ *
+ * Two layers of "value noise": a lattice of random numbers (from the coordinate hash, so the same frame always grains
+ * the same way) is interpolated smoothly (smoothstep) between its points, which makes round blobs about one lattice
+ * step wide. The coarse layer sets the size of the grain (GrainSize), the fine layer, a little more than half as wide,
+ * makes it rougher (GrainFrequency). The lattice moves by `inc` per pixel (16.16), so the grain keeps its size relative
+ * to the frame whatever size the frame is delivered at. The result is one number per pixel, the same for all channels
+ * (monochrome grain), applied with the weight 4v(1-v) so it fades out in clipped whites and in the deepest blacks.
+ */
+static int smooth256(int t)                     /* t 0..255 -> 0..256, 3t^2 - 2t^3 */
 {
-    int x, cell = lk->grain_cell, cnt = 0, gx = 0;
-    unsigned gy = (unsigned)(y / cell);
+    return (t * t * (768 - 2 * t)) >> 16;
+}
+
+static int gnoise(unsigned gx, unsigned gy, unsigned seed)
+{
+    return (int)(grain_hash(gx, gy, seed) & 0xFFFF) - 32768;
+}
+
+/* one layer for row y into out[0..w): `first` writes it, otherwise it is added; weight is 256 = 1.0 */
+static void noise_layer(int *out, int w, int y, unsigned inc, unsigned seed, int weight, int first)
+{
+    unsigned fy = (unsigned)y * inc, gy = fy >> 16, gx = 0, fx = 0;
+    int ty = smooth256((int)((fy >> 8) & 255));
+    int a0 = gnoise(0, gy, seed), a1 = gnoise(0, gy + 1, seed);
+    int b0 = gnoise(1, gy, seed), b1 = gnoise(1, gy + 1, seed);
+    int x;
+    for (x = 0; x < w; x++) {
+        int tx = smooth256((int)((fx >> 8) & 255));
+        int top = a0 + (((b0 - a0) * tx) >> 8);
+        int bot = a1 + (((b1 - a1) * tx) >> 8);
+        int n = (top + (((bot - top) * ty) >> 8)) * weight >> 8;
+        if (first) out[x] = n; else out[x] += n;
+        fx += inc;
+        if (fx >= 65536u) {                       /* inc < 65536 for the coarse layer; the fine one may be 65536: one step */
+            gx += fx >> 16; fx &= 0xFFFFu;
+            a0 = b0; a1 = b1;
+            b0 = gnoise(gx + 1, gy, seed); b1 = gnoise(gx + 1, gy + 1, seed);
+        }
+    }
+}
+
+static void grain_row(const se_look *lk, se_look_run *r, uint8_t *row, int w, int y)
+{
+    int x, *gn = r->gn;
     /* 0..100 -> about +-15 at full strength. */
     int amp = (lk->grain * SE_GRAIN_AMP) / 100;
-    int d = 0;
-    if (amp <= 0) return;
+    if (amp <= 0 || !gn) return;
+    noise_layer(gn, w, y, (unsigned)lk->grain_inc_a, 0x5EEDu, lk->grain_w_a, 1);
+    if (lk->grain_w_b > 0) noise_layer(gn, w, y, (unsigned)lk->grain_inc_b, 0xB10Cu, lk->grain_w_b, 0);
     for (x = 0; x < w; x++) {
-        int c;
-        if (cnt == 0) {
-            int n = (int)(grain_hash((unsigned)gx, gy, 0x5EEDu) & 0xFFFF);
-            d = ((n - 32768) * amp) >> 15;
-        }
-        if (++cnt >= cell) { cnt = 0; gx++; }
+        int c, d = (gn[x] * amp) >> 15;
         for (c = 0; c < 3; c++) {
             int v = row[x * 3 + c];
             /* 4v(1-v), in eighths, so grain fades out at both ends */
@@ -554,7 +598,7 @@ static se_err emit_one(se_look_run *r, uint8_t *dst,
                        se_look_emit emit, void *ctx)
 {
     if (r->vx2) vignette_row(&r->lk, r, dst, r->w, r->y_out);
-    if (r->lk.grain > 0) grain_row(&r->lk, dst, r->w, r->y_out);
+    if (r->lk.grain > 0) grain_row(&r->lk, r, dst, r->w, r->y_out);
     r->y_out++;
     return emit(ctx, dst, r->w) == 0 ? SE_OK : SE_E_IO;
 }

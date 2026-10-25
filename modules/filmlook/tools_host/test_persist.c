@@ -47,7 +47,7 @@ int main(void)
     choose(b); CHECK(st_warm == -15 && st_sat == 40);
     choose(own1); CHECK(is_own(own1) && st_strength == 100); st_grain = 55; st_fade = 10;
     CHECK(mod_n() == 2);                            /* the effect strength of an own preset does not count */
-    choose(b); st_jpg = 2; st_place = 1; st_push = 0;
+    choose(b); st_jpg = 2; st_place = 2; st_push = 0;
 
     n = cfg_build();
     CHECK(n > 0 && strstr(cfg_buf, "film=Ilford HP5 Plus\n") && strstr(cfg_buf, "mod=Kodak Portra 400;70,140,20,30,0,0,0,0,0,0\n"));
@@ -55,7 +55,7 @@ int main(void)
     printf("--- settings file:\n%s---\n", cfg_buf);
 
     reload();
-    CHECK(st_film == b && st_warm == -15 && st_sat == 40 && st_jpg == 2 && st_place == 1);
+    CHECK(st_film == b && st_warm == -15 && st_sat == 40 && st_jpg == 2 && st_place == 2);
     choose(a); CHECK(st_strength == 70 && st_grain == 140 && st_contrast == 20 && st_hal == 30);
     choose(c); CHECK(st_strength == 100 && st_grain == 100 && mod_n() == 0);
     choose(own1); CHECK(st_grain == 55 && st_fade == 10 && st_strength == 100);
@@ -66,6 +66,11 @@ int main(void)
     n = cfg_build(); CHECK(!strstr(cfg_buf, "mod=Kodak Portra 400"));
     CHECK(strstr(cfg_buf, "mod=Ilford HP5 Plus;"));
     choose(own1); CHECK(reset_film() == 2); CHECK(st_grain == 100 && st_fade == 0 && st_strength == 100);
+
+    /* the place of the JPG: 0 folder, 1 the camera's JPG, 2 + the RAW preview; anything else is cut to that */
+    snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nplace=9\njpg=1\n"); n = (int)strlen(cfg_buf); st_place = 0; cfg_parse(n); CHECK(st_place == 2);
+    snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nplace=-3\njpg=1\n"); n = (int)strlen(cfg_buf); st_place = 2; cfg_parse(n); CHECK(st_place == 0);
+    st_place = 2; n = cfg_build(); CHECK(strstr(cfg_buf, "place=2\n"));
 
     /* limits: a damaged file never gives values outside the sliders */
     snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nmod=Kodak Portra 400;500,900,-900,900,900,-900,900,-900,900,900\nmod=No such film;1,2,3,4,5,6,7,8,9,10\nmod=Ilford HP5 Plus;1,2\n");

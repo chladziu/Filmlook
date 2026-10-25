@@ -150,7 +150,7 @@ static void cfg_parse(int n)
     fix_push();
     remember();
     st_jpg = clampi(st_jpg, 0, 2);
-    st_place = clampi(st_place, 0, 1);
+    st_place = clampi(st_place, 0, 2);
     cur_slot = 0;
     switch_set();                                       /* the sliders of the chosen film */
     list_build();

@@ -26,7 +26,7 @@
 #include "xmp.h"
 #include "develop.h"
 
-#define VERSION "v0.8"
+#define VERSION "v0.9"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
 extern int gui_state;
@@ -454,7 +454,7 @@ static void change_value(int dir)
         if (nv != st_jpg) { st_jpg = nv; dirty |= D_ROW(JROW) | D_ROW(PROW); }
     }
     else if (row == PROW) {                              /* where the JPG goes */
-        int nv = clampi(st_place + dir, 0, 1);
+        int nv = clampi(st_place + dir, 0, 2);
         if (nv != st_place) { st_place = nv; dirty |= D_ROW(PROW); }
     }
     else {                                               /* a slider */
@@ -627,6 +627,7 @@ PROP_HANDLER(PROP_FILE_NUMBER_A)
 #define OUT_CHUNK  (256 * 1024)
 #define MARK_NAME  "FILMLOOK/WRITING.TMP"
 #define REPL_NAME  "FILMLOOK/REPLACE.TMP"
+#define PREV_NAME  "FILMLOOK/PREVIEW.TMP"
 #define READ_CHUNK (1024 * 1024)
 typedef struct {
     int used, tries, film, mode, number, t_shot, place;
@@ -837,7 +838,7 @@ static int dev_replace(const char *target, const char *root)
     if (dev_gate()) return 1;
     dev_phase = 3;
     snprintf(note, sizeof(note), "%s%s", root, REPL_NAME);
-    snprintf(txt, sizeof(txt), "%s\n%s\n", dio.dst, target);
+    snprintf(txt, sizeof(txt), "%s\n%s\nJ\n", dio.dst, target);
     m = FIO_CreateFile(note);
     if (!m) { flog_s("JPG: cannot make the replace note", note); return 1; }
     FIO_WriteFile(m, txt, strlen(txt));
@@ -865,6 +866,235 @@ static int dev_replace(const char *target, const char *root)
     return ok ? 0 : 1;
 }
 
+/* ---- the preview inside the RAW file ------------------------------------------------------------------------------
+ * Canon shows a RAW picture on the camera's screen from the full size JPEG that every CR2 carries (the file's first IFD:
+ * its offset, its length and its size are three numbers in the first 300 bytes). When "podgląd RAW" is chosen, the
+ * finished JPG is written over that JPEG IN PLACE. The file does not change its length, no sector of the card's file
+ * table moves, the RAW data (the sensor values) are not touched at all. Only the numbers for the preview's own length and
+ * size are updated. A copy of the finished JPG stays in FILMLOOK/ and REPLACE.TMP names it while the patch is made, so a
+ * start after an interruption can do the patch again (it can be repeated any number of times). */
+typedef struct { uint32_t so, sb, off_w, off_h, off_sb, ty_w, ty_h; } cr2_info;      /* ty_*: 3 = the number is 16 bit, 4 = 32 bit */
+
+/* width and height of a JPG in RAM, from its SOF marker. 0 = not found */
+static int jpg_dims(const uint8_t *d, uint32_t len, int *w, int *h)
+{
+    uint32_t i = 2;
+    while (i + 9 < len) {
+        uint32_t m;
+        if (d[i] != 0xFF) return 0;
+        m = d[i + 1];
+        if (m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC) {
+            *h = (d[i + 5] << 8) | d[i + 6];
+            *w = (d[i + 7] << 8) | d[i + 8];
+            return *w > 0 && *h > 0;
+        }
+        i += 2 + ((d[i + 2] << 8) | d[i + 3]);
+    }
+    return 0;
+}
+
+static void put_le(uint8_t *b, uint32_t v, int bytes) { int i; for (i = 0; i < bytes; i++) b[i] = (uint8_t)(v >> (8 * i)); }
+
+/* looks at the CR2: 0 = the finished JPG of `len` bytes fits over its preview, 1 = it does not (nothing is changed) */
+static int cr2_check(const char *cr2, uint32_t len, cr2_info *ci)
+{
+    uint32_t fsize = 0, ifd, n, i, comp = 0;
+    uint8_t *hd;
+    FILE *f;
+    int got = 0;
+    memset(ci, 0, sizeof *ci);
+    if (FIO_GetFileSize(cr2, &fsize) != 0 || fsize < 100000) return 1;
+    hd = (uint8_t *)fio_malloc(1024);
+    if (!hd) return 1;
+    f = FIO_OpenFile(cr2, O_RDONLY | O_SYNC);
+    if (f) { got = FIO_ReadFile(f, hd, 1024); FIO_CloseFile(f); }
+    if (got < 64 || hd[0] != 'I' || hd[1] != 'I' || hd[2] != 42 || hd[8] != 'C' || hd[9] != 'R') { fio_free(hd); flog_s("RAW preview: not a CR2", cr2); return 1; }
+    ifd = fl_r32(hd + 4, 0);
+    n = (ifd + 2 <= (uint32_t)got) ? fl_r16(hd + ifd, 0) : 0;
+    if (n > 60 || ifd + 2 + 12 * n > (uint32_t)got) { fio_free(hd); flog_s("RAW preview: unknown file layout", cr2); return 1; }
+    for (i = 0; i < n; i++) {
+        const uint8_t *e = hd + ifd + 2 + 12 * i;
+        uint32_t tag = fl_r16(e, 0), type = fl_r16(e + 2, 0), vo = ifd + 2 + 12 * i + 8;
+        if (tag == 0x0100) { ci->off_w = vo; ci->ty_w = type; }
+        else if (tag == 0x0101) { ci->off_h = vo; ci->ty_h = type; }
+        else if (tag == 0x0103) comp = fl_r32(e + 8, 0) & 0xFFFF;
+        else if (tag == 0x0111) ci->so = fl_r32(e + 8, 0);
+        else if (tag == 0x0117) { ci->sb = fl_r32(e + 8, 0); ci->off_sb = vo; if (type != 4) ci->off_sb = 0; }
+    }
+    fio_free(hd);
+    if (comp != 6 || !ci->so || !ci->sb || !ci->off_w || !ci->off_h || !ci->off_sb || (ci->ty_w != 3 && ci->ty_w != 4) || (ci->ty_h != 3 && ci->ty_h != 4)) {
+        flog_s("RAW preview: no JPEG preview found", cr2); return 1;
+    }
+    if (ci->so + ci->sb > fsize) { flog_s("RAW preview: file is shorter than its preview", cr2); return 1; }
+    if (len > ci->sb) { flog("RAW preview: the new JPG is longer than the old preview, bytes more", (int)(len - ci->sb)); return 1; }
+    return 0;
+}
+
+/* writes the JPG over the preview, then the new size numbers, then checks it. 0 = done, 2 = it did not work out (the note stays) */
+static int cr2_write(const char *cr2, const cr2_info *ci, const uint8_t *data, uint32_t len)
+{
+    uint8_t *hd = (uint8_t *)fio_malloc(16);
+    FILE *f;
+    uint32_t pos = 0;
+    int ok = 1, w = 0, h = 0;
+    if (!hd) return 2;
+    if (!jpg_dims(data, len, &w, &h) || (ci->ty_w == 3 && w > 65535) || (ci->ty_h == 3 && h > 65535)) { fio_free(hd); return 2; }
+    f = FIO_OpenFile(cr2, O_RDWR | O_SYNC);
+    if (!f) { fio_free(hd); return 2; }
+    if (FIO_SeekSkipFile(f, ci->so, SEEK_SET) < 0) ok = 0;
+    while (ok && pos < len) {
+        uint32_t c = len - pos;
+        if (c > OUT_CHUNK) c = OUT_CHUNK;
+        if (!dev_alive()) { ok = 0; break; }
+        if (FIO_WriteFile(f, data + pos, c) != (int)c) ok = 0;
+        pos += c;
+        { int v = 965 + (int)((pos * 35u) / len); if (v > dev_prog) dev_prog = v; }
+    }
+    if (ok) {                                            /* the numbers go last: until then the old ones still describe the file */
+        int bw = ci->ty_w == 3 ? 2 : 4, bh = ci->ty_h == 3 ? 2 : 4;
+        put_le(hd, (uint32_t)w, bw);
+        if (FIO_SeekSkipFile(f, ci->off_w, SEEK_SET) < 0 || FIO_WriteFile(f, hd, bw) != bw) ok = 0;
+        put_le(hd, (uint32_t)h, bh);
+        if (FIO_SeekSkipFile(f, ci->off_h, SEEK_SET) < 0 || FIO_WriteFile(f, hd, bh) != bh) ok = 0;
+        put_le(hd, len, 4);
+        if (FIO_SeekSkipFile(f, ci->off_sb, SEEK_SET) < 0 || FIO_WriteFile(f, hd, 4) != 4) ok = 0;
+    }
+    FIO_CloseFile(f);
+    if (ok) {                                            /* read back: the first and last bytes of the JPEG and its length */
+        f = FIO_OpenFile(cr2, O_RDONLY | O_SYNC);
+        ok = 0;
+        if (f) {
+            uint32_t n = 0;
+            if (FIO_SeekSkipFile(f, ci->so, SEEK_SET) >= 0 && FIO_ReadFile(f, hd, 2) == 2 && hd[0] == 0xFF && hd[1] == 0xD8 &&
+                FIO_SeekSkipFile(f, ci->so + len - 2, SEEK_SET) >= 0 && FIO_ReadFile(f, hd, 2) == 2 && hd[0] == 0xFF && hd[1] == 0xD9 &&
+                FIO_SeekSkipFile(f, ci->off_sb, SEEK_SET) >= 0 && FIO_ReadFile(f, hd, 4) == 4) {
+                n = fl_r32(hd, 0);
+                ok = (n == len);
+            }
+            FIO_CloseFile(f);
+        }
+    }
+    fio_free(hd);
+    return ok ? 0 : 2;
+}
+
+/* the JPG `data` (in RAM) becomes the preview of the CR2. It is first written to FILMLOOK/PREVIEW.TMP, a note names that file and
+ * the CR2, and only then the CR2 is touched; when all is checked, the note and the file go. 0 = done, 1 = not done (nothing
+ * changed), 2 = interrupted or failed (the note and the file stay: the next start repairs it) */
+static int dev_patch_preview(const char *cr2, const char *root, const uint8_t *data, uint32_t len)
+{
+    char note[48], tmp[48], txt[200];
+    cr2_info ci;
+    FILE *m;
+    uint32_t pos = 0, got = 0;
+    int t = get_ms_clock(), rc, werr = 0;
+    if (len < 2000 || cr2_check(cr2, len, &ci) != 0) return 1;
+    if (dev_gate_play()) return 1;
+    if (is_play_mode() || QR_MODE) { flog("RAW preview: the camera is showing pictures, not now", 0); return 1; }
+    if (dev_gate()) return 1;
+    dev_phase = 3;
+    snprintf(note, sizeof(note), "%s%s", root, REPL_NAME);
+    snprintf(tmp, sizeof(tmp), "%s%s", root, PREV_NAME);
+    m = FIO_CreateFile(tmp);                             /* the copy first: it is what a repair is made from */
+    if (!m) { flog_s("RAW preview: cannot make", tmp); return 1; }
+    while (pos < len) {
+        uint32_t c = len - pos;
+        if (c > OUT_CHUNK) c = OUT_CHUNK;
+        if (!dev_alive() || FIO_WriteFile(m, data + pos, c) != (int)c) { werr = 1; break; }
+        pos += c;
+    }
+    FIO_CloseFile(m);
+    if (werr || FIO_GetFileSize(tmp, &got) != 0 || got != len || !jpg_complete(tmp)) {
+        flog_s("RAW preview: the copy is not complete, the RAW is untouched", tmp);
+        FIO_RemoveFile(tmp);
+        return 1;
+    }
+    snprintf(txt, sizeof(txt), "%s\n%s\nP\n", tmp, cr2);
+    m = FIO_CreateFile(note);
+    if (!m) { flog_s("RAW preview: cannot make the note", note); FIO_RemoveFile(tmp); return 1; }
+    FIO_WriteFile(m, txt, strlen(txt));
+    FIO_CloseFile(m);
+    rc = cr2_write(cr2, &ci, data, len);
+    if (rc != 0 && dev_alive()) rc = cr2_write(cr2, &ci, data, len);        /* once more: the data is still in RAM */
+    dio.ms_write += get_ms_clock() - t;
+    if (rc == 0) { FIO_RemoveFile(note); FIO_RemoveFile(tmp); }
+    else flog_s("RAW preview: NOT finished (it is repaired at the next start from the copy)", tmp);
+    return rc;
+}
+
+/* ---- a smaller picture for the RAW ----
+ * The preview inside the RAW is often smaller than the finished JPG (this one is 0.9 MB, another 3 MB). The finished JPG is
+ * then decoded at half the size (the decoder does that while it decodes: it is quick) and written again with a lower
+ * quality until it fits. No film look is applied again: it is the finished picture, only smaller. */
+typedef struct { uint8_t *buf; uint32_t cap, len; se_jpeg *enc; } shrink_t;
+
+static int shrink_sink(void *ctx, const uint8_t *data, size_t n)
+{
+    shrink_t *s = (shrink_t *)ctx;
+    if (s->len + n > s->cap) return 1;                   /* does not fit */
+    memcpy(s->buf + s->len, data, n);
+    s->len += (uint32_t)n;
+    return 0;
+}
+
+static int shrink_rows(void *ctx, const uint8_t *rgb, int nrows, int width)
+{
+    (void)width;
+    return se_jpeg_write_rows(((shrink_t *)ctx)->enc, rgb, nrows) == SE_OK ? 0 : -1;
+}
+
+/* 0 = made (len bytes in dst), else it does not fit / failed */
+static int shrink_jpg(const uint8_t *src, uint32_t slen, uint8_t *dst, uint32_t dcap, int quality, uint8_t *mem, size_t msz, uint32_t *len)
+{
+    se_arena ar;
+    se_jdec_info ji;
+    shrink_t s;
+    uint8_t *strip;
+    int ow, oh;
+    se_err rc;
+    se_arena_init(&ar, mem, msz);
+    rc = se_jpeg_dec_info(src, slen < FL_HDR_BYTES ? slen : FL_HDR_BYTES, &ji);
+    if (rc != SE_OK || ji.width < 800) return 1;
+    se_jpeg_scaled_size(ji.width, ji.height, 2, &ow, &oh);
+    s.buf = dst; s.cap = dcap; s.len = 0;
+    s.enc = SE_NEW(&ar, se_jpeg, 1);
+    strip = SE_NEW(&ar, uint8_t, (size_t)8 * ow * 3);
+    if (!s.enc || !strip) return 1;
+    rc = se_jpeg_begin(s.enc, ow, oh, quality, strip, 0, shrink_sink, &s);
+    if (rc == SE_OK) rc = se_jpeg_decode_scaled(src, slen, 2, &ar, shrink_rows, &s, &ji);
+    if (rc == SE_OK) rc = se_jpeg_end(s.enc);
+    if (rc != SE_OK) return 1;
+    *len = s.len;
+    return 0;
+}
+
+/* the finished picture (dio.big) goes into the RAW as its preview. 0 = done, 1 = not done, 2 = interrupted (repair at start) */
+static int dev_preview_for_raw(const char *cr2, const char *root, uint8_t *mem, size_t msz)
+{
+    cr2_info ci;
+    uint8_t *pv;
+    uint32_t n = 0;
+    static const int qual[3] = { 86, 76, 66 };
+    int i, rc = 1;
+    if (!dio.big || !dio.inram || dio.cap < dio.total || dio.total < 2000) return 1;
+    if (cr2_check(cr2, 0, &ci) != 0) return 1;           /* the layout of the RAW and the room for the preview (ci.sb) */
+    if (dio.total <= ci.sb) return dev_patch_preview(cr2, root, dio.big, dio.total);
+    pv = (uint8_t *)fio_malloc(ci.sb);
+    if (!pv) { flog("RAW preview: no memory for a smaller picture, KB", (int)(ci.sb >> 10)); return 1; }
+    for (i = 0; i < 3; i++) {
+        if (!dev_alive()) break;
+        if (shrink_jpg(dio.big, dio.total, pv, ci.sb, qual[i], mem, msz, &n) == 0) {
+            flog("RAW preview: smaller picture made, bytes", (int)n);
+            flog("RAW preview: its quality", qual[i]);
+            rc = dev_patch_preview(cr2, root, pv, n);
+            break;
+        }
+    }
+    if (rc == 1 && i == 3) flog("RAW preview: even the smallest picture does not fit, bytes of room", (int)ci.sb);
+    fio_free(pv);
+    return rc;
+}
+
 /* at start: a note left behind means a write was interrupted (power lost, battery out): look at the file it names */
 static void dev_recover(void)
 {
@@ -876,13 +1106,34 @@ static void dev_recover(void)
         else if (n > 0) flog_s("JPG: the file named in the note is complete, kept", buf);
         FIO_RemoveFile(MARK_NAME);
     }
-    n = read_text(REPL_NAME, buf, sizeof(buf) - 1);      /* a replacement of the camera's JPG was interrupted */
+    n = read_text(REPL_NAME, buf, sizeof(buf) - 1);      /* a replacement of the camera's JPG / of a RAW preview was interrupted */
     if (n >= 0) {
-        char *copy = buf, *target = 0, *e;
+        char *copy = buf, *target = 0, *kind = 0, *e;
         buf[n > 0 ? n : 0] = 0;
         for (e = buf; *e && *e != '\n'; e++) {}
-        if (*e) { *e = 0; target = e + 1; for (e = target; *e && *e != '\n'; e++) {} *e = 0; }
-        if (target && target[0] && jpg_complete(copy) && !jpg_complete(target)) {
+        if (*e) { *e = 0; target = e + 1; for (e = target; *e && *e != '\n'; e++) {} if (*e) { *e = 0; kind = e + 1; } }
+        if (target && target[0] && kind && kind[0] == 'P') {              /* RAW preview: do the patch again from the complete copy */
+            uint32_t size = 0;
+            cr2_info ci;
+            if (FIO_GetFileSize(copy, &size) == 0 && size >= 2000 && size < (16u << 20) && jpg_complete(copy) && cr2_check(target, size, &ci) == 0) {
+                uint8_t *d = (uint8_t *)fio_malloc(size);
+                FILE *f = d ? FIO_OpenFile(copy, O_RDONLY | O_SYNC) : 0;
+                uint32_t have = 0;
+                int ok = 0;
+                if (f) {
+                    while (have < size) {
+                        int got = FIO_ReadFile(f, d + have, size - have > READ_CHUNK ? READ_CHUNK : size - have);
+                        if (got <= 0) break;
+                        have += (uint32_t)got;
+                    }
+                    FIO_CloseFile(f);
+                    ok = (have == size);
+                }
+                if (ok && cr2_write(target, &ci, d, size) == 0) { flog_s("RAW preview: the interrupted patch was finished from the copy", target); FIO_RemoveFile(copy); }
+                else flog_s("RAW preview: could not finish the patch, the complete copy is", copy);
+                if (d) fio_free(d);
+            } else flog_s("RAW preview: note found, nothing to repair", target);
+        } else if (target && target[0] && jpg_complete(copy) && !jpg_complete(target)) {      /* the camera's JPG */
             FIO_RemoveFile(target);
             if (FIO_CopyFile(copy, target) == 0) flog_s("JPG: the interrupted replacement was finished from the copy", target);
             else flog_s("JPG: could not finish the replacement, the complete copy is", copy);
@@ -911,7 +1162,8 @@ static int dev_run(const dev_job_t *j)
     uint8_t *mem;
     fl_io io;
     fl_result res;
-    int t0 = 0, t_proc = 0, ok = 0, retry = 0, i, root, src_jpg = 0, replaced = -1;
+    int t0 = 0, t_proc = 0, ok = 0, retry = 0, i, root, src_jpg = 0, replaced = -1, patched = -1, want_prev = 0;
+    char cr2[96];
 
     dev_phase = 2; dev_prog = 3; gate_waited = 0; dev_end_ms = -100000;
     snprintf(src, sizeof(src), "%s%s%04d.JPG", j->dir, j->prefix, j->number);        /* the camera's JPG, or ... */
@@ -926,7 +1178,13 @@ static int dev_run(const dev_job_t *j)
     r[i] = 0;
     snprintf(dio.dst, sizeof(dio.dst), "%sFILMLOOK/%s%04d.JPG", r, j->prefix, j->number);
     snprintf(dio.mark, sizeof(dio.mark), "%s%s", r, MARK_NAME);
-    if (j->place == 1 && !src_jpg) flog("JPG: nothing to replace (RAW only), the file goes to FILMLOOK", j->number);
+    snprintf(cr2, sizeof(cr2), "%s%s%04d.CR2", j->dir, j->prefix, j->number);
+    if (j->place >= 1 && !src_jpg) flog("JPG: nothing to replace (RAW only), the file goes to FILMLOOK", j->number);
+    if (j->place == 2) {
+        uint32_t cs = 0;
+        want_prev = (FIO_GetFileSize(cr2, &cs) == 0 && cs >= 100000);
+        if (!want_prev) flog("RAW preview: there is no RAW file of this picture", j->number);
+    }
 
     mem = (uint8_t *)malloc(need);
     dio.ibuf = 0; dio.icap = 0;
@@ -950,7 +1208,7 @@ static int dev_run(const dev_job_t *j)
     dio.in = FIO_OpenFile(src, O_RDONLY | O_SYNC);
     dio.out = 0; dio.stream = 0;
     dio.ibase = 0; dio.ilen = 0; dio.on = 0; dio.len = 0; dio.total = 0;
-    dio.ms_read = 0; dio.ms_write = 0; dio.inram = 0; dio.place_repl = (j->place == 1 && src_jpg);
+    dio.ms_read = 0; dio.ms_write = 0; dio.inram = 0; dio.place_repl = ((j->place >= 1 && src_jpg) || want_prev);
     if (!dio.in) {
         flog_s("JPG: cannot open", src);
     } else {
@@ -963,6 +1221,7 @@ static int dev_run(const dev_job_t *j)
         fl_develop(&io, f, &j->look, scale, 90, &res);
         t_proc = get_ms_clock() - t0;
         FIO_CloseFile(dio.in);
+        if (want_prev && dio.ibuf) { fio_free(dio.ibuf); dio.ibuf = 0; }     /* room for the smaller picture of the RAW */
         if (res.rc == 0 && !dev_alive()) res.rc = SE_E_IO;
         if (res.rc == 0) {                               /* the short part that writes: the rest of the picture, then close */
             if (!dio.stream) { dio.inram = 1; if (dev_open_out()) res.rc = SE_E_IO; }
@@ -976,14 +1235,16 @@ static int dev_run(const dev_job_t *j)
         }
         if (ok) {
             FIO_RemoveFile(dio.mark);
-            if (dio.place_repl) replaced = dev_replace(src, r);          /* the camera's own JPG becomes the finished one */
+            if (j->place >= 1 && src_jpg) replaced = dev_replace(src, r);       /* the camera's own JPG becomes the finished one */
+            if (want_prev) patched = dev_preview_for_raw(cr2, r, mem, need);        /* and the preview inside the RAW */
             {
                 int all = get_ms_clock() - t0;
                 dev_last_ms = all - gate_waited; if (dev_last_ms < 1) dev_last_ms = 1;
                 dev_done_n++;
                 dev_prog = 1000; dev_end_ms = get_ms_clock();
                 flog_s("JPG written", dio.dst);
-                if (dio.place_repl) flog(replaced == 0 ? "JPG: the camera's JPG was REPLACED" : "JPG: the camera's JPG was NOT replaced (copy kept in FILMLOOK)", j->number);
+                if (j->place >= 1 && src_jpg) flog(replaced == 0 ? "JPG: the camera's JPG was REPLACED" : "JPG: the camera's JPG was NOT replaced (copy kept in FILMLOOK)", j->number);
+                if (want_prev) flog(patched == 0 ? "RAW preview: PATCHED (the camera shows the finished picture)" : "RAW preview: NOT patched (copy kept in FILMLOOK)", j->number);
                 flog("JPG width", res.out_w);
                 flog("JPG ms the picture itself (decode, film, encode)", t_proc - gate_waited > 0 ? t_proc - gate_waited : t_proc);
                 flog("JPG ms waiting for the camera", gate_waited);
@@ -1004,7 +1265,7 @@ static int dev_run(const dev_job_t *j)
     }
     if (dio.big) fio_free(dio.big);
     free(mem);
-    fio_free(dio.ibuf);
+    if (dio.ibuf) fio_free(dio.ibuf);
     fio_free(dio.obuf);
     return retry;
 }

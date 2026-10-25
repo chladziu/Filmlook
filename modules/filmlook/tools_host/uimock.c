@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define VERSION "v0.8"
+#define VERSION "v0.9"
 #include "../films.h"
 #include "../state.h"
 #include "../panel.h"

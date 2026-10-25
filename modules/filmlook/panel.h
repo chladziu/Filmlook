@@ -301,7 +301,7 @@ static void draw_jpg(void)
  * JPG to replace and the file goes to FILMLOOK) */
 static void draw_place(void)
 {
-    static const char *const opt[2] = { "folder FILMLOOK", "podmień JPG aparatu" };
+    static const char *const opt[3] = { "folder FILMLOOK", "podmień JPG aparatu", "JPG i podgląd RAW" };
     int on = (row == PROW), yb = slot_y(PROW);
     char tmp[48];
     list_row_frame(PROW, on, "Miejsce JPG", on ? PC_ACCENT : (st_jpg ? PC_TEXT : PC_SOFT));
