@@ -1,10 +1,10 @@
 /* PC test of the panel screen: uimock <out.ppm> [film full name] [key=value ...]
- * keys: row top push strength grain contrast hal fade warm shadow high sat vig jpg msg=<text>
+ * keys: row top push strength grain contrast hal fade warm shadow high sat vig jpg msg=<text> status=<text>
  * The picture is made by the very same panel.h / serif.h that the camera runs. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define VERSION "v0.6"
+#define VERSION "v0.7"
 #include "../films.h"
 #include "../state.h"
 #include "../panel.h"
@@ -44,13 +44,14 @@ int main(int argc, char **argv)
         else if (!strncmp(a, "jpg=", 4)) st_jpg = v;
     }
     fix_push();
-    cur_set = set_of(st_film);
+    cur_slot = st_film;                                 /* the numbers given above are the sliders of this film */
     list_build();
     pal_build();
     ui_fb = fb; ui_pitch = 720;
     draw_static();
     paint_rows();
     for (i = 2; i < argc; i++) if (!strncmp(argv[i], "msg=", 4)) draw_hint(argv[i] + 4);
+    for (i = 2; i < argc; i++) if (!strncmp(argv[i], "status=", 7)) draw_status(argv[i] + 7);
     f = fopen(argv[1], "wb");
     fprintf(f, "P6\n720 480\n255\n");
     for (r = 0; r < 480 * 720; r++) {

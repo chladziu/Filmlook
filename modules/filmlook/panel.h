@@ -22,7 +22,7 @@
 #include "serif.h"
 
 /* ------------------------------------------------------------------ colours */
-enum { PC_BG, PC_TEXT, PC_ACCENT, PC_SOFT, PC_DIM, PC_TRACK, PC_N };
+enum { PC_BG, PC_TEXT, PC_ACCENT, PC_SOFT, PC_DIM, PC_TRACK, PC_MOD, PC_N };
 static const unsigned char pc_rgb[PC_N][3] = {
     { 229, 222, 202 },        /* PC_BG     paper  #E5DECA */
     {  38,  33,  28 },        /* PC_TEXT   ink    #26211C */
@@ -30,9 +30,10 @@ static const unsigned char pc_rgb[PC_N][3] = {
     {  96,  88,  74 },        /* PC_SOFT   #60584A */
     { 150, 141, 120 },        /* PC_DIM    lines, switched-off rows #968D78 */
     { 207, 198, 174 },        /* PC_TRACK  empty part of a bar */
+    {  46, 111, 106 },        /* PC_MOD    teal #2E6F6A: the part of a bar that differs from the default of the film */
 };
 #define PAL_BASE   232                         /* first palette index used (the camera gets them back when the panel closes) */
-#define PAL_COUNT  (PC_N + 2 * (PC_N - 1))     /* 6 colours + 2 half tones of each of the 5 inks = 16 */
+#define PAL_COUNT  (PC_N + 2 * (PC_N - 1))     /* 7 colours + 2 half tones of each of the 6 inks = 19 */
 
 static unsigned char pal_rgb[PAL_COUNT][3];    /* the colour of palette index PAL_BASE + i */
 
@@ -85,6 +86,12 @@ static void draw_hint(const char *msg)
 {
     if (msg) sf_line(&sf_xxs, M_L, M_R, Y_HINT, 17, 5, msg, PC_ACCENT, SF_CENTER);
     else     sf_line(&sf_xxs, M_L, M_R3, Y_HINT, 17, 5, "pokrętło: zmiana\tjoystick: wiersz\tSET: zapis\tkosz: zamknij", PC_SOFT, SF_JUST);
+}
+
+/* top left: how many JPGs are waiting / made now, or how long the last one took (empty = nothing to say) */
+static void draw_status(const char *t)
+{
+    sf_line(&sf_xxs, M_L, M_L + 136, Y_TITLE, 17, 5, (t && t[0] && t[0] != '?') ? t : " ", PC_MOD, SF_LEFT);
 }
 
 static void draw_static(void)
@@ -205,26 +212,40 @@ static void list_row_frame(int r, int on, const char *label, int lcol)
 /* x of a value on the bar */
 static int bar_pos(int v, int lo, int hi) { return BAR_X + ((v - lo) * BAR_W) / (hi - lo); }
 
-/* a slider row: bar and value in % */
+/* a slider row: bar and value in %. The part of the bar between the default of the slider and its value (what the
+ * user changed) is teal; a small marker shows the default when it is neither end of the bar */
 static void draw_slider(int r)                  /* r = 4 .. 13 */
 {
     int j = r - 4, on = (row == r);
-    int v = *sl_var(j), lo = sl_def[j].lo, hi = sl_def[j].hi;
-    int yb = slot_y(r), x0, x1, ra, rb, zx;
+    int v = *sl_var(j), lo = sl_def[j].lo, hi = sl_def[j].hi, dv = sl_default[j];
+    int yb = slot_y(r), x0, x1, ra, rb, zx, dx, vx, mx0 = 0, mx1 = 0, mra = 0, mrb = 0, mtop = 0;
     char tmp[16];
 
     list_row_frame(r, on, sl_def[j].name, on ? PC_ACCENT : PC_TEXT);
     zx = bar_pos(0, lo, hi);
+    dx = bar_pos(dv, lo, hi);
+    vx = bar_pos(v, lo, hi);
     if (lo < 0) {                               /* two-sided: from the zero to the value */
-        int vx = bar_pos(v, lo, hi);
         if (v > 0)      { x0 = zx; x1 = vx; ra = 0; rb = 1; }
         else if (v < 0) { x0 = vx; x1 = zx; ra = 1; rb = 0; }
         else            { x0 = x1 = zx; ra = rb = 0; }
     } else {
-        x0 = BAR_X; x1 = bar_pos(v, lo, hi); ra = rb = 1;
+        x0 = BAR_X; x1 = vx; ra = rb = 1;
         if (v == lo) x1 = x0;
     }
-    ui_bar(BAR_X, yb - 14, BAR_W, BAR_H, x0, x1, on ? PC_ACCENT : PC_SOFT, PC_TRACK, ra, rb, lo < 0 ? zx : -1, BAR_X - 12, VAL_X, PC_SOFT);
+    if (v != dv) {
+        if (lo < 0) {                           /* two-sided (the default is the zero): the whole coloured part is the change */
+            mx0 = x0; mx1 = x1; mra = ra; mrb = rb; mtop = 1;
+        } else if (v > dv) {                    /* more than the default: the added part, on top of the filled part */
+            mx0 = dx; mx1 = vx; mra = (dv == lo); mrb = 1; mtop = 1;
+        } else {                                /* less than the default: the part taken away, behind the filled part */
+            mx0 = vx - BAR_H / 2; mx1 = dx; mtop = 0;
+            if (mx0 <= BAR_X) { mx0 = BAR_X; mra = 1; } else mra = 0;
+            mrb = (dv == hi);
+        }
+    }
+    ui_bar(BAR_X, yb - 14, BAR_W, BAR_H, x0, x1, on ? PC_ACCENT : PC_SOFT, PC_TRACK, ra, rb,
+           (dv > lo && dv < hi) ? dx : -1, BAR_X - 12, VAL_X, PC_SOFT, mx0, mx1, PC_MOD, mra, mrb, mtop);
     if (sl_def[j].signed_) snprintf(tmp, sizeof(tmp), "%s%d%%", v > 0 ? "+" : "", v);
     else                   snprintf(tmp, sizeof(tmp), "%d%%", v);
     sf_line(&sf_sml, VAL_X, M_R3, yb, 25, 7, tmp, on ? PC_ACCENT : PC_TEXT, SF_RIGHT);
@@ -244,11 +265,11 @@ static void draw_push(void)
     if (n > 1) {
         int kx = BAR_X + ((st_push + PUSH_RANGE) * BAR_W) / (2 * PUSH_RANGE);
         if (kx > cx) { x0 = cx; x1 = kx; rb = 1; } else if (kx < cx) { x0 = kx; x1 = cx; ra = 1; }
-        ui_bar(BAR_X, yb - 14, BAR_W, BAR_H, x0, x1, on ? PC_ACCENT : PC_SOFT, PC_TRACK, ra, rb, cx, BAR_X - 12, VAL_X, PC_SOFT);   /* one marker: the normal position, like every other bar */
+        ui_bar(BAR_X, yb - 14, BAR_W, BAR_H, x0, x1, on ? PC_ACCENT : PC_SOFT, PC_TRACK, ra, rb, cx, BAR_X - 12, VAL_X, PC_SOFT, 0, 0, PC_MOD, 0, 0, 0);   /* one marker: the normal position, like every other bar */
         if (st_push == 0) val = "normalnie";
         else { snprintf(pushv, sizeof(pushv), "%s%d EV", st_push > 0 ? "+" : "", st_push); val = pushv; }
     } else {
-        ui_bar(BAR_X, yb - 14, BAR_W, BAR_H, cx, cx, PC_TRACK, PC_TRACK, 0, 0, -1, BAR_X - 12, VAL_X, PC_SOFT);
+        ui_bar(BAR_X, yb - 14, BAR_W, BAR_H, cx, cx, PC_TRACK, PC_TRACK, 0, 0, -1, BAR_X - 12, VAL_X, PC_SOFT, 0, 0, PC_MOD, 0, 0, 0);
     }
     sf_line(&sf_sml, VAL_X, M_R3, yb, 25, 7, val, c, SF_RIGHT);
 }
@@ -264,11 +285,23 @@ static void draw_jpg(void)
     sf_line(&sf_sml, BAR_X - 12, M_R3, yb, 25, 7, tmp, on ? PC_ACCENT : (st_jpg ? PC_TEXT : PC_SOFT), SF_RIGHT);
 }
 
+/* last row: back to the defaults of the chosen film. SET does it. No bar here, so the line uses the whole width:
+ * the name at the left, what SET does at the right */
+static void draw_reset(void)
+{
+    int on = (row == RROW), yb = slot_y(RROW), n = mod_n();
+    char tmp[64];
+    draw_mark(on, yb - 22, 26);
+    if (n > 0) snprintf(tmp, sizeof(tmp), "Ustawienia domyślne\tSET: przywróć (zmienione: %d)", n);
+    else       snprintf(tmp, sizeof(tmp), "Ustawienia domyślne\tbez zmian");
+    sf_line(&sf_sml, M_L, M_R3, yb, 25, 7, tmp, on ? PC_ACCENT : (n > 0 ? PC_TEXT : PC_SOFT), SF_JUST);
+}
+
 static void draw_slot(int r)
 {
     int p = lst_pos(r);
     if (p < top || p >= top + VIS) return;           /* (also when the row does not exist for this film: p = -1) */
-    if (r == 3) draw_push(); else if (r == JROW) draw_jpg(); else draw_slider(r);
+    if (r == 3) draw_push(); else if (r == JROW) draw_jpg(); else if (r == RROW) draw_reset(); else draw_slider(r);
 }
 
 /* a place of the list without a row: paper (and, without a film, a short note in the second place) */

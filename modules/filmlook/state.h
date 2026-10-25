@@ -8,8 +8,9 @@
 
 #define NSL   10                             /* sliders: rows 4..13 */
 #define JROW  (4 + NSL)                      /* row 14: JPG with the effect (off / half size / full size) */
-#define NROWS (JROW + 1)                     /* 0 type, 1 brand, 2 film, 3 push/pull, 4.. sliders (see sl_def), JPG row */
-#define VIS   5                              /* rows 3..14 scroll in a window of 5 */
+#define RROW  (JROW + 1)                     /* row 15: back to the default settings of this film */
+#define NROWS (RROW + 1)                     /* 0 type, 1 brand, 2 film, 3 push/pull, 4.. sliders (see sl_def), JPG row, reset row */
+#define VIS   5                              /* rows 3..15 scroll in a window of 5 */
 
 /* ------------------------------------------------------------------ state */
 static int st_film = 0;                   /* 0 = Off, 1.. = index into films[] + 1 (always a base film) */
@@ -112,19 +113,25 @@ static void remember(void)
 }
 
 
-/* ------------------------------------------------------------------ own presets and the visible list
- * The sliders belong to a "set": set 0 is used with all films, sets 1..OWN_SLOTS belong to the own presets of the type
- * "Własny" (every preset keeps its own sliders). st_* always hold the set of the film that is chosen now; when the choice
- * moves to another set, the sliders are swapped. */
-#define OWN_SLOTS 5
-typedef struct { short strength, grain, contrast, hal, fade, warm, shadow, high, sat, vig; } vals_t;
-static vals_t set_v[1 + OWN_SLOTS];
-static int cur_set = 0;
+/* ------------------------------------------------------------------ the sliders of every film
+ * Every film has its own sliders. The film itself (its calibrated look) is never changed: what the user moves is kept
+ * apart (film_v[]) and written to the settings file as the difference to the defaults. A film nobody touched has the
+ * defaults (sl_default). st_* always hold the sliders of the film that is chosen now; when another film is chosen they
+ * go back to film_v[] and the sliders of the other film are loaded. The own presets of the type "Własny" are films like
+ * any other here (they simply start from the defaults and are meant to be changed). */
+typedef struct { short strength, grain, contrast, hal, fade, warm, shadow, high, sat, vig; } vals_t;   /* order of sl_def */
+static vals_t film_v[BASE_COUNT];
+static int cur_slot = 0;                     /* film (1..) whose sliders are in st_* now, 0 = none */
+
+/* default of every slider, in the order of sl_def: Efekt Ziarno Kontrast Halacja Matowość Ciepło Cienie Światła Nasycenie Winieta */
+static const short sl_default[NSL] = { 100, 100, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+static short *vp(vals_t *v, int j) { return &((short *)v)[j]; }
 
 static void vals_defaults(vals_t *v)
 {
-    v->strength = 100; v->grain = 100; v->contrast = 0; v->hal = 0; v->fade = 0;
-    v->warm = 0; v->shadow = 0; v->high = 0; v->sat = 0; v->vig = 0;
+    int j;
+    for (j = 0; j < NSL; j++) *vp(v, j) = sl_default[j];
 }
 
 static void vals_get(vals_t *v)
@@ -142,38 +149,59 @@ static void vals_put(const vals_t *v)
 static void sets_init(void)
 {
     int i;
-    for (i = 0; i < 1 + OWN_SLOTS; i++) vals_defaults(&set_v[i]);
-    cur_set = 0;
+    for (i = 0; i < BASE_COUNT; i++) vals_defaults(&film_v[i]);
+    cur_slot = 0;
 }
 
-/* the set the chosen film uses: 0, or 1.. for the own preset slots (type "Własny" = the last type) */
-static int set_of(int film)
+/* an own preset (type "Własny" = the last type): no effect strength, no push / pull */
+static int is_own(int film)
 {
-    if (film > 0) {
-        const group_t *g = &groups[films[film - 1].group];
-        if (g->type == TYPE_COUNT - 1) return 1 + clampi(film - 1 - g->first, 0, OWN_SLOTS - 1);
-    }
-    return 0;
+    return film > 0 && groups[films[film - 1].group].type == TYPE_COUNT - 1;
 }
 
-/* st_film changed: swap the sliders when the film belongs to another set. Returns 1 when they were swapped */
+/* film number (1..) of own preset slot k (1..5) */
+static int own_film(int k)
+{
+    const group_t *g = &groups[types[TYPE_COUNT - 1].first_group];
+    return 1 + g->first + clampi(k - 1, 0, g->n - 1);
+}
+
+/* st_film changed: the sliders of the old film go back to their place, those of the new film are loaded.
+ * Returns 1 when the sliders were swapped */
 static int switch_set(void)
 {
-    int ns = set_of(st_film);
-    if (ns == cur_set) return 0;
-    vals_get(&set_v[cur_set]);
-    cur_set = ns;
-    vals_put(&set_v[cur_set]);
+    if (st_film == cur_slot) return 0;
+    if (cur_slot > 0) vals_get(&film_v[cur_slot - 1]);
+    cur_slot = st_film;
+    if (cur_slot > 0) vals_put(&film_v[cur_slot - 1]);
     return 1;
 }
 
-/* the rows of the list under the film (3 push / pull, 4.. sliders, JPG row) that exist for the chosen film:
+/* how many sliders of the chosen film are not at their default (the effect strength does not exist for the own presets) */
+static int mod_n(void)
+{
+    int j, n = 0;
+    if (st_film == 0) return 0;
+    for (j = is_own(st_film) ? 1 : 0; j < NSL; j++) if (*sl_var(j) != sl_default[j]) n++;
+    return n;
+}
+
+/* all sliders of the chosen film back to the defaults; returns how many were changed */
+static int reset_film(void)
+{
+    int j, n = mod_n();
+    if (st_film == 0) return 0;
+    for (j = 0; j < NSL; j++) *sl_var(j) = sl_default[j];
+    return n;
+}
+
+/* the rows of the list under the film (3 push / pull, 4.. sliders, JPG row, reset row) that exist for the chosen film:
  * no effect: none; own preset: no push / pull and no effect strength */
 static int lst[NROWS], lst_n = 0;
 
 static void list_build(void)
 {
-    int r, own = (st_film > 0 && cur_set > 0);
+    int r, own = is_own(st_film);
     lst_n = 0;
     if (st_film == 0) return;
     for (r = 3; r < NROWS; r++) {

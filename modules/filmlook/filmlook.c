@@ -26,11 +26,13 @@
 #include "xmp.h"
 #include "develop.h"
 
-#define VERSION "v0.6"
+#define VERSION "v0.7"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
 extern int gui_state;
 extern int lv;
+extern int gui_menu_shown(void);
+extern int ml_shutdown_requested;
 extern int set_config_var(const char *name, int new_value);
 extern int get_config_var(const char *name);
 
@@ -43,23 +45,35 @@ static void cur_look(look_t *L)
 }
 
 /* ------------------------------------------------------------------ log */
+/* several tasks write to the log (key task, shoot task, develop task): one at a time, so lines never get mixed */
+static struct semaphore *log_sem = 0;
+
+static void log_lock(void)   { if (log_sem) take_semaphore(log_sem, 2000); }
+static void log_unlock(void) { if (log_sem) give_semaphore(log_sem); }
+
 static void flog(const char *a, int v)
 {
     char line[128];
+    FILE *f;
     snprintf(line, sizeof(line), "%d  %s %d\n", get_ms_clock(), a, v);
-    FILE *f = FIO_CreateFileOrAppend(LOG_PATH);
+    log_lock();
+    f = FIO_CreateFileOrAppend(LOG_PATH);
     if (f) { FIO_WriteFile(f, line, strlen(line)); FIO_CloseFile(f); }
+    log_unlock();
 }
 
 static void flog_s(const char *a, const char *s)
 {
     char line[160];
+    FILE *f;
     snprintf(line, sizeof(line), "%d  %s %s\n", get_ms_clock(), a, s);
-    FILE *f = FIO_CreateFileOrAppend(LOG_PATH);
+    log_lock();
+    f = FIO_CreateFileOrAppend(LOG_PATH);
     if (f) { FIO_WriteFile(f, line, strlen(line)); FIO_CloseFile(f); }
+    log_unlock();
 }
 
-/* key events are collected in RAM and written to the log when the panel closes,
+/* key events and diagnostic events of the screen are collected in RAM and written to the log when the panel closes,
  * so that the (slow) card access never delays the camera's button handling */
 #define KLOG_N 96
 static int klog_t[KLOG_N];
@@ -71,140 +85,60 @@ static void klog_add(int key)
     if (klog_n < KLOG_N) { klog_t[klog_n] = get_ms_clock(); klog_k[klog_n] = key; klog_n++; }
 }
 
+#define DLOG_N 40
+static int dlog_t[DLOG_N], dlog_a[DLOG_N], dlog_b[DLOG_N], dlog_c[DLOG_N];
+static const char *dlog_s[DLOG_N];
+static volatile int dlog_n = 0;
+
+/* tag is a string literal; a, b, c are numbers worth knowing (gui_state, GUI mode, live view ...) */
+static void dlog_add(const char *tag, int a, int b, int c)
+{
+    int i = dlog_n;
+    if (i < DLOG_N) {
+        dlog_t[i] = get_ms_clock(); dlog_s[i] = tag; dlog_a[i] = a; dlog_b[i] = b; dlog_c[i] = c;
+        dlog_n = i + 1;
+    }
+}
+
 static void klog_flush(void)
 {
-    static char buf[KLOG_N * 24 + 32];
-    int i, n = 0;
-    if (klog_n <= 0) return;
-    n += snprintf(buf + n, sizeof(buf) - n, "%d  keys while panel open (time_ms key):\n", get_ms_clock());
-    for (i = 0; i < klog_n && n < (int)sizeof(buf) - 24; i++)
-        n += snprintf(buf + n, sizeof(buf) - n, "  %d %d\n", klog_t[i], klog_k[i]);
-    klog_n = 0;
+    static char buf[KLOG_N * 24 + DLOG_N * 64 + 64];
+    int i, n = 0, m = dlog_n;
+    if (klog_n <= 0 && m <= 0) return;
+    if (m > DLOG_N) m = DLOG_N;
+    for (i = 0; i < m; i++)
+        n += snprintf(buf + n, sizeof(buf) - n, "%d  screen: %s %d %d %d\n", dlog_t[i], dlog_s[i], dlog_a[i], dlog_b[i], dlog_c[i]);
+    dlog_n = 0;
+    if (klog_n > 0) {
+        n += snprintf(buf + n, sizeof(buf) - n, "%d  keys while panel open (time_ms key):\n", get_ms_clock());
+        for (i = 0; i < klog_n && n < (int)sizeof(buf) - 24; i++)
+            n += snprintf(buf + n, sizeof(buf) - n, "  %d %d\n", klog_t[i], klog_k[i]);
+        klog_n = 0;
+    }
     {
-        FILE *f = FIO_CreateFileOrAppend(LOG_PATH);
+        FILE *f;
+        log_lock();
+        f = FIO_CreateFileOrAppend(LOG_PATH);
         if (f) { FIO_WriteFile(f, buf, n); FIO_CloseFile(f); }
+        log_unlock();
     }
 }
 
 /* ------------------------------------------------------------------ settings file */
+#include "persist.h"
+
 static void save_state(void)
 {
-    static char t[900];
-    const vals_t *a;
-    int k, n;
-    vals_get(&set_v[cur_set]);                          /* the sliders in use go back to their set first */
-    a = &set_v[0];
-    snprintf(t, sizeof(t), "film=%s\npush=%d\nstrength=%d\ngrain=%d\ncontrast=%d\nfade=%d\nwarm=%d\nshadow=%d\nhigh=%d\nsat=%d\nvig=%d\nhal=%d\njpg=%d\n",
-             st_film > 0 ? films[st_film - 1].full : "Off", st_push, a->strength, a->grain, a->contrast,
-             a->fade, a->warm, a->shadow, a->high, a->sat, a->vig, a->hal, st_jpg);
-    for (k = 1; k <= OWN_SLOTS; k++) {                  /* the own presets: grain, contrast, halation, fade, warm, shadow, high, sat, vig */
-        const vals_t *v = &set_v[k];
-        n = strlen(t);
-        snprintf(t + n, sizeof(t) - n, "own%d=%d,%d,%d,%d,%d,%d,%d,%d,%d\n", k, v->grain, v->contrast, v->hal, v->fade, v->warm,
-                 v->shadow, v->high, v->sat, v->vig);
-    }
+    int n = cfg_build();
     FILE *f = FIO_CreateFile(SETTINGS_PATH);
-    if (f) { FIO_WriteFile(f, t, strlen(t)); FIO_CloseFile(f); }
+    if (f) { FIO_WriteFile(f, cfg_buf, n); FIO_CloseFile(f); }
     else flog("save_state: cannot create file", 0);
-}
-
-static int parse_after(const char *s, const char *key, int *out)
-{
-    int kl = strlen(key);
-    for (; *s; s++) {
-        if (strncmp(s, key, kl) == 0 && s[kl] == '=') {
-            const char *p = s + kl + 1;
-            int neg = 0, v = 0, any = 0;
-            if (*p == '-') { neg = 1; p++; }
-            while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); p++; any = 1; }
-            if (any) { *out = neg ? -v : v; return 1; }
-        }
-    }
-    return 0;
-}
-
-/* "film=<full name>" (the name, not a number, so that adding films later never changes the saved choice) */
-static void parse_film(const char *s)
-{
-    int i;
-    st_film = 0;
-    for (; *s; s++) {
-        if (strncmp(s, "film=", 5) == 0) {
-            const char *p = s + 5;
-            for (i = 0; i < BASE_COUNT; i++) {
-                int l = strlen(films[i].full);
-                if (strncmp(p, films[i].full, l) == 0 && (p[l] == '\n' || p[l] == '\r' || p[l] == 0)) { st_film = i + 1; return; }
-            }
-            return;
-        }
-    }
-}
-
-/* "own3=g,c,h,f,w,s,h,s,v": the nine numbers of an own preset, -999 where the file has nothing */
-static void parse_own(const char *buf, int k, vals_t *v)
-{
-    char key[8];
-    int n[9], i;
-    const char *s;
-    snprintf(key, sizeof(key), "own%d=", k);
-    for (s = buf; *s; s++) {
-        if (strncmp(s, key, 5) == 0 && (s == buf || s[-1] == '\n')) {
-            const char *p = s + 5;
-            for (i = 0; i < 9; i++) {
-                int neg = 0, val = 0, any = 0;
-                if (*p == '-') { neg = 1; p++; }
-                while (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); p++; any = 1; }
-                if (!any) return;
-                n[i] = neg ? -val : val;
-                if (*p == ',') p++;
-            }
-            v->grain = n[0]; v->contrast = n[1]; v->hal = n[2]; v->fade = n[3]; v->warm = n[4];
-            v->shadow = n[5]; v->high = n[6]; v->sat = n[7]; v->vig = n[8];
-            return;
-        }
-    }
 }
 
 static void load_state(void)
 {
-    static char buf[1200];
-    int n = read_file(SETTINGS_PATH, buf, sizeof(buf) - 1);
-    if (n > 0) {
-        buf[n] = 0;
-        parse_film(buf);
-        parse_after(buf, "push", &st_push);
-        parse_after(buf, "strength", &st_strength);
-        parse_after(buf, "grain", &st_grain);
-        parse_after(buf, "contrast", &st_contrast);
-        parse_after(buf, "fade", &st_fade);
-        parse_after(buf, "warm", &st_warm);
-        parse_after(buf, "shadow", &st_shadow);
-        parse_after(buf, "high", &st_high);
-        parse_after(buf, "sat", &st_sat);
-        parse_after(buf, "vig", &st_vig);
-        parse_after(buf, "hal", &st_hal);
-        parse_after(buf, "jpg", &st_jpg);
-        { int k; for (k = 1; k <= OWN_SLOTS; k++) parse_own(buf, k, &set_v[k]); }
-    }
-    st_film = clampi(st_film, 0, BASE_COUNT);
-    fix_push();
-    remember();
-    st_strength = clampi(st_strength, 0, 100);
-    st_grain = clampi(st_grain, 0, 200);
-    st_contrast = clampi(st_contrast, -50, 50);
-    { int j; for (j = 0; j < NSL; j++) *sl_var(j) = clampi(*sl_var(j), sl_def[j].lo, sl_def[j].hi); }
-    st_jpg = clampi(st_jpg, 0, 2);
-    vals_get(&set_v[0]);                                /* what the old keys held belongs to set 0 */
-    cur_set = 0;
-    { int k, j; for (k = 1; k <= OWN_SLOTS; k++) {      /* the own presets: same limits, effect strength fixed at 100 */
-        vals_put(&set_v[k]);
-        st_strength = 100;
-        for (j = 0; j < NSL; j++) *sl_var(j) = clampi(*sl_var(j), sl_def[j].lo, sl_def[j].hi);
-        vals_get(&set_v[k]);
-    } }
-    vals_put(&set_v[0]);
-    switch_set();                                       /* the chosen film may be an own preset */
-    list_build();
+    int n = read_file(SETTINGS_PATH, cfg_buf, sizeof(cfg_buf) - 1);
+    cfg_parse(n);
 }
 
 /* ------------------------------------------------------------------ drawing */
@@ -225,11 +159,12 @@ static int pal_entry(const unsigned char *c, int opacity)
     return ((opacity & 0xFF) << 24) | ((y & 0xFF) << 16) | ((u & 0xFF) << 8) | (v & 0xFF);
 }
 
+/* the panel's 16 colours are written whether the bitmap layer is muted or not: while the screen is built up, every other
+ * palette entry stays transparent, so nothing of Canon's or ML's own screens can show through */
 static void pal_apply(void)
 {
     int i, opacity = (LCD_Palette[3 * COLOR_BLACK + 2] >> 24) & 0xFF;
     if (opacity == 0) opacity = 3;                      /* fully opaque */
-    if (!bmp_is_on()) return;
     for (i = 0; i < PAL_COUNT; i++) {
         int e = pal_entry(pal_rgb[i], opacity);
         EngDrvOut(LCD_Palette[3 * (PAL_BASE + i)], e);
@@ -237,22 +172,27 @@ static void pal_apply(void)
     }
 }
 
-static void pal_restore(void)                           /* back to what Canon had there */
+/* every palette entry transparent: the same thing bmp_off() does, repeated while Canon is changing its screen,
+ * because Canon loads its own palette again when it switches the mode and would show its menu for a moment */
+static void pal_mute_all(void)
 {
     int i;
-    for (i = 0; i < PAL_COUNT; i++) {
-        int e = LCD_Palette[3 * (PAL_BASE + i) + 2];
-        EngDrvOut(LCD_Palette[3 * (PAL_BASE + i)], e);
-        EngDrvOut(LCD_Palette[3 * (PAL_BASE + i) + 0x300], e);
+    for (i = 0; i < 0x100; i++) {
+        EngDrvOut(LCD_Palette[3 * i], 0x00FF0000);
+        EngDrvOut(LCD_Palette[3 * i + 0x300], 0x00FF0000);
     }
 }
 
 /* what has to be redrawn (set from the key handler, handled in the shoot task) */
-#define D_ROW(r) (1 << (r))          /* rows 0..14 */
-#define D_INFO   (1 << 15)           /* kind / description block under the film row */
-#define D_BAR    (1 << 16)           /* scroll bar of the list */
-#define D_LISTALL (1 << 17)          /* the whole list: it scrolled, or the rows / the sliders changed with the film */
+#define D_ROW(r) (1 << (r))          /* rows 0..15 */
+#define D_INFO   (1 << 16)           /* kind / description block under the film row */
+#define D_BAR    (1 << 17)           /* scroll bar of the list */
+#define D_LISTALL (1 << 18)          /* the whole list: it scrolled, or the rows / the sliders changed with the film */
+#define D_STATUS (1 << 19)           /* the JPG status at the top left */
 static volatile int dirty = 0;
+static const char *msg_text = "Zapisano";
+static int dev_pending(void);
+static volatile int dev_last_ms;
 
 /* the drawing functions write straight into the screen buffer of the camera (call with BMP_LOCK held) */
 static void ui_attach(void)
@@ -261,21 +201,50 @@ static void ui_attach(void)
     ui_pitch = BMPPITCH;
 }
 
-static int msg_until = 0;            /* ms clock: show the "saved" message until then */
+static int msg_until = 0;            /* ms clock: show the message in the hint line until then */
 static volatile int want_save = 0;
+static volatile int want_reset = 0;  /* SET on the row "Ustawienia domyślne" */
+
+/* the JPG status at the top left: the number of JPGs that wait or are made now, otherwise how long the last one took */
+static char st_last[32] = "?";                  /* what the status field shows now ('?' = not drawn yet) */
+
+static void status_text(char *t, int n)
+{
+    int pend = dev_pending(), ms = dev_last_ms;
+    if (pend > 0)      snprintf(t, n, "kolejka JPG: %d", pend);
+    else if (ms > 0)   snprintf(t, n, "obróbka: %d,%d s", ms / 1000, (ms % 1000) / 100);
+    else               t[0] = 0;
+}
 
 static void redraw_dirty(void)
 {
     int d = dirty;
+    if (want_reset) {
+        int k;
+        want_reset = 0;
+        k = reset_film();
+        dirty |= D_LISTALL;
+        d |= D_LISTALL;
+        want_save = 1;
+        flog("defaults restored, sliders changed", k);
+        if (k == 0) msg_text = "Ustawienia są już domyślne";
+        else        msg_text = "Przywrócono ustawienia domyślne filmu";
+    }
     if (want_save) {
         want_save = 0;
         save_state();
-        msg_until = get_ms_clock() + 1200;
-        BMP_LOCK ( ui_attach(); draw_hint("Zapisano"); )
+        msg_until = get_ms_clock() + 1500;
+        BMP_LOCK ( ui_attach(); draw_hint(msg_text); )
+        msg_text = "Zapisano";
         flog_s("settings saved, film", st_film > 0 ? films[eff_film() - 1].full : "Off");
     } else if (msg_until && get_ms_clock() > msg_until) {
         msg_until = 0;
         BMP_LOCK ( ui_attach(); draw_hint(0); )
+    }
+    {                                                   /* the JPG status changes by itself (in the background) */
+        char t[32];
+        status_text(t, sizeof(t));
+        if (strcmp(t, st_last) != 0) { strcpy(st_last, t); d |= D_STATUS; dirty |= D_STATUS; }
     }
     if (!d) return;
     dirty &= ~d;
@@ -288,6 +257,7 @@ static void redraw_dirty(void)
         if (d & D_INFO)    draw_info();
         if (d & D_LISTALL) draw_list_all();
         else { int r; for (r = 3; r < NROWS; r++) if (d & D_ROW(r)) draw_slot(r); }
+        if (d & D_STATUS)  draw_status(st_last);
     )
 }
 
@@ -317,10 +287,12 @@ static void paint_all(void)
 
 /* Same trick as the ML menu: in photo mode the Canon INFO screen does not pass the joystick and part of the
  * dial clicks to ML, so the camera is switched to its (invisible) menu mode, where all buttons arrive.
- * The Canon menu that appears for a moment is hidden by switching the bitmap layer off meanwhile. */
+ * The Canon menu that appears for a moment is kept out of sight: the whole palette is muted and muted again while
+ * Canon changes its screen, the panel is drawn into the buffer meanwhile and only then its own 16 colours are
+ * switched on (nothing else ever becomes visible, so there is no flash of Canon's or ML's menu). */
 static void do_open(void)
 {
-    int i;
+    int i, t_mode = 0, t0 = get_ms_clock();
     kill_ml_overlay();
     row = (st_film > 0) ? 2 : 0;                        /* start on the film row when a film is chosen */
     top = 0;
@@ -328,22 +300,36 @@ static void do_open(void)
     klog_n = 0;
     msg_until = 0;
     want_save = 0;
+    want_reset = 0;
+    msg_text = "Zapisano";
+    strcpy(st_last, "?");
     last_input_ms = get_ms_clock();
+    dlog_add("open start: GUI mode, live view, ML menu", CUR_GUI_MODE, lv, gui_menu_shown());
+    bmp_off();
+    pal_mute_all();
     if (!lv && CUR_GUI_MODE != 2) {
-        bmp_off();
         SetGUIRequestMode(2);
-        for (i = 0; i < 40 && CUR_GUI_MODE != 2; i++) msleep(25);
-        msleep(280);                                   /* Canon draws its menu */
+        for (i = 0; i < 150; i++) {                    /* up to 1.5 s: until the mode is there, then Canon draws its menu */
+            pal_mute_all();
+            if (gui_menu_shown()) dlog_add("ML MENU IS SHOWN while opening", i, CUR_GUI_MODE, 0);
+            if (CUR_GUI_MODE == 2) {
+                if (!t_mode) { t_mode = get_ms_clock(); dlog_add("GUI mode 2 reached after ms", t_mode - t0, 0, 0); }
+                else if (get_ms_clock() - t_mode >= 300) break;
+            }
+            msleep(10);
+        }
     }
+    pal_mute_all();
     canon_gui_disable_front_buffer();
     paint_all();
+    pal_apply();                                       /* the panel's colours: the first thing that becomes visible */
     msleep(60);
     canon_gui_disable_front_buffer();
     paint_all();
-    bmp_on();
     pal_apply();
     last_input_ms = get_ms_clock();
     ui_state = UI_OPEN;
+    dlog_add("open done after ms, GUI mode, ML menu", get_ms_clock() - t0, CUR_GUI_MODE, gui_menu_shown());
     flog("screen opened, film", st_film);
 }
 
@@ -352,16 +338,17 @@ static void do_close(void)
     dirty = 0;
     want_save = 0;
     save_state();
-    klog_flush();
-    pal_restore();
+    bmp_off();                                          /* hides the panel at once (also marks the layer as muted for bmp_on) */
+    pal_mute_all();
     if (CUR_GUI_MODE != 0) {
-        bmp_off();
         SetGUIRequestMode(0);
-        msleep(150);
+        for (int i = 0; i < 20; i++) { pal_mute_all(); msleep(10); }
     }
     canon_gui_enable_front_buffer(1);
     msleep(150);
-    bmp_on();
+    bmp_on();                                           /* Canon's palette is back */
+    dlog_add("closed, GUI mode, ML menu", CUR_GUI_MODE, lv, gui_menu_shown());
+    klog_flush();
     flog("screen closed, film", st_film);
     ui_state = UI_CLOSED;
 }
@@ -370,11 +357,11 @@ static void do_close(void)
  * Returns the dirty bits of the list */
 static int film_changed(void)
 {
-    int old_n = lst_n, old_set = cur_set, swapped;
+    int old_n = lst_n, swapped;
     st_push = 0;
-    swapped = switch_set();
+    swapped = switch_set();                             /* every film has its own sliders */
     list_build();
-    if (swapped || old_n != lst_n || (old_set != cur_set)) { top = 0; return D_LISTALL; }
+    if (swapped || old_n != lst_n) { top = 0; return D_LISTALL; }
     return D_ROW(3);
 }
 
@@ -422,6 +409,8 @@ static void change_value(int dir)
             if (ni != i) { st_push = popts[f->pfirst + ni].shift; dirty |= D_ROW(3) | D_INFO; }
         }
     }
+    else if (row == RROW) {                              /* the dial does nothing here: SET restores the defaults */
+    }
     else if (row == JROW) {                              /* JPG with the effect: off / half / full size */
         int nv = clampi(st_jpg + dir, 0, 2);
         if (nv != st_jpg) { st_jpg = nv; dirty |= D_ROW(JROW); }
@@ -430,7 +419,7 @@ static void change_value(int dir)
         int j = row - 4;
         int *p = sl_var(j);
         int nv = clampi(*p + dir * sl_def[j].step, sl_def[j].lo, sl_def[j].hi);
-        if (nv != *p) { *p = nv; dirty |= D_ROW(row); }
+        if (nv != *p) { *p = nv; dirty |= D_ROW(row) | D_ROW(RROW); }
     }
 }
 
@@ -484,7 +473,11 @@ static unsigned int filmlook_keypress(unsigned int key)
     if (ui_state == UI_CLOSED) {
         /* TRASH opens the panel (in photo mode and in live view) before ML can open its own menu: modules see the key first.
          * ML's own menu stays reachable with a long press of the joystick centre. INFO is Canon's again */
-        if (key == MODULE_KEY_TRASH && idle_photo_mode()) { ui_state = UI_OPENING; return 0; }
+        if (key == MODULE_KEY_TRASH && idle_photo_mode()) {
+            dlog_add("KOSZ: the panel opens; gui_state, live view, GUI mode", gui_state, lv, CUR_GUI_MODE);
+            ui_state = UI_OPENING;
+            return 0;
+        }
         return 1;
     }
     if (ui_state != UI_OPEN) return 0;           /* opening / closing: swallow everything */
@@ -502,7 +495,9 @@ static unsigned int filmlook_keypress(unsigned int key)
     case MODULE_KEY_PRESS_DOWN:  move_row(+1); break;       /* joystick down    */
     case MODULE_KEY_PRESS_UP:    move_row(-1); break;       /* joystick up      */
     case MODULE_KEY_PRESS_SET:
-    case MODULE_KEY_JOY_CENTER:  want_save = 1; break;      /* SET = save the settings */
+    case MODULE_KEY_JOY_CENTER:                             /* SET = save the settings; on the last row: back to the defaults */
+        if (row == RROW) want_reset = 1; else want_save = 1;
+        break;
     case MODULE_KEY_TRASH:
     case MODULE_KEY_INFO:
     case MODULE_KEY_MENU:        ui_state = UI_CLOSING; return 0;
@@ -539,9 +534,12 @@ typedef struct {
 } qitem_t;
 static qitem_t queue[QMAX];
 
+static volatile int last_shot_ms;                /* when the last photo was taken (see the develop part) */
+
 static void on_new_photo(int number)
 {
     int i;
+    last_shot_ms = get_ms_clock();
     if (st_film == 0) { flog("photo, film Off: no sidecar, number", number); return; }
     for (i = 0; i < QMAX; i++) {
         if (!queue[i].used) {
@@ -571,23 +569,68 @@ PROP_HANDLER(PROP_FILE_NUMBER_A)
 
 /* ------------------------------------------------------------------ JPG with the film look
  * develop.h does the work (decode the camera's JPEG or the full size preview inside the CR2, apply the film, encode);
- * this part only moves bytes: it reads the source and writes FILMLOOK/IMG_xxxx.JPG at the top of the card, in a
- * low priority task, one photo at a time. Nothing of the camera's own files is changed. */
-#define DEV_Q  4
-#define IOBUF  (64 * 1024)
+ * this part only moves bytes. It is built so that a card pulled out of the camera can not leave a damaged file:
+ *   - the camera's own files are only ever READ, never changed or renamed;
+ *   - nothing is developed while the camera is still writing a photo (and the job waits whenever a new photo is being
+ *     written), the source JPEG must be complete (ends with its end marker, a cut one is refused by the decoder);
+ *   - the finished JPG is first built in RAM and written to FILMLOOK/ in one short go (a few tenths of a second). The long
+ *     part (decoding, the film look, encoding) does not touch the card at all. When the picture does not fit in RAM it
+ *     is written while it is made, as before;
+ *   - while FILMLOOK/<name>.JPG is being written the file FILMLOOK/WRITING.TMP holds its name. When the camera starts
+ *     and finds that note, the file it names is checked (a JPEG that does not end properly is deleted) and the note removed;
+ *   - when the camera shuts down or the card cover opens, the job stops at once and removes what it started. */
+#define DEV_Q      4
+#define IOBUF      (64 * 1024)
+#define OUT_CHUNK  (256 * 1024)
+#define MARK_NAME  "FILMLOOK/WRITING.TMP"
 typedef struct {
-    int used, tries, film, mode, number;
+    int used, tries, film, mode, number, t_shot;
     char dir[40], prefix[8];
     look_t look;
 } dev_job_t;
 static dev_job_t dev_q[DEV_Q];
 static int dev_task_started = 0;
+static volatile int dev_busy = 0;            /* a job is running right now */
+static volatile int dev_last_ms = 0;         /* how long the last finished JPG took (ms), 0 = none yet */
+static volatile int dev_done_n = 0;          /* finished JPGs since the camera was switched on */
+
+static volatile int cam_job = 0;             /* PROP_LAST_JOB_STATE: 0 = the camera is idle, 8 = writing to the card, B = busy */
+static volatile int last_shot_ms = -100000;  /* when the last photo was taken */
+static volatile int cover_base = -1;         /* PROP_CARD_COVER as it was when the camera started (cover closed) ... */
+static volatile int cover_now = -1;          /* ... and now: a different value means the card cover is open */
+
+PROP_HANDLER(PROP_LAST_JOB_STATE) { cam_job = buf[0]; }
+PROP_HANDLER(PROP_CARD_COVER)
+{
+    cover_now = buf[0];
+    if (cover_base < 0) cover_base = buf[0];
+    else if (buf[0] != cover_base) dlog_add("card cover property changed to", buf[0], cover_base, 0);
+}
+
+/* the job may go on: the camera is not shutting down and the card cover is closed */
+static int dev_alive(void)
+{
+    return !ml_shutdown_requested && (cover_base < 0 || cover_now == cover_base);
+}
+
+/* wait while the camera writes a photo (at most gate_left ms for one job, so a property that stays busy can not stop
+ * the development for ever); 1 = stop this job (shutdown / card cover) */
+static int gate_left = 0;
+
+static int dev_gate(void)
+{
+    while ((cam_job || get_ms_clock() - last_shot_ms < 2500) && dev_alive() && gate_left > 0) { msleep(50); gate_left -= 50; }
+    return dev_alive() ? 0 : 1;
+}
 
 static struct {
     FILE *in, *out;
-    uint8_t *ibuf, *obuf;
+    uint8_t *ibuf, *obuf, *big;
     uint32_t ibase, ilen;
-    uint32_t on;
+    uint32_t on;                             /* bytes waiting in obuf (streaming) */
+    uint32_t cap, len, total;                /* the RAM copy of the JPG: size, used, all bytes made so far */
+    int stream;                              /* the file is open and being written */
+    char dst[64], mark[64];
 } dio;
 
 static int dev_read(void *ctx, uint32_t off, void *dst, uint32_t n)
@@ -598,6 +641,7 @@ static int dev_read(void *ctx, uint32_t off, void *dst, uint32_t n)
         uint32_t c;
         if (off < dio.ibase || off >= dio.ibase + dio.ilen) {          /* the window of 64 KB does not cover it: refill */
             int got;
+            if (dev_gate()) return 1;
             if (FIO_SeekSkipFile(dio.in, off, SEEK_SET) < 0) return 1;
             got = FIO_ReadFile(dio.in, dio.ibuf, IOBUF);
             if (got <= 0) { dio.ilen = 0; return 1; }
@@ -614,13 +658,46 @@ static int dev_read(void *ctx, uint32_t off, void *dst, uint32_t n)
 static int dev_flush(void)
 {
     int r = 0;
-    if (dio.on) { r = FIO_WriteFile(dio.out, dio.obuf, dio.on) == (int)dio.on ? 0 : 1; dio.on = 0; }
+    if (dio.on) {
+        if (!dev_alive()) return 1;
+        r = FIO_WriteFile(dio.out, dio.obuf, dio.on) == (int)dio.on ? 0 : 1;
+        dio.on = 0;
+    }
     return r;
+}
+
+/* the file is created (with the note that names it) and what is in RAM goes to the card */
+static int dev_open_out(void)
+{
+    uint32_t o = 0;
+    FILE *m;
+    if (dev_gate()) return 1;
+    m = FIO_CreateFile(dio.mark);
+    if (!m) { flog_s("JPG: cannot make the note", dio.mark); return 1; }
+    FIO_WriteFile(m, dio.dst, strlen(dio.dst));
+    FIO_CloseFile(m);
+    dio.out = FIO_CreateFile(dio.dst);
+    if (!dio.out) { flog_s("JPG: cannot create", dio.dst); return 1; }
+    dio.stream = 1;
+    while (o < dio.len) {
+        uint32_t c = dio.len - o;
+        if (c > OUT_CHUNK) c = OUT_CHUNK;
+        if (!dev_alive()) return 1;
+        if (FIO_WriteFile(dio.out, dio.big + o, c) != (int)c) { flog_s("JPG: card write failed", dio.dst); return 1; }
+        o += c;
+    }
+    dio.len = 0;
+    return 0;
 }
 
 static int dev_write(void *ctx, const uint8_t *d, size_t n)
 {
     (void)ctx;
+    dio.total += (uint32_t)n;
+    if (!dio.stream) {
+        if (dio.big && dio.len + n <= dio.cap) { memcpy(dio.big + dio.len, d, n); dio.len += (uint32_t)n; return 0; }
+        if (dev_open_out()) return 1;                    /* RAM is full (or there is none): go on writing to the card */
+    }
     while (n) {
         size_t c = IOBUF - dio.on;
         if (c > n) c = n;
@@ -631,10 +708,37 @@ static int dev_write(void *ctx, const uint8_t *d, size_t n)
     return 0;
 }
 
-/* 0 = done (or hopeless), 1 = try again later (no memory right now) */
+/* a JPEG file is complete when it ends with FF D9 */
+static int jpg_complete(const char *path)
+{
+    uint32_t size = 0;
+    uint8_t t[2] = { 0, 0 };
+    FILE *f;
+    int ok = 0;
+    if (FIO_GetFileSize(path, &size) != 0 || size < 2000) return 0;
+    f = FIO_OpenFile(path, O_RDONLY | O_SYNC);
+    if (!f) return 0;
+    if (FIO_SeekSkipFile(f, size - 2, SEEK_SET) >= 0 && FIO_ReadFile(f, t, 2) == 2 && t[0] == 0xFF && t[1] == 0xD9) ok = 1;
+    FIO_CloseFile(f);
+    return ok;
+}
+
+/* at start: a note left behind means a write was interrupted (power lost, battery out): look at the file it names */
+static void dev_recover(void)
+{
+    static char buf[80];
+    int n = read_file(MARK_NAME, buf, sizeof(buf) - 1);
+    if (n < 0) return;                                   /* no note: nothing was interrupted */
+    buf[n > 0 ? n : 0] = 0;
+    if (n > 0 && !jpg_complete(buf)) { FIO_RemoveFile(buf); flog_s("JPG: removed an unfinished file", buf); }
+    else if (n > 0) flog_s("JPG: the file named in the note is complete, kept", buf);
+    FIO_RemoveFile(MARK_NAME);
+}
+
+/* 0 = done (or hopeless), 1 = try again later (no memory right now, the source is not complete yet, the camera is busy) */
 static int dev_run(const dev_job_t *j)
 {
-    char src[96], dst[64];
+    char src[96], r[8];
     uint32_t size = 0;
     const film_t *f = &films[j->film - 1];
     int scale = (j->mode == 2) ? 1 : 2;
@@ -642,20 +746,24 @@ static int dev_run(const dev_job_t *j)
     uint8_t *mem;
     fl_io io;
     fl_result res;
-    int t0 = get_ms_clock(), root = 0, i;
+    int t0 = 0, t_proc = 0, ok = 0, retry = 0, i, root;
 
     snprintf(src, sizeof(src), "%s%s%04d.JPG", j->dir, j->prefix, j->number);        /* the camera's JPG, or ... */
     if (FIO_GetFileSize(src, &size) != 0 || size < 2000)
         snprintf(src, sizeof(src), "%s%s%04d.CR2", j->dir, j->prefix, j->number);   /* ... the preview inside the RAW */
+    else if (!jpg_complete(src)) { flog_s("JPG: the camera has not finished writing", src); return 1; }
     if (FIO_GetFileSize(src, &size) != 0 || size < 2000) { flog_s("JPG: no source file", src); return 0; }
     for (i = 0; j->dir[i] && j->dir[i] != '/'; i++) {}
     root = j->dir[i] == '/' ? i + 1 : 0;                                              /* "B:/" */
-    { char r[8]; int k; for (k = 0; k < root && k < 7; k++) r[k] = j->dir[k]; r[k] = 0;
-      snprintf(dst, sizeof(dst), "%sFILMLOOK/%s%04d.JPG", r, j->prefix, j->number); }
+    for (i = 0; i < root && i < 7; i++) r[i] = j->dir[i];
+    r[i] = 0;
+    snprintf(dio.dst, sizeof(dio.dst), "%sFILMLOOK/%s%04d.JPG", r, j->prefix, j->number);
+    snprintf(dio.mark, sizeof(dio.mark), "%s%s", r, MARK_NAME);
 
     mem = (uint8_t *)malloc(need);
     dio.ibuf = (uint8_t *)fio_malloc(IOBUF);
     dio.obuf = (uint8_t *)fio_malloc(IOBUF);
+    dio.big = 0; dio.cap = 0;
     if (!mem || !dio.ibuf || !dio.obuf) {
         if (mem) free(mem);
         if (dio.ibuf) fio_free(dio.ibuf);
@@ -663,36 +771,55 @@ static int dev_run(const dev_job_t *j)
         flog("JPG: no memory now, KB needed", (int)(need >> 10));
         return 1;
     }
+    { uint32_t c;                                        /* room for the whole finished JPG, as much as there is */
+      for (c = (j->mode == 2) ? 12u << 20 : 4u << 20; c >= (1u << 20) && !dio.big; c >>= 1)
+          if ((dio.big = (uint8_t *)fio_malloc(c)) != 0) dio.cap = c; }
     dio.in = FIO_OpenFile(src, O_RDONLY | O_SYNC);
-    dio.out = dio.in ? FIO_CreateFile(dst) : 0;
-    dio.ibase = 0; dio.ilen = 0; dio.on = 0;
-    if (!dio.in || !dio.out) {
-        flog_s("JPG: cannot open", dio.in ? dst : src);
-        if (dio.in) FIO_CloseFile(dio.in);
-        if (dio.out) FIO_CloseFile(dio.out);
+    dio.out = 0; dio.stream = 0;
+    dio.ibase = 0; dio.ilen = 0; dio.on = 0; dio.len = 0; dio.total = 0;
+    if (!dio.in) {
+        flog_s("JPG: cannot open", src);
     } else {
+        t0 = get_ms_clock();
         io.read = dev_read; io.rctx = 0; io.src_size = size;
         io.write = dev_write; io.wctx = 0;
         io.mem = mem; io.mem_size = need;
         fl_develop(&io, f, &j->look, scale, 90, &res);
-        if (res.rc == 0 && dev_flush() != 0) res.rc = SE_E_IO;
+        t_proc = get_ms_clock() - t0;
         FIO_CloseFile(dio.in);
-        FIO_CloseFile(dio.out);
-        if (res.rc == 0) {
-            flog_s("JPG written", dst);
+        if (res.rc == 0 && !dev_alive()) res.rc = SE_E_IO;
+        if (res.rc == 0) {                               /* the short part that writes: the rest of the picture, then close */
+            if (!dio.stream && dev_open_out()) res.rc = SE_E_IO;
+            else if (dio.stream && dev_flush()) res.rc = SE_E_IO;
+        }
+        if (dio.out) FIO_CloseFile(dio.out);
+        if (res.rc == 0) {                               /* check what is on the card, then take the note away */
+            uint32_t got = 0;
+            if (FIO_GetFileSize(dio.dst, &got) == 0 && got == dio.total && jpg_complete(dio.dst)) ok = 1;
+            else { flog_s("JPG: the file on the card does not match", dio.dst); res.rc = SE_E_IO; }
+        }
+        if (ok) {
+            FIO_RemoveFile(dio.mark);
+            dev_last_ms = get_ms_clock() - t0; dev_done_n++;
+            flog_s("JPG written", dio.dst);
             flog("JPG width", res.out_w);
-            flog("JPG ms", get_ms_clock() - t0);
+            flog("JPG ms processing (RAM only)", t_proc);
+            flog("JPG ms all, with the writing", dev_last_ms);
+            flog("JPG ms since the shot", get_ms_clock() - j->t_shot);
+            flog("JPG bytes", (int)dio.total);
             flog("JPG arena peak KB", (int)(res.mem_peak >> 10));
+            flog("JPG made in RAM (1) or on the card (0)", dio.big ? (dio.cap >= dio.total) : 0);
         } else {
-            flog_s("JPG failed, source", src);
-            flog("JPG error code", res.rc);
-            FIO_RemoveFile(dst);
+            if (dio.stream) { FIO_RemoveFile(dio.dst); FIO_RemoveFile(dio.mark); }
+            if (res.rc == SE_E_TRUNCATED) { flog_s("JPG: the source is cut (still being written?), later", src); retry = 1; }
+            else { flog_s("JPG failed, source", src); flog("JPG error code", res.rc); retry = 0; }
         }
     }
+    if (dio.big) fio_free(dio.big);
     free(mem);
     fio_free(dio.ibuf);
     fio_free(dio.obuf);
-    return 0;
+    return retry;
 }
 
 static void dev_task(void *arg)
@@ -703,11 +830,19 @@ static void dev_task(void *arg)
         msleep(1000);
         for (i = 0; i < DEV_Q; i++) {
             dev_job_t *j = &dev_q[i];
+            int r;
             if (!j->used) continue;
-            powersave_prohibit();                       /* the camera must not switch itself off in the middle of a photo */
-            if (dev_run(j) == 0 || ++j->tries >= 12) j->used = 0;
-            else msleep(5000);
+            if (!dev_alive()) break;                              /* shutting down / card cover open: nothing is started */
+            gate_left = 120000;
+            if (dev_gate()) break;
+            powersave_prohibit();                                 /* the camera must not switch itself off in the middle of a photo */
+            dev_busy = 1;
+            r = dev_run(j);
+            dev_busy = 0;
             powersave_permit();
+            if (r == 0) j->used = 0;
+            else if (++j->tries >= 12) { flog("JPG: giving up, number", j->number); j->used = 0; }
+            else msleep(5000);
         }
     }
 }
@@ -721,7 +856,7 @@ static void dev_enqueue(const qitem_t *q)
             dev_job_t *j = &dev_q[i];
             memset(j, 0, sizeof(*j));
             strcpy(j->dir, q->dir); strcpy(j->prefix, q->prefix);
-            j->film = q->film; j->mode = q->jpg; j->number = q->number; j->look = q->look;
+            j->film = q->film; j->mode = q->jpg; j->number = q->number; j->look = q->look; j->t_shot = q->t;
             j->used = 1;
             if (!dev_task_started) { dev_task_started = 1; task_create("fl_dev", 0x1c, 0x6000, dev_task, 0); }
             flog_s("JPG queued", films[q->film - 1].full);
@@ -729,6 +864,15 @@ static void dev_enqueue(const qitem_t *q)
         }
     }
     flog("JPG: queue full", q->number);
+}
+
+/* JPGs waiting or being made (for the panel) */
+static int dev_pending(void)
+{
+    int i, n = 0;
+    for (i = 0; i < DEV_Q; i++) if (dev_q[i].used) n++;
+    for (i = 0; i < QMAX; i++) if (queue[i].used && queue[i].jpg > 0) n++;
+    return n;
 }
 
 static void write_sidecar(qitem_t *q)
@@ -761,6 +905,7 @@ static unsigned int filmlook_seconds(unsigned int ctx)
 /* ------------------------------------------------------------------ module glue */
 static unsigned int filmlook_init(void)
 {
+    log_sem = create_named_semaphore("filmlook_log", 1);
     memo_init();
     sets_init();
     load_state();
@@ -768,6 +913,7 @@ static unsigned int filmlook_init(void)
     flog_s("FILMLOOK module loaded", VERSION);
     pal_build();
     flog_s("film", st_film > 0 ? films[st_film - 1].full : "Off");
+    dev_recover();                                      /* a JPG whose writing was interrupted last time */
     return 0;
 }
 
@@ -786,4 +932,6 @@ MODULE_CBRS_END()
 
 MODULE_PROPHANDLERS_START()
     MODULE_PROPHANDLER(PROP_FILE_NUMBER_A)
+    MODULE_PROPHANDLER(PROP_LAST_JOB_STATE)
+    MODULE_PROPHANDLER(PROP_CARD_COVER)
 MODULE_PROPHANDLERS_END()

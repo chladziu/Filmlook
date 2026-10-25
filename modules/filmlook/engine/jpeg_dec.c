@@ -55,6 +55,14 @@ typedef struct {
      * flat bands of drifting colour.
      */
     int             ioerr;
+
+    /*
+     * The data ended without any marker (no EOI): the file is cut short, for
+     * instance because the camera was still writing it when it was read.
+     * Running out at a marker is the normal end; running out without one is
+     * not, and the rest of the frame would be padded and reported as fine.
+     */
+    int             trunc;
 } jd_bits;
 
 #define JD_WINDOW 8192
@@ -64,7 +72,7 @@ static void jd_init(jd_bits *b, const uint8_t *p, size_t len)
     b->p = p; b->len = len; b->pos = 0;
     b->buf = 0; b->cnt = 0; b->marker = 0;
     b->read = 0; b->rctx = 0; b->win = 0;
-    b->next_off = 0; b->remaining = 0; b->ioerr = 0;
+    b->next_off = 0; b->remaining = 0; b->ioerr = 0; b->trunc = 0;
 }
 
 /*
@@ -112,6 +120,7 @@ static void jd_fill(jd_bits *b)
                 }
             }
         } else {
+            if (!b->marker) b->trunc = 1;        /* out of data and no marker met */
             b->marker = 1;
         }
         b->buf |= c << (24 - b->cnt);
@@ -697,10 +706,12 @@ static se_err jd_run(const uint8_t *d, size_t len,
          * state and handed back as if it were fine.
          */
         if (bits.ioerr) return SE_E_IO;
+        if (bits.trunc) return SE_E_TRUNCATED;
         se_progress("jpeg", my * 100 / (s->mcuy ? s->mcuy : 1));
     }
 
     if (bits.ioerr) return SE_E_IO;
+    if (bits.trunc) return SE_E_TRUNCATED;
     /* the delivered size, not the coded one -- see jpeg_dec.h */
     if (info) { info->width = s->ow; info->height = s->oh; info->ncomp = s->ncomp; }
     se_progress("jpeg", 100);

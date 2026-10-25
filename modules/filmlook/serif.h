@@ -267,16 +267,25 @@ static int ui_cap(int px, int py, int a, int b, int y0, int h, int rl, int rr)
 /* Bar with rounded ends: the track x..x+w (colour track), the part fx0..fx1 filled with colour fill.
  * ra / rb: the filled part is rounded at its left / right end (not at the zero line of a two-sided bar).
  * mark >= 0: a small marker (2 x 4 px, colour soft) above the bar at that x (the zero / normal position).
+ * mx0..mx1 (when mx1 > mx0): a second part in colour mcol, rounded at its ends as mra / mrb say. With mtop it lies on top
+ * of the filled part (the added part of a changed slider), without it behind the filled part (the part taken away).
  * The whole band of the row (y - 11 .. y + h + 8, columns xa .. xb-1) is written in this one pass: whatever stood there
  * before (the marker or the bar of another row after the list scrolled) is replaced, nothing is wiped first. */
-static void ui_bar(int x, int y, int w, int h, int fx0, int fx1, int fill, int track, int ra, int rb, int mark, int xa, int xb, int soft)
+static void ui_bar(int x, int y, int w, int h, int fx0, int fx1, int fill, int track, int ra, int rb, int mark, int xa, int xb, int soft,
+                   int mx0, int mx1, int mcol, int mra, int mrb, int mtop)
 {
     int px, py;
     unsigned char bg = ui_ramp[track][0];
+    int same = (mx0 == fx0 && mx1 == fx1);             /* the changed part is the whole filled part */
     if (fx1 > fx0 && fx1 - fx0 < h) {                  /* a very small value is still a visible dot */
         if (rb) fx1 = fx0 + h; else fx0 = fx1 - h;
         if (fx0 < x) { fx0 = x; fx1 = x + h; }
         if (fx1 > x + w) { fx1 = x + w; fx0 = x + w - h; }
+    }
+    if (same) { mx0 = fx0; mx1 = fx1; }
+    if (mx1 > mx0) {
+        if (mx1 - mx0 < 3) mx1 = mx0 + 3;
+        if (mx1 - mx0 < h) { mra = 0; mrb = 0; }       /* a short part is cut square: round ends would not fit */
     }
     for (py = y - 11; py < y + h + 9; py++) {
         unsigned char *row = ui_fb + py * ui_pitch;
@@ -286,8 +295,11 @@ static void ui_bar(int x, int y, int w, int h, int fx0, int fx1, int fill, int t
             if (in_bar) {
                 int lt = ui_cap(px, py, x, x + w, y, h, 1, 1);
                 int lf = (fx1 > fx0) ? ui_cap(px, py, fx0, fx1, y, h, ra, rb) : 0;
-                if (lf > 0) row[px] = ui_ramp[fill][lf];
-                else        row[px] = ui_ramp[track][lt];
+                int lm = (mx1 > mx0) ? ui_cap(px, py, mx0, mx1, y, h, mra, mrb) : 0;
+                if (lm > 0 && mtop)  row[px] = ui_ramp[mcol][lm];
+                else if (lf > 0)     row[px] = ui_ramp[fill][lf];
+                else if (lm > 0)     row[px] = ui_ramp[mcol][lm >= 3 ? 2 : 1];     /* what was taken away: a lighter tone */
+                else                 row[px] = ui_ramp[track][lt];
             } else if (in_mark && px >= mark - 1 && px < mark + 1) row[px] = ui_ramp[soft][3];
             else row[px] = bg;
         }
