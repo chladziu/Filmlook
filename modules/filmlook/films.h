@@ -161,7 +161,7 @@ static const group_t groups[] = {
     { 2, "Kodak", 122, 11 },
     { 2, "Fuji", 133, 8 },
     { 2, "Agfa", 141, 1 },
-    { 3, "Własny", 142, 1 },
+    { 3, "Własne presety", 142, 5 },
 };
 #define GROUP_COUNT ((int)(sizeof(groups) / sizeof(groups[0])))
 
@@ -1547,12 +1547,28 @@ static const fv_t fv_141[] = {
     {61,0}, {62,0}, {63,75}, {64,0}, {72,14}, {73,15}, 
     {74,50}, {75,10}, {79,0}, 
 };
-/* (own look) */
+/* (own look 1) */
 static const fv_t fv_142[] = {
     {72,25}, {73,30}, {74,50}, 
 };
-/* Kodak Ektar 100 +1 */
+/* (own look 2) */
 static const fv_t fv_143[] = {
+    {72,25}, {73,30}, {74,50}, 
+};
+/* (own look 3) */
+static const fv_t fv_144[] = {
+    {72,25}, {73,30}, {74,50}, 
+};
+/* (own look 4) */
+static const fv_t fv_145[] = {
+    {72,25}, {73,30}, {74,50}, 
+};
+/* (own look 5) */
+static const fv_t fv_146[] = {
+    {72,25}, {73,30}, {74,50}, 
+};
+/* Kodak Ektar 100 +1 */
+static const fv_t fv_147[] = {
     {0,0}, {1,47}, {2,-40}, {3,12}, {4,8}, {5,-27}, 
     {6,0}, {7,0}, {8,0}, {9,10}, {10,10}, {19,10}, 
     {20,-2}, {22,-18}, {23,5}, {25,5}, {26,5}, {27,21}, 
@@ -1564,7 +1580,7 @@ static const fv_t fv_143[] = {
     {79,0}, 
 };
 /* Kodak Gold 200 +1 */
-static const fv_t fv_144[] = {
+static const fv_t fv_148[] = {
     {0,0}, {1,2}, {2,-60}, {3,18}, {4,-20}, {5,12}, 
     {6,0}, {7,0}, {8,0}, {19,8}, {20,-2}, {21,-12}, 
     {22,-22}, {23,-12}, {24,-10}, {25,-15}, {26,-15}, {27,10}, 
@@ -1575,7 +1591,7 @@ static const fv_t fv_144[] = {
     {64,-30}, {72,44}, {73,36}, {74,60}, {75,10}, {79,0}, 
 };
 /* Kodak Gold 200 +2 */
-static const fv_t fv_145[] = {
+static const fv_t fv_149[] = {
     {0,-20}, {1,16}, {2,-70}, {3,8}, {4,-10}, {5,5}, 
     {6,0}, {7,0}, {8,0}, {19,8}, {20,-2}, {21,-12}, 
     {22,-22}, {23,-12}, {24,-10}, {25,-15}, {26,-15}, {27,10}, 
@@ -1586,7 +1602,7 @@ static const fv_t fv_145[] = {
     {64,-30}, {72,56}, {73,42}, {74,65}, {75,10}, {79,0}, 
 };
 /* Kodak Portra 400 -1 */
-static const fv_t fv_146[] = {
+static const fv_t fv_150[] = {
     {0,80}, {1,-22}, {2,-40}, {3,47}, {4,-7}, {5,22}, 
     {6,0}, {7,0}, {8,0}, {20,-3}, {21,-8}, {22,-15}, 
     {24,-5}, {28,-5}, {30,-22}, {31,-10}, {32,-15}, {36,15}, 
@@ -1596,7 +1612,7 @@ static const fv_t fv_146[] = {
     {75,10}, {79,0}, 
 };
 /* Kodak Portra 400 +1 */
-static const fv_t fv_147[] = {
+static const fv_t fv_151[] = {
     {0,35}, {1,8}, {2,-65}, {3,22}, {4,-2}, {5,4}, 
     {6,0}, {7,0}, {8,0}, {20,-3}, {21,-8}, {22,-15}, 
     {24,-5}, {28,-5}, {30,-22}, {31,-10}, {32,-15}, {36,15}, 
@@ -1606,7 +1622,7 @@ static const fv_t fv_147[] = {
     {75,10}, {79,0}, 
 };
 /* Kodak Portra 400 +2 */
-static const fv_t fv_148[] = {
+static const fv_t fv_152[] = {
     {0,15}, {1,20}, {2,-75}, {3,12}, {4,8}, {5,-3}, 
     {6,0}, {7,0}, {8,0}, {20,-3}, {21,-8}, {22,-15}, 
     {24,-5}, {28,-5}, {30,-22}, {31,-10}, {32,-15}, {36,15}, 
@@ -1616,7 +1632,7 @@ static const fv_t fv_148[] = {
     {75,10}, {79,0}, 
 };
 /* Kodak Portra 800 -1 */
-static const fv_t fv_149[] = {
+static const fv_t fv_153[] = {
     {0,50}, {1,-30}, {2,-43}, {3,58}, {4,-20}, {5,-8}, 
     {6,0}, {7,0}, {8,0}, {19,5}, {20,1}, {21,-15}, 
     {22,-21}, {23,5}, {24,-10}, {27,-15}, {28,-10}, {29,-23}, 
@@ -1627,7 +1643,7 @@ static const fv_t fv_149[] = {
     {75,10}, {79,0}, 
 };
 /* Kodak Portra 800 +1 */
-static const fv_t fv_150[] = {
+static const fv_t fv_154[] = {
     {0,5}, {1,0}, {2,-68}, {3,33}, {4,-15}, {5,-26}, 
     {6,0}, {7,0}, {8,0}, {19,5}, {20,1}, {21,-15}, 
     {22,-21}, {23,5}, {24,-10}, {27,-15}, {28,-10}, {29,-23}, 
@@ -1638,7 +1654,7 @@ static const fv_t fv_150[] = {
     {75,10}, {79,0}, 
 };
 /* Kodak Ultramax 400 +1 */
-static const fv_t fv_151[] = {
+static const fv_t fv_155[] = {
     {0,0}, {1,37}, {2,-38}, {3,6}, {4,10}, {5,-26}, 
     {6,0}, {7,0}, {8,0}, {9,2}, {10,2}, {19,6}, 
     {20,-4}, {21,-11}, {22,-18}, {23,-5}, {24,2}, {25,5}, 
@@ -1650,7 +1666,7 @@ static const fv_t fv_151[] = {
     {72,44}, {73,39}, {74,66}, {75,10}, {79,0}, 
 };
 /* Kodak Ultramax 400 +2 */
-static const fv_t fv_152[] = {
+static const fv_t fv_156[] = {
     {0,-20}, {1,50}, {2,-48}, {3,-4}, {4,20}, {5,-30}, 
     {6,0}, {7,0}, {8,0}, {9,2}, {10,6}, {19,6}, 
     {20,-4}, {21,-11}, {22,-18}, {23,-5}, {24,2}, {25,5}, 
@@ -1662,7 +1678,7 @@ static const fv_t fv_152[] = {
     {72,56}, {73,46}, {74,71}, {75,10}, {79,0}, 
 };
 /* Fuji Superia X-TRA 400 +1 */
-static const fv_t fv_153[] = {
+static const fv_t fv_157[] = {
     {1,30}, {2,-30}, {3,0}, {5,-3}, {6,0}, {7,0}, 
     {8,0}, {9,15}, {10,15}, {19,-10}, {24,-5}, {27,13}, 
     {30,5}, {32,-5}, {51,130}, {52,16}, {53,0}, {54,0}, 
@@ -1671,7 +1687,7 @@ static const fv_t fv_153[] = {
     {74,61}, {75,10}, {79,0}, 
 };
 /* Kodak T-Max 3200 +2 */
-static const fv_t fv_154[] = {
+static const fv_t fv_158[] = {
     {0,-25}, {1,60}, {2,-35}, {3,-48}, {4,25}, {5,-30}, 
     {6,0}, {7,0}, {8,0}, {43,20}, {44,15}, {45,10}, 
     {46,-10}, {47,-15}, {48,-22}, {49,-5}, {50,8}, {51,0}, 
@@ -1680,7 +1696,7 @@ static const fv_t fv_154[] = {
     {64,0}, {72,88}, {73,57}, {74,90}, {75,10}, {79,0}, 
 };
 /* Kodak Tri-X 400 -1 */
-static const fv_t fv_155[] = {
+static const fv_t fv_159[] = {
     {1,20}, {2,1}, {3,40}, {4,10}, {5,-20}, {6,0}, 
     {7,0}, {8,0}, {43,30}, {44,20}, {45,-5}, {46,-25}, 
     {47,0}, {48,-40}, {49,0}, {50,-5}, {51,0}, {52,0}, 
@@ -1689,7 +1705,7 @@ static const fv_t fv_155[] = {
     {72,40}, {73,27}, {74,55}, {75,10}, {79,0}, 
 };
 /* Kodak Tri-X 400 +1 */
-static const fv_t fv_156[] = {
+static const fv_t fv_160[] = {
     {1,50}, {2,-24}, {3,15}, {4,15}, {5,-30}, {6,0}, 
     {7,0}, {8,0}, {43,30}, {44,20}, {45,-5}, {46,-25}, 
     {47,0}, {48,-40}, {49,0}, {50,-5}, {51,0}, {52,0}, 
@@ -1698,7 +1714,7 @@ static const fv_t fv_156[] = {
     {72,65}, {73,43}, {74,75}, {75,10}, {79,0}, 
 };
 /* Kodak Tri-X 400 +2 */
-static const fv_t fv_157[] = {
+static const fv_t fv_161[] = {
     {1,63}, {2,-34}, {3,5}, {4,25}, {5,-30}, {6,0}, 
     {7,0}, {8,0}, {43,30}, {44,20}, {45,-5}, {46,-25}, 
     {47,0}, {48,-40}, {49,0}, {50,-5}, {51,0}, {52,0}, 
@@ -1707,7 +1723,7 @@ static const fv_t fv_157[] = {
     {72,77}, {73,50}, {74,80}, {75,10}, {79,0}, 
 };
 /* Ilford Delta 3200 +2 */
-static const fv_t fv_158[] = {
+static const fv_t fv_162[] = {
     {1,8}, {2,-70}, {3,9}, {4,-4}, {5,7}, {6,0}, 
     {7,0}, {8,0}, {43,15}, {44,20}, {45,10}, {46,-8}, 
     {47,-2}, {48,-15}, {49,-8}, {50,2}, {51,0}, {52,0}, 
@@ -1716,7 +1732,7 @@ static const fv_t fv_158[] = {
     {72,79}, {73,70}, {74,86}, {75,10}, {79,0}, 
 };
 /* Ilford HP5 Plus -1 */
-static const fv_t fv_159[] = {
+static const fv_t fv_163[] = {
     {1,-8}, {2,-9}, {3,31}, {4,0}, {5,-1}, {6,0}, 
     {7,0}, {8,0}, {43,15}, {44,10}, {45,5}, {46,-5}, 
     {47,-10}, {48,-19}, {49,0}, {50,0}, {51,230}, {52,8}, 
@@ -1725,7 +1741,7 @@ static const fv_t fv_159[] = {
     {72,30}, {73,20}, {74,40}, {75,10}, {79,0}, 
 };
 /* Ilford HP5 Plus +1 */
-static const fv_t fv_160[] = {
+static const fv_t fv_164[] = {
     {1,22}, {2,-34}, {3,6}, {4,5}, {5,-19}, {6,0}, 
     {7,0}, {8,0}, {43,15}, {44,10}, {45,5}, {46,-5}, 
     {47,-10}, {48,-19}, {49,0}, {50,0}, {51,230}, {52,8}, 
@@ -1734,7 +1750,7 @@ static const fv_t fv_160[] = {
     {72,64}, {73,36}, {74,60}, {75,10}, {79,0}, 
 };
 /* Ilford HP5 Plus +2 */
-static const fv_t fv_161[] = {
+static const fv_t fv_165[] = {
     {1,36}, {2,-44}, {3,-4}, {4,15}, {5,-26}, {6,0}, 
     {7,0}, {8,0}, {43,15}, {44,10}, {45,5}, {46,-5}, 
     {47,-10}, {48,-19}, {49,0}, {50,0}, {51,230}, {52,8}, 
@@ -3448,11 +3464,59 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
         { {0,0}, {42,28}, {128,128}, {213,230}, {255,255}, {0,0}, {0,0}, {0,0} },
         { {0,0}, {42,28}, {128,128}, {213,230}, {255,255}, {0,0}, {0,0}, {0,0} },
       }, 0, 0, 0 },
-    { 24, "Własny look", "Własny look",
-      "Własny look",
-      "Bez filmu: ustaw suwaki poniżej", 0,
+    { 24, "Preset 1", "Własny preset 1",
+      "Własny preset",
+      "Twój własny look: ustaw suwaki, SET zapisuje", 0,
       0, 0, 0, 0, 0,
       3, fv_142,
+      { 2, 2, 2, 2 },
+      {
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+      }, 0, 0, 0 },
+    { 24, "Preset 2", "Własny preset 2",
+      "Własny preset",
+      "Twój własny look: ustaw suwaki, SET zapisuje", 0,
+      0, 0, 0, 0, 0,
+      3, fv_143,
+      { 2, 2, 2, 2 },
+      {
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+      }, 0, 0, 0 },
+    { 24, "Preset 3", "Własny preset 3",
+      "Własny preset",
+      "Twój własny look: ustaw suwaki, SET zapisuje", 0,
+      0, 0, 0, 0, 0,
+      3, fv_144,
+      { 2, 2, 2, 2 },
+      {
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+      }, 0, 0, 0 },
+    { 24, "Preset 4", "Własny preset 4",
+      "Własny preset",
+      "Twój własny look: ustaw suwaki, SET zapisuje", 0,
+      0, 0, 0, 0, 0,
+      3, fv_145,
+      { 2, 2, 2, 2 },
+      {
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
+      }, 0, 0, 0 },
+    { 24, "Preset 5", "Własny preset 5",
+      "Własny preset",
+      "Twój własny look: ustaw suwaki, SET zapisuje", 0,
+      0, 0, 0, 0, 0,
+      3, fv_146,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3464,7 +3528,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film kolorowy negatywowy",
       "+1 EV: łagodniejsze nasycenie, kremowa skóra", 100,
       0, 0, 0, 0, 0,
-      49, fv_143,
+      49, fv_147,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3476,7 +3540,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film kolorowy negatywowy",
       "+1 EV: pastelowy, miękki, rozświetlone światła", 200,
       0, 0, 0, 0, 0,
-      48, fv_144,
+      48, fv_148,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3488,7 +3552,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film kolorowy negatywowy",
       "+2 EV: bardzo pastelowy, wypłowiały", 200,
       0, 0, 0, 0, 0,
-      48, fv_145,
+      48, fv_149,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3500,7 +3564,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film kolorowy negatywowy",
       "-1 EV: mocniejszy kontrast i nasycenie, surowszy", 400,
       0, 0, 0, 0, 0,
-      38, fv_146,
+      38, fv_150,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3512,7 +3576,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film kolorowy negatywowy",
       "+1 EV: pastelowy, miękkie światła, jasna skóra", 400,
       0, 0, 0, 0, 0,
-      38, fv_147,
+      38, fv_151,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3524,7 +3588,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film kolorowy negatywowy",
       "+2 EV: eteryczny, pastelowy, jasna skóra", 400,
       0, 0, 0, 0, 0,
-      38, fv_148,
+      38, fv_152,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3536,7 +3600,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film kolorowy negatywowy",
       "-1 EV: grubsze ziarno, mocniejszy kontrast", 800,
       0, 0, 0, 0, 0,
-      44, fv_149,
+      44, fv_153,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3548,7 +3612,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film kolorowy negatywowy",
       "+1 EV: czystsze cienie, mniejsze ziarno, miękki", 800,
       0, 0, 0, 0, 0,
-      44, fv_150,
+      44, fv_154,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3560,7 +3624,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film kolorowy negatywowy",
       "+1 EV: miękki żółto-niebieski, mniejsze ziarno", 400,
       0, 0, 0, 0, 0,
-      53, fv_151,
+      53, fv_155,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3572,7 +3636,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film kolorowy negatywowy",
       "+2 EV: płaska pastelowa paleta, wypłowiały", 400,
       0, 0, 0, 0, 0,
-      53, fv_152,
+      53, fv_156,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3584,7 +3648,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film kolorowy negatywowy",
       "+1 EV: pastelowy, mniejsze ziarno, miękki", 400,
       0, 0, 0, 0, 0,
-      33, fv_153,
+      33, fv_157,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3596,7 +3660,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film czarno-biały negatywowy",
       "+2 EV (12800): ciężkie ziarno, kontrast", 3200,
       1, 0, 0, 0, 0,
-      36, fv_154,
+      36, fv_158,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3608,7 +3672,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film czarno-biały negatywowy",
       "-1 EV (200): drobniejsze ziarno, kremowy", 400,
       1, 0, 0, 0, 0,
-      35, fv_155,
+      35, fv_159,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3620,7 +3684,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film czarno-biały negatywowy",
       "+1 EV (800): klasyczne ziarno, uliczny pazur", 400,
       1, 0, 0, 0, 0,
-      35, fv_156,
+      35, fv_160,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3632,7 +3696,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film czarno-biały negatywowy",
       "+2 EV (1600): agresywne ziarno, słabe światło", 400,
       1, 0, 0, 0, 0,
-      35, fv_157,
+      35, fv_161,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3644,7 +3708,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film czarno-biały negatywowy",
       "+2 EV (12800): grube ziarno, ostry kontrast", 3200,
       1, 0, 0, 0, 0,
-      35, fv_158,
+      35, fv_162,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3656,7 +3720,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film czarno-biały negatywowy",
       "-1 EV (200): mniej ziarna, miękki rysunek", 400,
       1, 0, 0, 0, 0,
-      35, fv_159,
+      35, fv_163,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3668,7 +3732,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film czarno-biały negatywowy",
       "+1 EV (800): mocniejsze ziarno i kontrast", 400,
       1, 0, 0, 0, 0,
-      35, fv_160,
+      35, fv_164,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3680,7 +3744,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       "Film czarno-biały negatywowy",
       "+2 EV (1600): grube ziarno, ostry kontrast", 400,
       1, 0, 0, 0, 0,
-      35, fv_161,
+      35, fv_165,
       { 2, 2, 2, 2 },
       {
         { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
@@ -3691,38 +3755,38 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
 };
 
 #define FILM_COUNT ((int)(sizeof(films) / sizeof(films[0])))
-#define BASE_COUNT 143
+#define BASE_COUNT 147
 
 static const popt_t popts[] = {
     { 0, "Normalnie", 2 },
-    { 1, "+1 EV prześwietlone", 143 },
-    { 0, "Normalnie", 4 },
-    { 1, "+1 EV prześwietlone", 144 },
-    { 2, "+2 EV prześwietlone", 145 },
-    { -1, "-1 EV niedoświetlone", 146 },
-    { 0, "Normalnie", 15 },
     { 1, "+1 EV prześwietlone", 147 },
-    { 2, "+2 EV prześwietlone", 148 },
-    { -1, "-1 EV niedoświetlone", 149 },
-    { 0, "Normalnie", 23 },
-    { 1, "+1 EV prześwietlone", 150 },
-    { 0, "Normalnie", 26 },
+    { 0, "Normalnie", 4 },
+    { 1, "+1 EV prześwietlone", 148 },
+    { 2, "+2 EV prześwietlone", 149 },
+    { -1, "-1 EV niedoświetlone", 150 },
+    { 0, "Normalnie", 15 },
     { 1, "+1 EV prześwietlone", 151 },
     { 2, "+2 EV prześwietlone", 152 },
+    { -1, "-1 EV niedoświetlone", 153 },
+    { 0, "Normalnie", 23 },
+    { 1, "+1 EV prześwietlone", 154 },
+    { 0, "Normalnie", 26 },
+    { 1, "+1 EV prześwietlone", 155 },
+    { 2, "+2 EV prześwietlone", 156 },
     { 0, "Normalnie", 54 },
-    { 1, "+1 EV prześwietlone", 153 },
+    { 1, "+1 EV prześwietlone", 157 },
     { 0, "Normalnie (EI 3200)", 77 },
-    { 2, "Push +2 (EI 12800)", 154 },
-    { -1, "Pull -1 (EI 200)", 155 },
-    { 0, "Normalnie (EI 400)", 79 },
-    { 1, "Push +1 (EI 800)", 156 },
-    { 2, "Push +2 (EI 1600)", 157 },
-    { 0, "Normalnie (EI 3200)", 87 },
     { 2, "Push +2 (EI 12800)", 158 },
     { -1, "Pull -1 (EI 200)", 159 },
-    { 0, "Normalnie (EI 400)", 90 },
+    { 0, "Normalnie (EI 400)", 79 },
     { 1, "Push +1 (EI 800)", 160 },
     { 2, "Push +2 (EI 1600)", 161 },
+    { 0, "Normalnie (EI 3200)", 87 },
+    { 2, "Push +2 (EI 12800)", 162 },
+    { -1, "Pull -1 (EI 200)", 163 },
+    { 0, "Normalnie (EI 400)", 90 },
+    { 1, "Push +1 (EI 800)", 164 },
+    { 2, "Push +2 (EI 1600)", 165 },
 };
 
 #endif

@@ -84,7 +84,7 @@ static void draw_rule(int y) { ui_fill(PC_DIM, M_L, y, M_R - M_L, 1); }
 static void draw_hint(const char *msg)
 {
     if (msg) sf_line(&sf_xxs, M_L, M_R, Y_HINT, 17, 5, msg, PC_ACCENT, SF_CENTER);
-    else     sf_line(&sf_xxs, M_L, M_R3, Y_HINT, 17, 5, "pokrętło: zmiana\tjoystick: wiersz\tSET: zapis\tKOSZ: zamknij", PC_SOFT, SF_JUST);
+    else     sf_line(&sf_xxs, M_L, M_R3, Y_HINT, 17, 5, "pokrętło: zmiana\tjoystick: wiersz\tSET: zapis\tkosz: zamknij", PC_SOFT, SF_JUST);
 }
 
 static void draw_static(void)
@@ -193,7 +193,7 @@ static void draw_info(void)
 }
 
 /* ------------------------------------------------------------------ list of 5 rows */
-static int slot_y(int r) { return SL_Y0 + (r - top) * SL_PITCH + 27; }          /* baseline of row r */
+static int slot_y(int r) { return SL_Y0 + (lst_pos(r) - top) * SL_PITCH + 27; }          /* baseline of row r */
 
 static void list_row_frame(int r, int on, const char *label, int lcol)
 {
@@ -266,27 +266,46 @@ static void draw_jpg(void)
 
 static void draw_slot(int r)
 {
-    if (r < top || r >= top + VIS) return;
+    int p = lst_pos(r);
+    if (p < top || p >= top + VIS) return;           /* (also when the row does not exist for this film: p = -1) */
     if (r == 3) draw_push(); else if (r == JROW) draw_jpg(); else draw_slider(r);
+}
+
+/* a place of the list without a row: paper (and, without a film, a short note in the second place) */
+static void draw_empty_slot(int i, const char *note)
+{
+    int yb = SL_Y0 + i * SL_PITCH + 27, y;
+    for (y = yb - 25; y < yb + 7; y++) memset(ui_fb + y * ui_pitch + MARK_X, ui_ramp[PC_BG][3], (size_t)(M_R3 - MARK_X));
+    if (note) sf_line(&sf_xs, M_L, M_R3, yb, 25, 7, note, PC_SOFT, SF_CENTER);
 }
 
 static void draw_scrollbar(void)
 {
-    const int x = 700, h = VIS * SL_PITCH, n = NROWS - 3;
-    int th = (h * VIS) / n, ty = ((top - 3) * (h - th)) / (n - VIS), r;
+    const int x = 700, h = VIS * SL_PITCH, n = lst_n;
+    int th = n > VIS ? (h * VIS) / n : h, ty = n > VIS ? (top * (h - th)) / (n - VIS) : 0, r;
     for (r = 0; r < h; r++)
-        memset(ui_fb + (SL_Y0 + r) * ui_pitch + x, ui_ramp[(r >= ty && r < ty + th) ? PC_SOFT : PC_TRACK][3], 4);
+        memset(ui_fb + (SL_Y0 + r) * ui_pitch + x, ui_ramp[n <= VIS ? PC_BG : ((r >= ty && r < ty + th) ? PC_SOFT : PC_TRACK)][3], 4);
+}
+
+/* the whole list: every place of the 5 is rewritten (rows, empty places, note), then the scroll bar */
+static void draw_list_all(void)
+{
+    int i;
+    for (i = 0; i < VIS; i++) {
+        int p = top + i;
+        if (p < lst_n) draw_slot(lst[p]);
+        else draw_empty_slot(i, (lst_n == 0 && i == 1) ? "Wybierz typ filmu, żeby ustawić efekt" : 0);
+    }
+    draw_scrollbar();
 }
 
 static void paint_rows(void)                  /* everything except the background */
 {
-    int r;
     draw_tabs();
     draw_sel(1);
     draw_sel(2);
     draw_info();
-    for (r = 3; r < NROWS; r++) draw_slot(r);
-    draw_scrollbar();
+    draw_list_all();
 }
 
 #endif

@@ -5,7 +5,7 @@ the presets are read.  Everything that is not listed here stays exactly as in th
   GRAIN   GrainAmount from the grain figure of the film (variants keep their ratio to the base film)
   ADJ     other values that were corrected after measuring the rendered pictures (tools/calib_report.py):
           full name -> {attribute: value}; the value replaces the preset's one
-  OWN     the empty "Własny look" gets a base grain, so that the Ziarno slider has something to scale
+  OWN     the empty "Własny preset" slots get a base grain, so that the Ziarno slider has something to scale
 """
 import grain_targets as G
 
@@ -62,7 +62,7 @@ def apply(allf, INDEX):
     base = {f["full"]: f for f in allf if f["shift"] == 0}
     report, missing = [], []
     for f in allf:
-        if f["full"] == "Własny look":
+        if f["full"].startswith("Własny preset"):
             for n, v in OWN.items(): _set(f, INDEX[n], v)
             continue
         if f["shift"] == 0:

@@ -52,7 +52,7 @@ static int *sl_var(int j)
 #define UI_CLOSING  3
 static volatile int ui_state = UI_CLOSED;
 static int row = 0;                       /* 0 type, 1 brand, 2 film, 3 push/pull, 4.. sliders */
-static int top = 3;                       /* first visible row of the scrolling list (3..NROWS-VIS) */
+static int top = 0;                       /* first row of the list that is shown (index into lst[], 0..lst_n-VIS) */
 static int last_input_ms = 0;
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -109,6 +109,85 @@ static void remember(void)
         memo_group[t] = g - types[t].first_group;
         memo_film[g] = st_film - 1 - groups[g].first;
     }
+}
+
+
+/* ------------------------------------------------------------------ own presets and the visible list
+ * The sliders belong to a "set": set 0 is used with all films, sets 1..OWN_SLOTS belong to the own presets of the type
+ * "Własny" (every preset keeps its own sliders). st_* always hold the set of the film that is chosen now; when the choice
+ * moves to another set, the sliders are swapped. */
+#define OWN_SLOTS 5
+typedef struct { short strength, grain, contrast, hal, fade, warm, shadow, high, sat, vig; } vals_t;
+static vals_t set_v[1 + OWN_SLOTS];
+static int cur_set = 0;
+
+static void vals_defaults(vals_t *v)
+{
+    v->strength = 100; v->grain = 100; v->contrast = 0; v->hal = 0; v->fade = 0;
+    v->warm = 0; v->shadow = 0; v->high = 0; v->sat = 0; v->vig = 0;
+}
+
+static void vals_get(vals_t *v)
+{
+    v->strength = st_strength; v->grain = st_grain; v->contrast = st_contrast; v->hal = st_hal; v->fade = st_fade;
+    v->warm = st_warm; v->shadow = st_shadow; v->high = st_high; v->sat = st_sat; v->vig = st_vig;
+}
+
+static void vals_put(const vals_t *v)
+{
+    st_strength = v->strength; st_grain = v->grain; st_contrast = v->contrast; st_hal = v->hal; st_fade = v->fade;
+    st_warm = v->warm; st_shadow = v->shadow; st_high = v->high; st_sat = v->sat; st_vig = v->vig;
+}
+
+static void sets_init(void)
+{
+    int i;
+    for (i = 0; i < 1 + OWN_SLOTS; i++) vals_defaults(&set_v[i]);
+    cur_set = 0;
+}
+
+/* the set the chosen film uses: 0, or 1.. for the own preset slots (type "Własny" = the last type) */
+static int set_of(int film)
+{
+    if (film > 0) {
+        const group_t *g = &groups[films[film - 1].group];
+        if (g->type == TYPE_COUNT - 1) return 1 + clampi(film - 1 - g->first, 0, OWN_SLOTS - 1);
+    }
+    return 0;
+}
+
+/* st_film changed: swap the sliders when the film belongs to another set. Returns 1 when they were swapped */
+static int switch_set(void)
+{
+    int ns = set_of(st_film);
+    if (ns == cur_set) return 0;
+    vals_get(&set_v[cur_set]);
+    cur_set = ns;
+    vals_put(&set_v[cur_set]);
+    return 1;
+}
+
+/* the rows of the list under the film (3 push / pull, 4.. sliders, JPG row) that exist for the chosen film:
+ * no effect: none; own preset: no push / pull and no effect strength */
+static int lst[NROWS], lst_n = 0;
+
+static void list_build(void)
+{
+    int r, own = (st_film > 0 && cur_set > 0);
+    lst_n = 0;
+    if (st_film == 0) return;
+    for (r = 3; r < NROWS; r++) {
+        if (own && (r == 3 || r == 4)) continue;
+        lst[lst_n++] = r;
+    }
+    top = clampi(top, 0, lst_n > VIS ? lst_n - VIS : 0);
+}
+
+static int lst_pos(int r)                    /* index of row r in the list, -1 when it is not shown */
+{
+    int i;
+    for (i = 0; i < lst_n; i++) if (lst[i] == r) return i;
+    return -1;
 }
 
 #endif

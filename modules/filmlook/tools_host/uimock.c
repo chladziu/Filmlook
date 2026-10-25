@@ -17,6 +17,7 @@ int main(int argc, char **argv)
     FILE *f;
     if (argc < 2) return 1;
     memo_init();
+    sets_init();
     for (i = 2; i < argc; i++) {
         const char *a = argv[i];
         int v = 0;
@@ -43,6 +44,8 @@ int main(int argc, char **argv)
         else if (!strncmp(a, "jpg=", 4)) st_jpg = v;
     }
     fix_push();
+    cur_set = set_of(st_film);
+    list_build();
     pal_build();
     ui_fb = fb; ui_pitch = 720;
     draw_static();

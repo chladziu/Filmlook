@@ -89,10 +89,20 @@ static void klog_flush(void)
 /* ------------------------------------------------------------------ settings file */
 static void save_state(void)
 {
-    char t[320];
+    static char t[900];
+    const vals_t *a;
+    int k, n;
+    vals_get(&set_v[cur_set]);                          /* the sliders in use go back to their set first */
+    a = &set_v[0];
     snprintf(t, sizeof(t), "film=%s\npush=%d\nstrength=%d\ngrain=%d\ncontrast=%d\nfade=%d\nwarm=%d\nshadow=%d\nhigh=%d\nsat=%d\nvig=%d\nhal=%d\njpg=%d\n",
-             st_film > 0 ? films[st_film - 1].full : "Off", st_push, st_strength, st_grain, st_contrast,
-             st_fade, st_warm, st_shadow, st_high, st_sat, st_vig, st_hal, st_jpg);
+             st_film > 0 ? films[st_film - 1].full : "Off", st_push, a->strength, a->grain, a->contrast,
+             a->fade, a->warm, a->shadow, a->high, a->sat, a->vig, a->hal, st_jpg);
+    for (k = 1; k <= OWN_SLOTS; k++) {                  /* the own presets: grain, contrast, halation, fade, warm, shadow, high, sat, vig */
+        const vals_t *v = &set_v[k];
+        n = strlen(t);
+        snprintf(t + n, sizeof(t) - n, "own%d=%d,%d,%d,%d,%d,%d,%d,%d,%d\n", k, v->grain, v->contrast, v->hal, v->fade, v->warm,
+                 v->shadow, v->high, v->sat, v->vig);
+    }
     FILE *f = FIO_CreateFile(SETTINGS_PATH);
     if (f) { FIO_WriteFile(f, t, strlen(t)); FIO_CloseFile(f); }
     else flog("save_state: cannot create file", 0);
@@ -130,9 +140,34 @@ static void parse_film(const char *s)
     }
 }
 
+/* "own3=g,c,h,f,w,s,h,s,v": the nine numbers of an own preset, -999 where the file has nothing */
+static void parse_own(const char *buf, int k, vals_t *v)
+{
+    char key[8];
+    int n[9], i;
+    const char *s;
+    snprintf(key, sizeof(key), "own%d=", k);
+    for (s = buf; *s; s++) {
+        if (strncmp(s, key, 5) == 0 && (s == buf || s[-1] == '\n')) {
+            const char *p = s + 5;
+            for (i = 0; i < 9; i++) {
+                int neg = 0, val = 0, any = 0;
+                if (*p == '-') { neg = 1; p++; }
+                while (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); p++; any = 1; }
+                if (!any) return;
+                n[i] = neg ? -val : val;
+                if (*p == ',') p++;
+            }
+            v->grain = n[0]; v->contrast = n[1]; v->hal = n[2]; v->fade = n[3]; v->warm = n[4];
+            v->shadow = n[5]; v->high = n[6]; v->sat = n[7]; v->vig = n[8];
+            return;
+        }
+    }
+}
+
 static void load_state(void)
 {
-    static char buf[400];
+    static char buf[1200];
     int n = read_file(SETTINGS_PATH, buf, sizeof(buf) - 1);
     if (n > 0) {
         buf[n] = 0;
@@ -149,6 +184,7 @@ static void load_state(void)
         parse_after(buf, "vig", &st_vig);
         parse_after(buf, "hal", &st_hal);
         parse_after(buf, "jpg", &st_jpg);
+        { int k; for (k = 1; k <= OWN_SLOTS; k++) parse_own(buf, k, &set_v[k]); }
     }
     st_film = clampi(st_film, 0, BASE_COUNT);
     fix_push();
@@ -158,6 +194,17 @@ static void load_state(void)
     st_contrast = clampi(st_contrast, -50, 50);
     { int j; for (j = 0; j < NSL; j++) *sl_var(j) = clampi(*sl_var(j), sl_def[j].lo, sl_def[j].hi); }
     st_jpg = clampi(st_jpg, 0, 2);
+    vals_get(&set_v[0]);                                /* what the old keys held belongs to set 0 */
+    cur_set = 0;
+    { int k, j; for (k = 1; k <= OWN_SLOTS; k++) {      /* the own presets: same limits, effect strength fixed at 100 */
+        vals_put(&set_v[k]);
+        st_strength = 100;
+        for (j = 0; j < NSL; j++) *sl_var(j) = clampi(*sl_var(j), sl_def[j].lo, sl_def[j].hi);
+        vals_get(&set_v[k]);
+    } }
+    vals_put(&set_v[0]);
+    switch_set();                                       /* the chosen film may be an own preset */
+    list_build();
 }
 
 /* ------------------------------------------------------------------ drawing */
@@ -204,8 +251,7 @@ static void pal_restore(void)                           /* back to what Canon ha
 #define D_ROW(r) (1 << (r))          /* rows 0..14 */
 #define D_INFO   (1 << 15)           /* kind / description block under the film row */
 #define D_BAR    (1 << 16)           /* scroll bar of the list */
-#define D_CLR    (1 << 17)           /* the list scrolled (nothing to wipe any more: every row repaints its whole area) */
-#define D_LIST   (D_ROW(3) | D_ROW(4) | D_ROW(5) | D_ROW(6) | D_ROW(7) | D_ROW(8) | D_ROW(9) | D_ROW(10) | D_ROW(11) | D_ROW(12) | D_ROW(13) | D_ROW(14) | D_BAR)
+#define D_LISTALL (1 << 17)          /* the whole list: it scrolled, or the rows / the sliders changed with the film */
 static volatile int dirty = 0;
 
 /* the drawing functions write straight into the screen buffer of the camera (call with BMP_LOCK held) */
@@ -240,8 +286,8 @@ static void redraw_dirty(void)
         if (d & D_ROW(1))  draw_sel(1);
         if (d & D_ROW(2))  draw_sel(2);
         if (d & D_INFO)    draw_info();
-        { int r; for (r = 3; r < NROWS; r++) if (d & D_ROW(r)) draw_slot(r); }
-        if (d & D_BAR)     draw_scrollbar();
+        if (d & D_LISTALL) draw_list_all();
+        else { int r; for (r = 3; r < NROWS; r++) if (d & D_ROW(r)) draw_slot(r); }
     )
 }
 
@@ -277,7 +323,8 @@ static void do_open(void)
     int i;
     kill_ml_overlay();
     row = (st_film > 0) ? 2 : 0;                        /* start on the film row when a film is chosen */
-    top = 3;
+    top = 0;
+    list_build();
     klog_n = 0;
     msg_until = 0;
     want_save = 0;
@@ -319,9 +366,21 @@ static void do_close(void)
     ui_state = UI_CLOSED;
 }
 
+/* the chosen film changed: keep the choice, swap the sliders when it moves to / from an own preset, rebuild the list.
+ * Returns the dirty bits of the list */
+static int film_changed(void)
+{
+    int old_n = lst_n, old_set = cur_set, swapped;
+    st_push = 0;
+    swapped = switch_set();
+    list_build();
+    if (swapped || old_n != lst_n || (old_set != cur_set)) { top = 0; return D_LISTALL; }
+    return D_ROW(3);
+}
+
 static void change_value(int dir)
 {
-    if (row == 0) {                                      /* type: 0 = no effect, 1.. = colour / b&w / slide */
+    if (row == 0) {                                      /* type: 0 = no effect, 1.. = colour / b&w / slide / own */
         int ct = cur_type();
         int nt = clampi(ct + dir, 0, TYPE_COUNT);
         if (nt != ct) {
@@ -331,8 +390,7 @@ static void change_value(int dir)
                 int g = types[nt - 1].first_group + clampi(memo_group[nt - 1], 0, types[nt - 1].ngroups - 1);
                 st_film = 1 + groups[g].first + clampi(memo_film[g], 0, groups[g].n - 1);
             }
-            st_push = 0;
-            dirty |= D_ROW(0) | D_ROW(1) | D_ROW(2) | D_ROW(3) | D_INFO;
+            dirty |= D_ROW(0) | D_ROW(1) | D_ROW(2) | D_INFO | film_changed() | D_LISTALL;
         }
     } else if (row == 1) {                               /* brand inside the type */
         if (st_film > 0) {
@@ -343,8 +401,7 @@ static void change_value(int dir)
                 remember();
                 st_film = 1 + groups[ng].first + clampi(memo_film[ng], 0, groups[ng].n - 1);
                 remember();
-                st_push = 0;
-                dirty |= D_ROW(1) | D_ROW(2) | D_ROW(3) | D_INFO;
+                dirty |= D_ROW(1) | D_ROW(2) | D_INFO | film_changed();
             }
         }
     } else if (row == 2) {                               /* film inside the brand */
@@ -354,8 +411,7 @@ static void change_value(int dir)
             if (1 + g->first + pos != st_film) {
                 st_film = 1 + g->first + pos;
                 remember();
-                st_push = 0;
-                dirty |= D_ROW(2) | D_ROW(3) | D_INFO;
+                dirty |= D_ROW(2) | D_INFO | film_changed();
             }
         }
     } else if (row == 3) {                               /* push / pull: next / previous notch */
@@ -385,44 +441,49 @@ static void set_row(int r)
         dirty |= D_ROW(row) | D_ROW(r);                                /* selection colours change */
         row = r;
         {                                                              /* keep the row inside the window */
-            int nt = top;
-            if (r < 3) nt = 3;                                         /* back on the film rows: list from its start */
-            else {
-                if (r < nt) nt = r;
-                if (r >= nt + VIS) nt = r - VIS + 1;
+            int nt = top, p = lst_pos(r);
+            if (r < 3) nt = 0;                                         /* back on the film rows: list from its start */
+            else if (p >= 0) {
+                if (p < nt) nt = p;
+                if (p >= nt + VIS) nt = p - VIS + 1;
             }
-            if (nt != top) { top = nt; dirty |= D_LIST | D_CLR; }
+            if (nt != top) { top = nt; dirty |= D_LISTALL; }
         }
     }
 }
 
-/* rows that can not be changed right now are skipped: brand / film / push-pull without a film,
- * push-pull for a film without variants */
+/* rows that can not be changed right now are skipped: brand / film without a film, the rows of the list that the
+ * chosen film does not have (nothing at all without a film), push-pull for a film without variants */
 static int row_enabled(int r)
 {
+    if (r == 0) return 1;
     if (r == 1 || r == 2) return st_film > 0;
+    if (lst_pos(r) < 0) return 0;
     if (r == 3) return n_opts() > 1;
-    return 1;                                  /* the sliders (also without a film) */
+    return 1;
 }
 
 /* joystick up / down */
 static void move_row(int dir)
 {
     int r = row + dir;
-    while (r > 0 && r < NROWS - 1 && !row_enabled(r)) r += dir;
+    while (r >= 0 && r < NROWS && !row_enabled(r)) r += dir;
+    if (r < 0 || r >= NROWS) return;
     set_row(r);
 }
 
 /* ------------------------------------------------------------------ keys */
-static int idle_photo_mode(void)
+static int idle_photo_mode(void)                  /* the camera is idle (photo mode or live view): the same condition under
+                                                   * which ML itself would open its menu with this key */
 {
-    return gui_state == GUISTATE_IDLE && !lv;
+    return gui_state == GUISTATE_IDLE;
 }
 
 static unsigned int filmlook_keypress(unsigned int key)
 {
     if (ui_state == UI_CLOSED) {
-        /* TRASH (photo mode only) opens the panel; ML's own menu stays reachable in live view. INFO is Canon's again */
+        /* TRASH opens the panel (in photo mode and in live view) before ML can open its own menu: modules see the key first.
+         * ML's own menu stays reachable with a long press of the joystick centre. INFO is Canon's again */
         if (key == MODULE_KEY_TRASH && idle_photo_mode()) { ui_state = UI_OPENING; return 0; }
         return 1;
     }
@@ -701,6 +762,7 @@ static unsigned int filmlook_seconds(unsigned int ctx)
 static unsigned int filmlook_init(void)
 {
     memo_init();
+    sets_init();
     load_state();
     kill_ml_overlay();
     flog_s("FILMLOOK module loaded", VERSION);

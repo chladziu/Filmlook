@@ -17,6 +17,7 @@ import json, os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import films_meta as M
 
+OWN_SLOTS = 5                                               # slots of "Własny" (own presets)
 TYPES = ["Kolor", "Czarno-biały", "Slajd", "Własny"]   # menu order; "Własny" = no film, only the look sliders
 FOLDER_TYPE = {"Color-Negative": 0, "Black-White": 1, "Slide": 2}
 BRAND_ORDER = ["Kodak", "Ilford", "Fuji", "Agfa", "Foma", "Adox", "Rollei", "Kentmere", "Bergger", "CineStill",
@@ -202,10 +203,12 @@ def main(user_dir, repo_dir, out):
             continue
         films.append(e)
 
-    # 3. "Własny look": a film without any values - everything comes from the look sliders of the panel
-    films.append(dict(src="(own look)", brand="Własny", name="Własny look", full="Własny look", iso=0, type=3,
-                      desc="Bez filmu: ustaw suwaki poniżej", kind="Własny look", mono=False, wb_custom=0, temp=0,
-                      tint=0, profile=0, vals=[], cv=[[(0, 0), (255, 255)] for _ in CURVES]))
+    # 3. five slots for the user's own looks: films without any values - everything comes from the look sliders of the
+    #    panel, every slot keeps its own set of sliders (the module stores them in the settings file)
+    for k in range(1, OWN_SLOTS + 1):
+        films.append(dict(src="(own look %d)" % k, brand="Własne presety", name="Preset %d" % k, full="Własny preset %d" % k,
+                          iso=0, type=3, desc="Twój własny look: ustaw suwaki, SET zapisuje", kind="Własny preset", mono=False,
+                          wb_custom=0, temp=0, tint=0, profile=0, vals=[], cv=[[(0, 0), (255, 255)] for _ in CURVES]))
 
     # grouping: type -> brand -> film (natural order of the names)
     def border(b): return BRAND_ORDER.index(b) if b in BRAND_ORDER else 99
