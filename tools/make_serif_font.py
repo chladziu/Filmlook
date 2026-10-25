@@ -30,8 +30,9 @@ MARK = {"ć": "acute", "ń": "acute", "ś": "acute", "ź": "acute", "Ć": "acute
 
 
 class Face:
-    def __init__(self, path, size, gamma=1.0, track=0.0, vary=None):
+    def __init__(self, path, size, gamma=1.0, track=0.0, vary=None, stroke=0):
         self.path, self.size, self.gamma, self.track = path, size, gamma, track
+        self.stroke = stroke                                    # hi-res px added to every side of the letters: faux bold
         self.f = ImageFont.truetype(path, size * K, layout_engine=ImageFont.Layout.RAQM)
         if vary:
             axes = self.f.get_variation_axes(); vals = []
@@ -54,7 +55,8 @@ class Face:
         w = int(self.f.getlength(text, features=["-liga", "-aalt"])) + 2 * PAD * K
         h = self.by + int(self.size * K * 0.45)
         im = Image.new("L", (w, h), 0)
-        ImageDraw.Draw(im).text((PAD * K, self.by), text, font=self.f, fill=255, anchor="ls", features=["-liga", "-aalt"])
+        ImageDraw.Draw(im).text((PAD * K, self.by), text, font=self.f, fill=255, anchor="ls", features=["-liga", "-aalt"],
+                                stroke_width=self.stroke, stroke_fill=255)
         return np.asarray(im, dtype=np.float32) / 255
 
     def base_y(self):                    # baseline row on the hi-res canvas
@@ -62,7 +64,7 @@ class Face:
 
     def adv(self, ch):                   # advance in em/1000 (kerning not included)
         ch = POLISH.get(ch, ch) if ord(ch) not in self.cm else ch
-        return self.tt["hmtx"][self.cm[ord(ch)]][0] * 1000.0 / self.upm
+        return self.tt["hmtx"][self.cm[ord(ch)]][0] * 1000.0 / self.upm + 2.0 * self.stroke * 1000.0 / (K * self.size)
 
 
 def ink(a):
@@ -243,6 +245,11 @@ def main(beth, titlef, idxp, out):
         fonts.append(build_font(nm, face, chars))
         if kern is None:
             kern = kerning(face, all_chars)
+    # bold (selected tab, selected brand): the same size with a stroke round the letters; only the letters it needs
+    bold_chars = name_chars | set("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ")
+    bface = Face(beth, 25, 0.78, 0.4, None, 3)
+    print("smlb", 25, len(bold_chars))
+    fonts.append(build_font("smlb", bface, bold_chars))
     # title: the whole text as one picture
     tface = Face(titlef, 33, 0.9, 0.0)
     hi = tface.hi("Film Look Simulation")

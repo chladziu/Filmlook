@@ -67,21 +67,28 @@ static int sf_kern(const sf_font *f, int a, int b)           /* 1/16 px */
     return 0;
 }
 
-/* laid out line */
-typedef struct { const sf_glyph *g; int x16; int gaps; } sf_pos;
+/* laid out line: any number of runs (font + colour + text), one after the other */
+typedef struct { const sf_glyph *g; int x16; int gaps; const sf_font *f; unsigned char col; } sf_pos;
+typedef struct { const sf_font *f; const char *s; int col; } sf_run;
 static sf_pos sf_buf[SF_MAXG];
 static int sf_n;                                 /* letters in sf_buf */
 static int sf_ngaps;                             /* gaps that may stretch (justified text) */
+static int sf_lx, sf_lprev, sf_lgp, sf_ltrk;     /* state of the layout */
 
-/* lays out s (up to n bytes, -1 = all); returns the width in 1/16 px. sf_buf[i].gaps = number of stretchable gaps in
- * front of letter i (for justified text): the tabs if the text has any, otherwise the spaces */
-static int sf_layout(const sf_font *f, const char *s, int n)
+static void sf_lay_begin(void)
 {
-    int x = 0, prev = 0, gp = 0, has_tab = 0;
+    sf_n = 0; sf_lx = 0; sf_lprev = 0; sf_lgp = 0; sf_ltrk = 0;
+}
+
+/* appends s (up to n bytes, -1 = all) in the font f and colour col. Gaps that may stretch (justified text):
+ * the tabs if the text has any, otherwise the spaces */
+static void sf_lay_run(const sf_font *f, const char *s, int n, int col)
+{
+    int has_tab = 0;
     const char *e = (n < 0) ? (const char *)0 : s + n;
     const char *p;
     for (p = s; e ? p < e : *p; p++) if (*p == '\t') { has_tab = 1; break; }
-    sf_n = 0;
+    sf_lprev = 0;                                /* no kerning between two runs */
     while (e ? s < e : *s) {
         int c = sf_utf8(&s);
         const sf_glyph *g;
@@ -89,15 +96,29 @@ static int sf_layout(const sf_font *f, const char *s, int n)
         g = sf_find(f, c == '\t' ? ' ' : c);
         if (!g) g = sf_find(f, '?');
         if (!g) continue;
-        if (prev) x += sf_kern(f, prev, g->kc);
-        sf_buf[sf_n].g = g; sf_buf[sf_n].x16 = x; sf_buf[sf_n].gaps = gp;
-        if (has_tab ? c == '\t' : c == ' ') gp++;
-        x += g->adv + f->track16;
-        prev = g->kc;
+        if (sf_lprev) sf_lx += sf_kern(f, sf_lprev, g->kc);
+        sf_buf[sf_n].g = g; sf_buf[sf_n].x16 = sf_lx; sf_buf[sf_n].gaps = sf_lgp;
+        sf_buf[sf_n].f = f; sf_buf[sf_n].col = (unsigned char)col;
+        if (has_tab ? c == '\t' : c == ' ') sf_lgp++;
+        sf_lx += g->adv + f->track16;
+        sf_ltrk = f->track16;
+        sf_lprev = g->kc;
         sf_n++;
     }
-    sf_ngaps = gp;
-    return x - (sf_n ? f->track16 : 0);
+}
+
+/* returns the width in 1/16 px */
+static int sf_lay_end(void)
+{
+    sf_ngaps = sf_lgp;
+    return sf_lx - (sf_n ? sf_ltrk : 0);
+}
+
+static int sf_layout(const sf_font *f, const char *s, int n)
+{
+    sf_lay_begin();
+    sf_lay_run(f, s, n, 0);
+    return sf_lay_end();
 }
 
 /* width of a text in px */
@@ -106,20 +127,28 @@ static int sf_width(const sf_font *f, const char *s)
     return (sf_layout(f, s, -1) + 8) >> 4;
 }
 
-static unsigned char sf_lvl[SF_MAXW];
+/* width of several runs in px */
+static int sf_runs_width(const sf_run *r, int nr)
+{
+    int i;
+    sf_lay_begin();
+    for (i = 0; i < nr; i++) sf_lay_run(r[i].f, r[i].s, -1, r[i].col);
+    return (sf_lay_end() + 8) >> 4;
+}
 
-/* the rectangle x0..x1 (exclusive) x [ybase - top, ybase + bot) gets the text, aligned left / right / centre /
- * justified; everything else of the rectangle becomes paper. Ink outside the rows is cut off. */
-static void sf_line_n(const sf_font *f, int x0, int x1, int ybase, int top, int bot, const char *s, int n, int col, int align)
+static unsigned char sf_lvl[SF_MAXW];             /* per pixel: level 0..3 + 4 * colour */
+
+/* writes the laid out line: the rectangle x0..x1 (exclusive) x [ybase - top, ybase + bot) gets the text, aligned left /
+ * right / centre / justified; everything else of the rectangle becomes paper. Ink outside the rows is cut off. */
+static void sf_emit(int x0, int x1, int ybase, int top, int bot, int tw16, int align)
 {
     int W = x1 - x0, r, i;
-    int tw16, shift16 = 0, extra16 = 0, rem = 0;
+    int shift16 = 0, extra16 = 0, rem = 0;
     int rows = top + bot;
     int Wt;                                       /* width the text is aligned in: the rectangle is SF_RPAD wider on the right,
                                                    * so that the last letter (an overhanging j, y ...) is not cut off */
     if (W <= 0 || W > SF_MAXW) return;
     Wt = (align == SF_RIGHT || align == SF_JUST) ? W - SF_RPAD : W;
-    tw16 = sf_layout(f, s, n);
     if (align == SF_RIGHT) shift16 = Wt * 16 - tw16;
     else if (align == SF_CENTER) shift16 = (W * 16 - tw16) / 2;
     else if (align == SF_JUST && sf_ngaps > 0 && tw16 < Wt * 16) { extra16 = (Wt * 16 - tw16) / sf_ngaps; rem = (Wt * 16 - tw16) - extra16 * sf_ngaps; }
@@ -127,24 +156,43 @@ static void sf_line_n(const sf_font *f, int x0, int x1, int ybase, int top, int 
     for (r = 0; r < rows; r++) {
         int yy = ybase - top + r;
         unsigned char *row = ui_fb + yy * ui_pitch + x0;
-        const unsigned char *rm = ui_ramp[col];
         memset(sf_lvl, 0, (size_t)W);
         for (i = 0; i < sf_n; i++) {
             const sf_glyph *g = sf_buf[i].g;
             int gy = r - top - g->y;
             if (gy >= 0 && gy < g->h) {
                 int stride = (g->w + 3) >> 2, k;
-                const unsigned char *p = f->bits + g->off + gy * stride;
+                const unsigned char *p = sf_buf[i].f->bits + g->off + gy * stride;
                 int gx = ((sf_buf[i].x16 + shift16 + extra16 * sf_buf[i].gaps + (sf_buf[i].gaps < rem ? sf_buf[i].gaps : rem) + 8) >> 4) + g->x;
+                int cc = sf_buf[i].col << 2;
                 for (k = 0; k < g->w; k++) {
                     int v = (p[k >> 2] >> (6 - 2 * (k & 3))) & 3;
                     int px = gx + k;
-                    if (v && px >= 0 && px < W && v > sf_lvl[px]) sf_lvl[px] = (unsigned char)v;
+                    if (v && px >= 0 && px < W && v > (sf_lvl[px] & 3)) sf_lvl[px] = (unsigned char)(v | cc);
                 }
             }
         }
-        for (i = 0; i < W; i++) row[i] = rm[sf_lvl[i]];
+        for (i = 0; i < W; i++) row[i] = ui_ramp[sf_lvl[i] >> 2][sf_lvl[i] & 3];
     }
+}
+
+static void sf_line_n(const sf_font *f, int x0, int x1, int ybase, int top, int bot, const char *s, int n, int col, int align)
+{
+    int tw16;
+    sf_lay_begin();
+    sf_lay_run(f, s, n, col);
+    tw16 = sf_lay_end();
+    sf_emit(x0, x1, ybase, top, bot, tw16, align);
+}
+
+/* several runs (font, text, colour) in one line, written in one pass */
+static void sf_line_runs(int x0, int x1, int ybase, int top, int bot, const sf_run *r, int nr, int align)
+{
+    int i, tw16;
+    sf_lay_begin();
+    for (i = 0; i < nr; i++) sf_lay_run(r[i].f, r[i].s, -1, r[i].col);
+    tw16 = sf_lay_end();
+    sf_emit(x0, x1, ybase, top, bot, tw16, align);
 }
 
 static void sf_line(const sf_font *f, int x0, int x1, int ybase, int top, int bot, const char *s, int col, int align)
@@ -154,7 +202,7 @@ static void sf_line(const sf_font *f, int x0, int x1, int ybase, int top, int bo
 
 /* a paragraph: greedy wrap into lines of at most W px; all lines but the last are justified when they are nearly full.
  * Returns the number of lines drawn (at most max_lines, the rest of the text is cut). Lines not used are NOT cleared. */
-static int sf_para(const sf_font *f, int x0, int x1, int ybase, int top, int bot, int pitch, int max_lines, const char *s, int col)
+static int sf_para(const sf_font *f, int x0, int x1, int ybase, int top, int bot, int pitch, int max_lines, const char *s, int col, int centre)
 {
     int W16 = (x1 - x0 - SF_RPAD) * 16, nl = 0;
     while (*s && nl < max_lines) {
@@ -172,7 +220,7 @@ static int sf_para(const sf_font *f, int x0, int x1, int ybase, int top, int bot
         {
             int last = (*best == 0);
             int just = (!last && bw * 10 >= W16 * 7) || (last && bw * 100 >= W16 * 90);   /* the last line only when it is nearly full */
-            sf_line_n(f, x0, x1, ybase + nl * pitch, top, bot, ls, (int)(best - ls), col, just ? SF_JUST : SF_LEFT);
+            sf_line_n(f, x0, x1, ybase + nl * pitch, top, bot, ls, (int)(best - ls), col, centre ? SF_CENTER : (just ? SF_JUST : SF_LEFT));
             s = *best == ' ' ? best + 1 : best;
         }
         nl++;

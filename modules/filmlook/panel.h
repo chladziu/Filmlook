@@ -105,81 +105,106 @@ static void draw_mark(int on, int y, int h)
     ui_fill(on ? PC_ACCENT : PC_BG, MARK_X, y, MARK_W, h);
 }
 
-/* row 0: the film type. The texts stay where they are, only colour and underline change */
-static void tab_layout(int *x, int *w)
+/* row 0: the film type, a group in the middle of the screen. Every tab has a fixed slot (as wide as its bold text plus
+ * the gap), so nothing moves when the choice or the bold changes, and the slots plus a blank at both ends cover the
+ * whole row: every pixel is rewritten in one pass, no wiping before. */
+#define TAB_GAP 26
+static const char *tab_text(int i) { return i < 5 ? tab_label[i] : types[i - 1].name; }
+
+static void tab_layout(int *x, int *w)           /* x[i], w[i]: slot of tab i (x[n] = end of the last slot) */
 {
-    int i, n = TYPE_COUNT + 1, tot = 0, gap;
-    for (i = 0; i < n; i++) { w[i] = sf_width(&sf_sml, i < 5 ? tab_label[i] : types[i - 1].name); tot += w[i]; }
-    gap = (M_R - M_L - tot) / (n > 1 ? n - 1 : 1);
-    x[0] = M_L;
-    for (i = 1; i < n; i++) x[i] = x[i - 1] + w[i - 1] + gap;
-    x[n - 1] = M_R - w[n - 1];                      /* spread over the full width: the last one ends at the right margin */
+    int i, n = TYPE_COUNT + 1, tot = 0, s0;
+    for (i = 0; i < n; i++) { w[i] = sf_width(&sf_smlb, tab_text(i)) + TAB_GAP; tot += w[i]; }
+    s0 = (M_L + M_R) / 2 - tot / 2;
+    for (i = 0; i < n; i++) { x[i] = s0; s0 += w[i]; }
+    x[n] = s0;
 }
 
 static void draw_tabs(void)
 {
     int on = (row == 0), ct = cur_type(), i, n = TYPE_COUNT + 1, r;
-    int x[8], w[8];
+    int x[9], w[8];
     tab_layout(x, w);
     draw_mark(on, Y_TABS - 22, 28);
+    sf_line(&sf_sml, M_L, x[0], Y_TABS, 24, 7, " ", PC_BG, SF_LEFT);                  /* blank before and after the group */
+    sf_line(&sf_sml, x[n], M_R3, Y_TABS, 24, 7, " ", PC_BG, SF_LEFT);
     for (i = 0; i < n; i++) {
-        int sel = (i == ct);
-        sf_line(&sf_sml, x[i], x[i] + w[i] + 4, Y_TABS, 24, 7, i < 5 ? tab_label[i] : types[i - 1].name,
-                sel ? (on ? PC_ACCENT : PC_TEXT) : PC_SOFT, SF_LEFT);
-        for (r = 0; r < 2; r++)                    /* underline of the chosen tab */
-            memset(ui_fb + (Y_TABS + 8 + r) * ui_pitch + x[i], ui_ramp[sel ? (on ? PC_ACCENT : PC_TEXT) : PC_BG][3], (size_t)w[i]);
+        int sel = (i == ct), bold = sel && on;
+        const sf_font *f = bold ? &sf_smlb : &sf_sml;
+        sf_line(f, x[i], x[i] + w[i], Y_TABS, 24, 7, tab_text(i), sel ? (on ? PC_ACCENT : PC_TEXT) : PC_SOFT, SF_CENTER);
+        {
+            int tw = sf_width(f, tab_text(i)), u0 = x[i] + (w[i] - tw) / 2, u1 = u0 + tw;
+            unsigned char bg = ui_ramp[PC_BG][3], fg = ui_ramp[sel ? (on ? PC_ACCENT : PC_TEXT) : PC_BG][3];
+            for (r = 0; r < 2; r++) {                    /* underline of the chosen tab, the rest of the slot is paper */
+                unsigned char *row = ui_fb + (Y_TABS + 8 + r) * ui_pitch;
+                if (!sel) { memset(row + x[i], bg, (size_t)w[i]); continue; }
+                memset(row + x[i], bg, (size_t)(u0 - x[i]));
+                memset(row + u0, fg, (size_t)tw);
+                memset(row + u1, bg, (size_t)(x[i] + w[i] - u1));
+            }
+        }
+    }
+    for (r = 0; r < 2; r++) {                            /* the underline rows before / after the group */
+        memset(ui_fb + (Y_TABS + 8 + r) * ui_pitch + M_L, ui_ramp[PC_BG][3], (size_t)(x[0] - M_L));
+        memset(ui_fb + (Y_TABS + 8 + r) * ui_pitch + x[n], ui_ramp[PC_BG][3], (size_t)(M_R3 - x[n]));
     }
 }
 
-/* row 1: brand (label left, value right between the arrows), row 2: the film name, large */
+/* row 1: brand ("Marka  ‹ Kodak ›", centred, the chosen brand bold while the row is selected),
+ * row 2: the film name, large, the arrows right next to it */
 static void draw_sel(int r)
 {
     int on = (row == r);
     int off = (st_film == 0);
-    char tmp[96];
 
     if (r == 1) {
+        sf_run run[3];
         const char *val = off ? "-" : groups[films[st_film - 1].group].brand;
+        char tmp[64];
         int c = off ? PC_DIM : (on ? PC_ACCENT : PC_TEXT);
         draw_mark(on, Y_BRAND - 22, 28);
-        sf_line(&sf_sml, M_L, M_L + 160, Y_BRAND, 24, 7, "Marka", off ? PC_DIM : PC_SOFT, SF_LEFT);
+        run[0].f = &sf_sml; run[0].s = "Marka     "; run[0].col = off ? PC_DIM : PC_SOFT;
         if (off) snprintf(tmp, sizeof(tmp), "%s", val);
-        else     snprintf(tmp, sizeof(tmp), "\xE2\x80\xB9  %s  \xE2\x80\xBA", val);
-        sf_line(&sf_sml, M_L + 160, M_R3, Y_BRAND, 24, 7, tmp, c, SF_RIGHT);
+        else     snprintf(tmp, sizeof(tmp), "\xE2\x80\xB9   %s   \xE2\x80\xBA", val);
+        run[1].f = (on && !off) ? &sf_smlb : &sf_sml; run[1].s = tmp; run[1].col = c;
+        sf_line_runs(M_L, M_R3, Y_BRAND, 24, 7, run, 2, SF_CENTER);
     } else {
+        sf_run run[3];
         const char *name = off ? "Bez efektu" : films[st_film - 1].name;
         const sf_font *f = &sf_big;
         int c = off ? PC_DIM : (on ? PC_ACCENT : PC_TEXT);
         int ca = off ? PC_BG : (on ? PC_ACCENT : PC_DIM);
         if (sf_width(f, name) > M_R - M_L - 100) f = &sf_mid;
         draw_mark(on, Y_NAME - 40, 48);
-        sf_line(&sf_big, M_L, M_L + 44, Y_NAME, 50, 14, off ? " " : "\xE2\x80\xB9", ca, SF_LEFT);
-        sf_line(f, M_L + 44, M_R - 44, Y_NAME, 50, 14, name, c, SF_CENTER);
-        sf_line(&sf_big, M_R - 44, M_R3, Y_NAME, 50, 14, off ? " " : "\xE2\x80\xBA", ca, SF_RIGHT);
+        run[0].f = &sf_big; run[0].s = off ? " " : "\xE2\x80\xB9 "; run[0].col = ca;
+        run[1].f = f;       run[1].s = name;                      run[1].col = c;
+        run[2].f = &sf_big; run[2].s = off ? " " : " \xE2\x80\xBA"; run[2].col = ca;
+        sf_line_runs(M_L, M_R3, Y_NAME, 50, 14, run, 3, SF_CENTER);
     }
 }
 
-/* kind of film | ISO, number in the brand, description */
+/* kind of film · ISO · number in the brand, then the description: both lines centred */
 static void draw_info(void)
 {
-    char tmp[96];
+    char tmp[96], num[24];
     if (st_film > 0) {
         const film_t *f = &films[st_film - 1];
         const group_t *g = &groups[f->group];
         const char *d = films[eff_film() - 1].desc;
         const sf_font *kf = &sf_sml, *df = &sf_sml;
+        sf_run run[2];
         if (f->iso > 0) snprintf(tmp, sizeof(tmp), "%s \xC2\xB7 ISO %d", f->kind, f->iso);
         else            snprintf(tmp, sizeof(tmp), "%s", f->kind);
-        if (sf_width(kf, tmp) > M_R - M_L - 90) kf = &sf_xs;                   /* long kinds use the smaller size */
-        sf_line(kf, M_L, M_R - 90, Y_KIND, 24, 7, tmp, PC_ACCENT, SF_LEFT);
-        snprintf(tmp, sizeof(tmp), "%d / %d", st_film - g->first, g->n);
-        sf_line(&sf_sml, M_R - 90, M_R3, Y_KIND, 24, 7, tmp, PC_SOFT, SF_RIGHT);
+        snprintf(num, sizeof(num), "   \xC2\xB7   %d / %d", st_film - g->first, g->n);
+        run[0].f = kf; run[0].s = tmp; run[0].col = PC_ACCENT;
+        run[1].f = kf; run[1].s = num; run[1].col = PC_SOFT;
+        if (sf_runs_width(run, 2) > M_R - M_L) { kf = &sf_xs; run[0].f = kf; run[1].f = kf; }   /* long kinds use the smaller size */
+        sf_line_runs(M_L, M_R3, Y_KIND, 24, 7, run, 2, SF_CENTER);
         if (sf_width(df, d) > M_R - M_L) df = &sf_xs;                           /* long descriptions use the smaller size */
-        sf_para(df, M_L, M_R3, Y_DESC, 24, 7, 30, 1, d, PC_TEXT);
+        sf_para(df, M_L, M_R3, Y_DESC, 24, 7, 30, 1, d, PC_TEXT, 1);
     } else {
-        sf_line(&sf_sml, M_L, M_R - 90, Y_KIND, 24, 7, "Efekt filmu wyłączony", PC_ACCENT, SF_LEFT);
-        sf_line(&sf_sml, M_R - 90, M_R3, Y_KIND, 24, 7, " ", PC_SOFT, SF_RIGHT);
-        sf_line(&sf_sml, M_L, M_R, Y_DESC, 24, 7, "Zdjęcia zostają bez zmian, plik XMP nie powstaje", PC_TEXT, SF_LEFT);
+        sf_line(&sf_sml, M_L, M_R3, Y_KIND, 24, 7, "Efekt filmu wyłączony", PC_ACCENT, SF_CENTER);
+        sf_line(&sf_sml, M_L, M_R3, Y_DESC, 24, 7, "Zdjęcia zostają bez zmian, plik XMP nie powstaje", PC_TEXT, SF_CENTER);
     }
 }
 
