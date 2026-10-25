@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define VERSION "v0.10"
+#define VERSION "v0.11"
 #include "../films.h"
 #include "../state.h"
 #include "../panel.h"
@@ -46,6 +46,7 @@ int main(int argc, char **argv)
         else if (!strncmp(a, "theme=", 6)) st_theme = v;
         else if (!strncmp(a, "lang=", 5)) st_lang = v;
         else if (!strncmp(a, "set=", 4)) st_set = v;
+        else if (!strncmp(a, "view=", 5)) st_view = v;
         else if (!strncmp(a, "armed=", 6)) reset_armed = v;
     }
     fix_push();

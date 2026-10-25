@@ -121,6 +121,17 @@
 "mono": false
 },
 {
+"src": "Fuji Velvia 100",
+"full": "Fuji Velvia 100",
+"name": "Velvia 100",
+"desc": "Łagodniejsza niż Velvia 50, cieplejsza",
+"kind": "Film kolorowy slajdowy",
+"iso": 100,
+"type": 2,
+"brand": "Fuji",
+"mono": false
+},
+{
 "src": "Kodachrome 64",
 "full": "Kodak Kodachrome 64",
 "name": "Kodachrome 64",
@@ -151,61 +162,6 @@
 "iso": 100,
 "type": 2,
 "brand": "Kodak",
-"mono": false
-},
-{
-"src": "(own look 1)",
-"full": "Własny preset 1",
-"name": "Preset 1",
-"desc": "",
-"kind": "Własny preset",
-"iso": 0,
-"type": 3,
-"brand": "Własne presety",
-"mono": false
-},
-{
-"src": "(own look 2)",
-"full": "Własny preset 2",
-"name": "Preset 2",
-"desc": "",
-"kind": "Własny preset",
-"iso": 0,
-"type": 3,
-"brand": "Własne presety",
-"mono": false
-},
-{
-"src": "(own look 3)",
-"full": "Własny preset 3",
-"name": "Preset 3",
-"desc": "",
-"kind": "Własny preset",
-"iso": 0,
-"type": 3,
-"brand": "Własne presety",
-"mono": false
-},
-{
-"src": "(own look 4)",
-"full": "Własny preset 4",
-"name": "Preset 4",
-"desc": "",
-"kind": "Własny preset",
-"iso": 0,
-"type": 3,
-"brand": "Własne presety",
-"mono": false
-},
-{
-"src": "(own look 5)",
-"full": "Własny preset 5",
-"name": "Preset 5",
-"desc": "",
-"kind": "Własny preset",
-"iso": 0,
-"type": 3,
-"brand": "Własne presety",
 "mono": false
 }
 ]

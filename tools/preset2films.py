@@ -19,8 +19,8 @@ import json, os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import films_meta as M
 
-OWN_SLOTS = 5                                               # slots of "Własny" (own presets)
-TYPES = ["Kolor", "Czarno-biały", "Slajd", "Własny"]   # menu order; "Własny" = no film, only the look sliders
+OWN_SLOTS = 0                                               # slots of "Własny" (own presets): none since v0.11 (5 before); set to 5 and add "Własny" to TYPES to bring them back
+TYPES = ["Kolor", "Czarno-biały", "Slajd"] + (["Własny"] if OWN_SLOTS else [])   # menu order; "Własny" = no film, only the look sliders
 FOLDER_TYPE = {"Color-Negative": 0, "Black-White": 1, "Slide": 2}
 BRAND_ORDER = ["Kodak", "Ilford", "Fuji", "Agfa", "Foma", "Adox", "Rollei", "Kentmere", "Bergger", "CineStill",
                "Lomography", "Ferrania", "ORWO", "Tonowanie", "Inne"]
@@ -34,7 +34,7 @@ CURATED = {
     0: ["Kodak Portra 400", "Kodak Ektar 100", "Kodak Gold 200", "Kodak Royal Gold 400", "Fuji Superia X-TRA 400",
         "Kodak Vision3 500T"],
     1: ["Kodak Tri-X 400", "Ilford HP5 Plus", "Ilford XP2 Super", "Ilford Delta 3200"],
-    2: ["Fuji Velvia 50", "Kodachrome 64", "Fuji Astia 100F", "Kodak Ektachrome 100VS"],
+    2: ["Fuji Velvia 50", "Fuji Velvia 100", "Kodachrome 64", "Fuji Astia 100F", "Kodak Ektachrome 100VS"],
 }
 CURATED_ISO = {"Fuji Provia 100F": 100}               # the preset has no ISO in its name
 
@@ -315,7 +315,7 @@ def main(user_dir, repo_dir, out, mode=""):
         gs = [i for i, g in enumerate(groups) if g["type"] == t]
         if gs != list(range(gs[0], gs[0] + len(gs))): raise SystemExit("groups of a type are not contiguous")
         w("    { %s, %d, %d },\n" % (cstr(tn), gs[0], len(gs)))
-    w("};\n#define TYPE_COUNT ((int)(sizeof(types) / sizeof(types[0])))\n\n")
+    w("};\n#define TYPE_COUNT ((int)(sizeof(types) / sizeof(types[0])))\n#define OWN_TYPE %d        /* index of the type \"Własny\" (own presets), -1 = there is none */\n\n" % (TYPES.index("Własny") if "Własny" in TYPES else -1))
     w("static const group_t groups[] = {\n")
     for g in groups:
         w("    { %d, %s, %d, %d },\n" % (g["type"], cstr(g["brand"]), g["first"], g["n"]))

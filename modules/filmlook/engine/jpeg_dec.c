@@ -374,6 +374,28 @@ static void jd_idct4(const int *in, uint8_t *out, int stride)
     }
 }
 
+/*
+ * Quarter and eighth size, for the viewer (a picture of 5616 px that has to fit a 640 px screen needs no more than one value
+ * per 8 x 8 block). The same basis once more: the 2-point transform is 1/2 C(u) cos((2x+1) u pi / 4), u, x < 2, which is
+ * jd_ct[0][0] = 5793 for u = 0 and +-5793 for u = 1, so the Q14 shifts stay the ones of jd_idct / jd_idct4.
+ */
+static void jd_idct2(const int *in, uint8_t *out, int stride)
+{
+    int t00 = JD_DESCALE(5793 * (in[0] + in[8]), 11), t10 = JD_DESCALE(5793 * (in[0] - in[8]), 11);     /* column 0, rows 0 and 1 */
+    int t01 = JD_DESCALE(5793 * (in[1] + in[9]), 11), t11 = JD_DESCALE(5793 * (in[1] - in[9]), 11);     /* column 1 */
+    int v[4], i;
+    v[0] = JD_DESCALE(5793 * (t00 + t01), 17) + 128; v[1] = JD_DESCALE(5793 * (t00 - t01), 17) + 128;
+    v[2] = JD_DESCALE(5793 * (t10 + t11), 17) + 128; v[3] = JD_DESCALE(5793 * (t10 - t11), 17) + 128;
+    for (i = 0; i < 4; i++) out[(i >> 1) * stride + (i & 1)] = (uint8_t)(v[i] < 0 ? 0 : v[i] > 255 ? 255 : v[i]);
+}
+
+/* the value of a whole block: F00 / 8 */
+static uint8_t jd_idct1(int dc)
+{
+    int v = ((dc + 4) >> 3) + 128;
+    return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v);
+}
+
 /* ===================================================================== */
 /* Frame state                                                            */
 /* ===================================================================== */
@@ -548,17 +570,76 @@ static void jd_ycc_row(const uint8_t *y, const uint8_t *cb, const uint8_t *cr,
 }
 
 /* ===================================================================== */
+/* Colour                                                                 */
+/* ===================================================================== */
+/* (the conversion itself is in the loop of jd_run: it takes the nearest chroma sample, the inverse of what jpeg_enc.c uses on
+ * the way in: Q16 BT.601) */
+
+/* ===================================================================== */
+/* One block                                                              */
+/* ===================================================================== */
+
+/* the coefficients of one block, dequantised, in natural order */
+static void jd_block(jd_bits *bits, const jd_state *s, jd_comp *c, int *blk)
+{
+    int t, k = 1, diff;
+    memset(blk, 0, 64 * sizeof(int));
+    t = jd_decode(bits, &s->hdc[c->td]);
+    diff = jd_extend(jd_get(bits, t), t);
+    c->dcpred += diff;
+    blk[0] = c->dcpred * s->qt[c->tq][0];
+    while (k < 64) {
+        int rs = jd_decode(bits, &s->hac[c->ta]);
+        int r = rs >> 4, sz = rs & 15;
+        if (!sz) { if (r != 15) break; k += 16; continue; }
+        k += r;
+        if (k > 63) break;
+        blk[jd_zigzag[k]] = jd_extend(jd_get(bits, sz), sz) * s->qt[c->tq][jd_zigzag[k]];
+        k++;
+    }
+}
+
+/* the same symbols, nothing kept but the DC predictor (c->dcpred): a block that is not wanted still has to be read to find the next one */
+static void jd_block_skip(jd_bits *bits, const jd_state *s, jd_comp *c)
+{
+    int t, k = 1;
+    t = jd_decode(bits, &s->hdc[c->td]);
+    c->dcpred += jd_extend(jd_get(bits, t), t);
+    while (k < 64) {
+        int rs = jd_decode(bits, &s->hac[c->ta]);
+        int r = rs >> 4, sz = rs & 15;
+        if (!sz) { if (r != 15) break; k += 16; continue; }
+        k += r;
+        if (k > 63) break;
+        jd_get(bits, sz);
+        k++;
+    }
+}
+
+/* ===================================================================== */
 /* Decode                                                                 */
 /* ===================================================================== */
+
+/* the part of the picture that is wanted, in DELIVERED samples (x0 + w <= ow ...), and a question the decoder asks once per row of
+ * blocks: "stop now?" (the viewer says yes when the user has asked for something else) */
+typedef struct {
+    int x0, y0, w, h;
+    se_jdec_stop_fn stop;
+    void *sctx;
+} jd_win;
 
 /*
  * Both entry points run the same decoder: `d`/`len` describe a buffer that
  * holds at least the header, and when `rd` is set everything past the scan
  * header is pulled through a window instead of being addressed directly.
+ *
+ * `win` (or NULL = the whole picture): only the blocks that cover the wanted part are transformed, every other block is
+ * read (a Huffman stream can not be entered in the middle) and thrown away, and the decoding ends with the last row of blocks
+ * that is needed. The rows that come out are the wanted ones, `win->w` samples wide.
  */
 static se_err jd_run(const uint8_t *d, size_t len,
                      se_jdec_read_fn rd, void *rctx, uint32_t total,
-                     int scale, se_arena *a, se_jdec_sink sink, void *ctx,
+                     int scale, const jd_win *win, se_arena *a, se_jdec_sink sink, void *ctx,
                      se_jdec_info *info)
 {
     jd_state *s;
@@ -566,9 +647,11 @@ static se_err jd_run(const uint8_t *d, size_t len,
     size_t    scan = 0;
     se_err    rc;
     int       i, mx, my, blk[64];
+    int       x0, y0, ww, wh;                  /* the wanted part */
+    int       mx_lo, mx_hi, my_lo, my_hi;      /* the blocks of the MCUs that cover it */
     uint8_t  *rgb;
 
-    if (scale != 1 && scale != 2) return SE_E_UNSUPPORTED;
+    if (scale != 1 && scale != 2 && scale != 4 && scale != 8) return SE_E_UNSUPPORTED;
 
     s = SE_NEW(a, jd_state, 1);
     if (!s) return SE_E_NOMEM;
@@ -590,15 +673,27 @@ static se_err jd_run(const uint8_t *d, size_t len,
     s->mcuh = s->vmax * s->bs;
     se_jpeg_scaled_size(s->w, s->h, scale, &s->ow, &s->oh);
 
-    /* One MCU row per component, full image width. */
+    x0 = 0; y0 = 0; ww = s->ow; wh = s->oh;
+    if (win) {
+        x0 = win->x0; y0 = win->y0; ww = win->w; wh = win->h;
+        if (x0 < 0) { ww += x0; x0 = 0; }
+        if (y0 < 0) { wh += y0; y0 = 0; }
+        if (x0 + ww > s->ow) ww = s->ow - x0;
+        if (y0 + wh > s->oh) wh = s->oh - y0;
+        if (ww <= 0 || wh <= 0) return SE_E_UNSUPPORTED;
+    }
+    mx_lo = x0 / s->mcuw;  mx_hi = (x0 + ww - 1) / s->mcuw + 1;  if (mx_hi > s->mcux) mx_hi = s->mcux;
+    my_lo = y0 / s->mcuh;  my_hi = (y0 + wh - 1) / s->mcuh + 1;  if (my_hi > s->mcuy) my_hi = s->mcuy;
+
+    /* One MCU row per component, as wide as the wanted blocks. */
     for (i = 0; i < s->ncomp; i++) {
-        s->c[i].pw = s->mcux * s->c[i].hs * s->bs;
+        s->c[i].pw = (mx_hi - mx_lo) * s->c[i].hs * s->bs;
         s->c[i].ph = s->c[i].vs * s->bs;
         s->c[i].plane = SE_NEW(a, uint8_t, (size_t)s->c[i].pw * s->c[i].ph);
         if (!s->c[i].plane) return SE_E_NOMEM;
         s->c[i].dcpred = 0;
     }
-    rgb = SE_NEW(a, uint8_t, (size_t)s->mcux * s->mcuw * 3 * s->mcuh);
+    rgb = SE_NEW(a, uint8_t, (size_t)ww * 3 * s->mcuh);
     if (!rgb) return SE_E_NOMEM;
 
     if (rd) {
@@ -623,11 +718,11 @@ static se_err jd_run(const uint8_t *d, size_t len,
         jd_init(&bits, d + scan, len - scan);
     }
 
-    for (my = 0; my < s->mcuy; my++) {
-        int rows, y;
+    for (my = 0; my < my_hi; my++) {
+        int y, ya, yb, want_row = (my >= my_lo);
 
         for (mx = 0; mx < s->mcux; mx++) {
-            int ci;
+            int ci, in_win = want_row && mx >= mx_lo && mx < mx_hi;
 
             if (s->restart && ((my * s->mcux + mx) % s->restart) == 0 &&
                 (my || mx)) {
@@ -647,69 +742,63 @@ static se_err jd_run(const uint8_t *d, size_t len,
                 int bx, by;
                 for (by = 0; by < c->vs; by++)
                     for (bx = 0; bx < c->hs; bx++) {
-                        int t, k = 1, diff;
-                        memset(blk, 0, sizeof blk);
-                        t = jd_decode(&bits, &s->hdc[c->td]);
-                        diff = jd_extend(jd_get(&bits, t), t);
-                        c->dcpred += diff;
-                        blk[0] = c->dcpred * s->qt[c->tq][0];
-                        while (k < 64) {
-                            int rs = jd_decode(&bits, &s->hac[c->ta]);
-                            int r = rs >> 4, sz = rs & 15;
-                            if (!sz) { if (r != 15) break; k += 16; continue; }
-                            k += r;
-                            if (k > 63) break;
-                            blk[jd_zigzag[k]] =
-                                jd_extend(jd_get(&bits, sz), sz) *
-                                s->qt[c->tq][jd_zigzag[k]];
-                            k++;
-                        }
+                        if (!in_win) { jd_block_skip(&bits, s, c); continue; }
                         {
                             uint8_t *o = c->plane
                                 + (size_t)by * s->bs * c->pw
-                                + (size_t)(mx * c->hs + bx) * s->bs;
-                            if (s->bs == 8) jd_idct(blk, o, c->pw);
-                            else            jd_idct4(blk, o, c->pw);
+                                + (size_t)((mx - mx_lo) * c->hs + bx) * s->bs;
+                            if (s->bs == 1) {                        /* eighth size: the DC of the block is the whole answer */
+                                jd_block_skip(&bits, s, c);
+                                *o = jd_idct1(c->dcpred * s->qt[c->tq][0]);
+                            } else {
+                                jd_block(&bits, s, c, blk);
+                                if (s->bs == 8)      jd_idct(blk, o, c->pw);
+                                else if (s->bs == 4) jd_idct4(blk, o, c->pw);
+                                else                 jd_idct2(blk, o, c->pw);
+                            }
                         }
                     }
             }
         }
 
-        /* This MCU row is complete: upsample, convert, hand it over. */
-        rows = s->mcuh;
-        if (my * s->mcuh + rows > s->oh) rows = s->oh - my * s->mcuh;
+        if (want_row) {
+            /* This MCU row is complete: upsample, convert, hand over the rows that were asked for. */
+            int xo = x0 - mx_lo * s->mcuw;                           /* first wanted sample, counted in the planes */
+            ya = y0 - my * s->mcuh; if (ya < 0) ya = 0;
+            yb = y0 + wh - my * s->mcuh; if (yb > s->mcuh) yb = s->mcuh;
 
-        for (y = 0; y < rows; y++) {
-            uint8_t *orow = rgb + (size_t)y * s->ow * 3;
-            if (s->ncomp == 1) {
-                const uint8_t *yy = s->c[0].plane + (size_t)y * s->c[0].pw;
-                int x;
-                for (x = 0; x < s->ow; x++) {
-                    orow[x * 3] = orow[x * 3 + 1] = orow[x * 3 + 2] = yy[x];
-                }
-            } else {
-                const jd_comp *Y = &s->c[0], *Cb = &s->c[1], *Cr = &s->c[2];
-                const uint8_t *yy = Y->plane + (size_t)y * Y->pw;
-                const uint8_t *bb = Cb->plane +
-                    (size_t)(y * Cb->vs / s->vmax) * Cb->pw;
-                const uint8_t *rr = Cr->plane +
-                    (size_t)(y * Cr->vs / s->vmax) * Cr->pw;
-                int x;
-                for (x = 0; x < s->ow; x++) {
-                    int xb = x * Cb->hs / s->hmax;
-                    int xr = x * Cr->hs / s->hmax;
-                    int Yv  = yy[x] << 16;
-                    int Cbv = bb[xb] - 128, Crv = rr[xr] - 128;
-                    int r = (Yv + 91881 * Crv) >> 16;
-                    int g = (Yv - 22554 * Cbv - 46802 * Crv) >> 16;
-                    int b = (Yv + 116130 * Cbv) >> 16;
-                    orow[x * 3 + 0] = (uint8_t)(r < 0 ? 0 : r > 255 ? 255 : r);
-                    orow[x * 3 + 1] = (uint8_t)(g < 0 ? 0 : g > 255 ? 255 : g);
-                    orow[x * 3 + 2] = (uint8_t)(b < 0 ? 0 : b > 255 ? 255 : b);
+            for (y = ya; y < yb; y++) {
+                uint8_t *orow = rgb + (size_t)(y - ya) * ww * 3;
+                if (s->ncomp == 1) {
+                    const uint8_t *yy = s->c[0].plane + (size_t)y * s->c[0].pw + xo;
+                    int x;
+                    for (x = 0; x < ww; x++) {
+                        orow[x * 3] = orow[x * 3 + 1] = orow[x * 3 + 2] = yy[x];
+                    }
+                } else {
+                    const jd_comp *Y = &s->c[0], *Cb = &s->c[1], *Cr = &s->c[2];
+                    const uint8_t *yy = Y->plane + (size_t)y * Y->pw + xo;
+                    const uint8_t *bb = Cb->plane +
+                        (size_t)(y * Cb->vs / s->vmax) * Cb->pw;
+                    const uint8_t *rr = Cr->plane +
+                        (size_t)(y * Cr->vs / s->vmax) * Cr->pw;
+                    int x;
+                    for (x = 0; x < ww; x++) {
+                        int xb = (xo + x) * Cb->hs / s->hmax;
+                        int xr = (xo + x) * Cr->hs / s->hmax;
+                        int Yv  = yy[x] << 16;
+                        int Cbv = bb[xb] - 128, Crv = rr[xr] - 128;
+                        int r = (Yv + 91881 * Crv) >> 16;
+                        int g = (Yv - 22554 * Cbv - 46802 * Crv) >> 16;
+                        int b = (Yv + 116130 * Cbv) >> 16;
+                        orow[x * 3 + 0] = (uint8_t)(r < 0 ? 0 : r > 255 ? 255 : r);
+                        orow[x * 3 + 1] = (uint8_t)(g < 0 ? 0 : g > 255 ? 255 : g);
+                        orow[x * 3 + 2] = (uint8_t)(b < 0 ? 0 : b > 255 ? 255 : b);
+                    }
                 }
             }
+            if (yb > ya && sink(ctx, rgb, yb - ya, ww) != 0) return SE_E_IO;
         }
-        if (sink(ctx, rgb, rows, s->ow) != 0) return SE_E_IO;
         /*
          * Checked once per MCU row rather than per read: it costs nothing
          * here, and it means a frame that lost its data stops within one row
@@ -718,7 +807,8 @@ static se_err jd_run(const uint8_t *d, size_t len,
          */
         if (bits.ioerr) return SE_E_IO;
         if (bits.trunc) return SE_E_TRUNCATED;
-        se_progress("jpeg", my * 100 / (s->mcuy ? s->mcuy : 1));
+        if (win && win->stop && win->stop(win->sctx)) return SE_E_ABORT;
+        se_progress("jpeg", my * 100 / (my_hi ? my_hi : 1));
     }
 
     if (bits.ioerr) return SE_E_IO;
@@ -726,13 +816,12 @@ static se_err jd_run(const uint8_t *d, size_t len,
     /* the delivered size, not the coded one -- see jpeg_dec.h */
     if (info) { info->width = s->ow; info->height = s->oh; info->ncomp = s->ncomp; }
     se_progress("jpeg", 100);
-    (void)jd_ycc_row;
     return SE_OK;
 }
 
 void se_jpeg_scaled_size(int w, int h, int scale, int *ow, int *oh)
 {
-    int bs = (scale == 2) ? 4 : 8;
+    int bs = (scale >= 1 && scale <= 8) ? 8 / scale : 8;
     /* round up: a 2495-wide frame still delivers its last column */
     if (ow) *ow = (w * bs + 7) / 8;
     if (oh) *oh = (h * bs + 7) / 8;
@@ -741,14 +830,14 @@ void se_jpeg_scaled_size(int w, int h, int scale, int *ow, int *oh)
 se_err se_jpeg_decode(const void *buf, size_t len, se_arena *a,
                       se_jdec_sink sink, void *ctx, se_jdec_info *info)
 {
-    return jd_run((const uint8_t *)buf, len, 0, 0, 0, 1, a, sink, ctx, info);
+    return jd_run((const uint8_t *)buf, len, 0, 0, 0, 1, 0, a, sink, ctx, info);
 }
 
 se_err se_jpeg_decode_scaled(const void *buf, size_t len, int scale,
                              se_arena *a, se_jdec_sink sink, void *ctx,
                              se_jdec_info *info)
 {
-    return jd_run((const uint8_t *)buf, len, 0, 0, 0, scale, a, sink, ctx, info);
+    return jd_run((const uint8_t *)buf, len, 0, 0, 0, scale, 0, a, sink, ctx, info);
 }
 
 se_err se_jpeg_decode_stream(const void *hdr, size_t hdrlen, uint32_t total,
@@ -766,6 +855,20 @@ se_err se_jpeg_decode_stream_scaled(const void *hdr, size_t hdrlen,
                                     se_jdec_info *info)
 {
     if (!read) return SE_E_IO;
-    return jd_run((const uint8_t *)hdr, hdrlen, read, rctx, total, scale,
+    return jd_run((const uint8_t *)hdr, hdrlen, read, rctx, total, scale, 0,
+                  a, sink, ctx, info);
+}
+
+se_err se_jpeg_decode_window(const void *hdr, size_t hdrlen, uint32_t total,
+                             se_jdec_read_fn read, void *rctx, int scale,
+                             int x0, int y0, int w, int h,
+                             se_jdec_stop_fn stop, void *sctx,
+                             se_arena *a, se_jdec_sink sink, void *ctx,
+                             se_jdec_info *info)
+{
+    jd_win win;
+    if (!read) return SE_E_IO;
+    win.x0 = x0; win.y0 = y0; win.w = w; win.h = h; win.stop = stop; win.sctx = sctx;
+    return jd_run((const uint8_t *)hdr, hdrlen, read, rctx, total, scale, &win,
                   a, sink, ctx, info);
 }

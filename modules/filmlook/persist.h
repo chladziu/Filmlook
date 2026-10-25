@@ -134,6 +134,7 @@ static void cfg_parse(int n)
           for (k = 1; k <= 5; k++) {
               char key[8];
               int v[9], f = own_film(k);
+              if (f <= 0) break;                       /* (no own presets since v0.11: the old lines are just ignored) */
               snprintf(key, sizeof(key), "own%d", k);
               { const char *q;
                 for (q = cfg_buf; *q; q++)

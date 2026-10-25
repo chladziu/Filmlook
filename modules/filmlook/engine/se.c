@@ -11,6 +11,7 @@ const char *se_strerror(se_err e)
     case SE_E_NOMEM:        return "out of arena memory";
     case SE_E_CORRUPT:      return "corrupt data";
     case SE_E_IO:           return "I/O error";
+    case SE_E_ABORT:        return "stopped";
     default:                return "unknown error";
     }
 }

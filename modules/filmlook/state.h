@@ -16,8 +16,9 @@ typedef char films_and_texts_have_the_same_languages[(FILM_LANGS == NLANG) ? 1 :
 #define TROW  (PROW + 1)                     /* row 17: tab "Ustawienia": the look of the panel (cream / night) */
 #define LROW  (TROW + 1)                     /* row 18: tab "Ustawienia": the language of the panel */
 #define AROW  (LROW + 1)                     /* row 19: tab "Ustawienia": every film back to its default settings (SET twice) */
-#define NROWS (AROW + 1)                     /* 0 tabs, 1 maker (only shown), 2 film, 3 (not used any more), 4.. sliders (see sl_def), reset row of the film;
-                                              * the rows 15..19 belong to the tab "Ustawienia" */
+#define OROW  (AROW + 1)                     /* row 20: tab "Zdjęcia": open the viewer of the finished pictures (SET) */
+#define NROWS (OROW + 1)                     /* 0 tabs, 1 maker (only shown), 2 film, 3 (not used any more), 4.. sliders (see sl_def), reset row of the film;
+                                              * the rows 15..19 belong to the tab "Ustawienia", row 20 to the tab "Zdjęcia" */
 #define VIS   3                              /* rows of the list in a window of 3 (it scrolls) */
 
 /* ------------------------------------------------------------------ state */
@@ -36,6 +37,7 @@ static int st_hal = 0;                    /* Halation 0..100: glow round bright 
 static int st_jpg = 0;                    /* JPG z efektem: 0 off, 1 half size, 2 full size */
 static int st_theme = 1;                  /* the look of the panel: 0 = cream paper, 1 = night (black) */
 static int st_set = 0;                    /* the tab "Ustawienia" (the last one) is shown: the settings that count for all films. Not saved: the panel opens on the film */
+static int st_view = 0;                   /* the tab "Zdjęcia" is shown: the viewer of the finished pictures. Not saved, too */
 static int reset_armed = 0;               /* the row "all films back to the defaults" got its first SET and waits for the second one */
 static int st_place = 0;                  /* where the JPG goes: 0 = folder FILMLOOK, 1 = replaces the camera's own JPG (when there is one), 2 = also the preview inside the RAW */
 
@@ -63,6 +65,9 @@ static int *sl_var(int j)
 #define UI_OPENING  1
 #define UI_OPEN     2
 #define UI_CLOSING  3
+#define UI_VOPENING 4                     /* the viewer of the finished pictures (tab "Zdjęcia") is being opened / is open / is closing: the panel is behind it */
+#define UI_VIEW     5
+#define UI_VCLOSING 6
 static volatile int ui_state = UI_CLOSED;
 static int row = 0;                       /* 0 type, 1 brand, 2 film, 3 push/pull, 4.. sliders */
 static int top = 0;                       /* first row of the list that is shown (index into lst[], 0..lst_n-VIS) */
@@ -90,9 +95,11 @@ static int type_films(int t) { const group_t *g = &groups[types[t].first_group +
 /* 0 = no effect, 1.. = type + 1 */
 static int cur_type(void) { return st_film > 0 ? groups[films[st_film - 1].group].type + 1 : 0; }
 
-/* the tab that is shown: the type of the film, or (the last one) "Ustawienia". The film stays chosen while the settings are open */
-#define TAB_SET (TYPE_COUNT + 1)
-static int cur_tab(void) { return st_set ? TAB_SET : cur_type(); }
+/* the tab that is shown: the type of the film, or one of the last two: "Zdjęcia" (the viewer) and "Ustawienia". The film stays chosen while they are open */
+#define TAB_VIEW (TYPE_COUNT + 1)
+#define TAB_SET  (TYPE_COUNT + 2)
+#define NTABS    (TYPE_COUNT + 3)                    /* "Bez efektu", the types, "Zdjęcia", "Ustawienia" */
+static int cur_tab(void) { return st_set ? TAB_SET : (st_view ? TAB_VIEW : cur_type()); }
 
 /* push / pull: a base film may have variants (Tri-X +1, Portra 400 -1 ...) that are not in the Film list.
  * popts[f->pfirst .. +f->np-1] are its options sorted by shift, the normal film among them */
@@ -173,16 +180,18 @@ static void sets_init(void)
     cur_slot = 0;
 }
 
-/* an own preset (type "Własny" = the last type): no effect strength, no push / pull */
+/* an own preset (the type "Własny", only when films.h has one: OWN_TYPE >= 0; since v0.11 it has not): no effect strength, no push / pull */
 static int is_own(int film)
 {
-    return film > 0 && groups[films[film - 1].group].type == TYPE_COUNT - 1;
+    return OWN_TYPE >= 0 && film > 0 && groups[films[film - 1].group].type == OWN_TYPE;
 }
 
-/* film number (1..) of own preset slot k (1..5) */
+/* film number (1..) of own preset slot k (1..5), 0 when there are no own presets */
 static int own_film(int k)
 {
-    const group_t *g = &groups[types[TYPE_COUNT - 1].first_group];
+    const group_t *g;
+    if (OWN_TYPE < 0) return 0;
+    g = &groups[types[OWN_TYPE < 0 ? 0 : OWN_TYPE].first_group];
     return 1 + g->first + clampi(k - 1, 0, g->n - 1);
 }
 
@@ -240,7 +249,7 @@ static int reset_all(void)
 }
 
 /* the rows of the list: under a film (4.. sliders, reset row of the film) those that exist for the chosen film: no effect: none;
- * own preset: no effect strength. In the tab "Ustawienia": the four rows JROW..AROW. Since v0.10 there is no push / pull row and
+ * own preset: no effect strength. In the tab "Ustawienia": the rows JROW..AROW, in the tab "Zdjęcia": OROW. Since v0.10 there is no push / pull row and
  * no halation row (halation is switched off completely: HROW), the values stay in the settings file only so that older files are
  * still read */
 #define HROW  (4 + 3)                        /* the Halacja slider (index 3 of sl_def) */
@@ -252,6 +261,11 @@ static void list_build(void)
     lst_n = 0;
     if (st_set) {
         for (r = JROW; r <= AROW; r++) lst[lst_n++] = r;
+        top = 0;
+        return;
+    }
+    if (st_view) {
+        lst[lst_n++] = OROW;
         top = 0;
         return;
     }

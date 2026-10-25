@@ -133,9 +133,9 @@ static const type_t types[] = {
     { "Kolor", 0, 3 },
     { "Czarno-biały", 3, 2 },
     { "Slajd", 5, 4 },
-    { "Własny", 9, 1 },
 };
 #define TYPE_COUNT ((int)(sizeof(types) / sizeof(types[0])))
+#define OWN_TYPE -1        /* index of the type "Własny" (own presets), -1 = there is none */
 
 static const group_t groups[] = {
     { 0, "Kodak", 0, 4 },
@@ -143,11 +143,10 @@ static const group_t groups[] = {
     { 0, "Kodak", 5, 1 },
     { 1, "Kodak", 6, 1 },
     { 1, "Ilford", 7, 3 },
-    { 2, "Fuji", 10, 1 },
-    { 2, "Kodak", 11, 1 },
-    { 2, "Fuji", 12, 1 },
-    { 2, "Kodak", 13, 1 },
-    { 3, "Własne presety", 14, 5 },
+    { 2, "Fuji", 10, 2 },
+    { 2, "Kodak", 12, 1 },
+    { 2, "Fuji", 13, 1 },
+    { 2, "Kodak", 14, 1 },
 };
 #define GROUP_COUNT ((int)(sizeof(groups) / sizeof(groups[0])))
 
@@ -265,8 +264,19 @@ static const fv_t fv_10[] = {
     {63,75}, {64,-5}, {72,13}, {73,25}, {74,50}, {75,10}, 
     {79,0}, 
 };
-/* Kodachrome 64 */
+/* Fuji Velvia 100 */
 static const fv_t fv_11[] = {
+    {0,40}, {1,-24}, {2,-40}, {3,-15}, {4,15}, {5,-23}, 
+    {6,0}, {7,0}, {10,27}, {19,10}, {20,-5}, {21,-10}, 
+    {22,-15}, {23,10}, {24,-5}, {27,12}, {28,12}, {29,8}, 
+    {30,25}, {31,-10}, {32,20}, {33,10}, {34,12}, {36,5}, 
+    {37,5}, {38,-10}, {40,-15}, {51,220}, {52,10}, {53,0}, 
+    {54,0}, {55,0}, {56,0}, {57,50}, {58,5}, {59,0}, 
+    {60,0}, {61,0}, {62,0}, {63,75}, {64,0}, {72,12}, 
+    {73,15}, {74,50}, {75,10}, {79,0}, 
+};
+/* Kodachrome 64 */
+static const fv_t fv_12[] = {
     {0,11}, {1,5}, {2,-14}, {3,22}, {4,-10}, {5,-19}, 
     {6,0}, {7,0}, {9,-5}, {10,-3}, {19,10}, {21,-5}, 
     {22,-15}, {24,-10}, {27,20}, {31,15}, {32,18}, {35,-10}, 
@@ -276,7 +286,7 @@ static const fv_t fv_11[] = {
     {75,10}, {79,0}, 
 };
 /* Fuji Astia 100F */
-static const fv_t fv_12[] = {
+static const fv_t fv_13[] = {
     {0,-2}, {1,-32}, {2,-35}, {3,16}, {4,-12}, {5,-8}, 
     {6,0}, {7,0}, {9,6}, {10,4}, {29,-5}, {30,-8}, 
     {32,-8}, {36,15}, {51,0}, {52,0}, {53,0}, {54,0}, 
@@ -285,7 +295,7 @@ static const fv_t fv_12[] = {
     {74,50}, {75,10}, {79,0}, 
 };
 /* Kodak Ektachrome 100VS */
-static const fv_t fv_13[] = {
+static const fv_t fv_14[] = {
     {0,41}, {1,0}, {2,-45}, {3,-15}, {4,15}, {5,9}, 
     {6,0}, {7,0}, {10,42}, {19,10}, {20,-5}, {21,-5}, 
     {22,-15}, {23,10}, {24,-12}, {25,10}, {26,5}, {27,8}, 
@@ -294,26 +304,6 @@ static const fv_t fv_13[] = {
     {57,195}, {58,26}, {59,0}, {60,0}, {61,0}, {62,0}, 
     {63,75}, {64,-5}, {72,15}, {73,25}, {74,50}, {75,10}, 
     {79,0}, 
-};
-/* (own look 1) */
-static const fv_t fv_14[] = {
-    {72,25}, {73,30}, {74,50}, 
-};
-/* (own look 2) */
-static const fv_t fv_15[] = {
-    {72,25}, {73,30}, {74,50}, 
-};
-/* (own look 3) */
-static const fv_t fv_16[] = {
-    {72,25}, {73,30}, {74,50}, 
-};
-/* (own look 4) */
-static const fv_t fv_17[] = {
-    {72,25}, {73,30}, {74,50}, 
-};
-/* (own look 5) */
-static const fv_t fv_18[] = {
-    {72,25}, {73,30}, {74,50}, 
 };
 
 static const film_t films[] = {     /* base films first (BASE_COUNT), then the push / pull variants */
@@ -449,11 +439,23 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
         { {0,0}, {42,28}, {128,128}, {213,230}, {255,255}, {0,0}, {0,0}, {0,0} },
         { {0,0}, {42,28}, {128,128}, {213,230}, {255,255}, {0,0}, {0,0}, {0,0} },
       }, 0, 0, 0 },
+    { 5, "Velvia 100", "Fuji Velvia 100",
+      { "Film kolorowy slajdowy", "Colour slide film", "Farbdiafilm", "Película de diapositivas en color", "Barevný diapozitivní film", "Pellicola diapositiva a colori", "Film diapositive couleur", "Színes diafilm", "Renkli slayt filmi" },
+      { "Łagodniejsza niż Velvia 50, cieplejsza", "Milder than Velvia 50, warmer", "Milder als Velvia 50, wärmer", "Más suave que la Velvia 50, más cálida", "Mírnější než Velvia 50, teplejší", "Più morbida della Velvia 50, più calda", "Plus douce que la Velvia 50, plus chaude", "Szelídebb a Velvia 50-nél, melegebb", "Velvia 50'den yumuşak, daha sıcak" }, 100,
+      0, 0, 0, 0, 0,
+      46, fv_11,
+      { 5, 5, 5, 5 },
+      {
+        { {0,0}, {42,28}, {128,128}, {213,230}, {255,255}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {42,28}, {128,128}, {213,230}, {255,255}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {42,28}, {128,128}, {213,230}, {255,255}, {0,0}, {0,0}, {0,0} },
+        { {0,0}, {42,28}, {128,128}, {213,230}, {255,255}, {0,0}, {0,0}, {0,0} },
+      }, 0, 0, 0 },
     { 6, "Kodachrome 64", "Kodak Kodachrome 64",
       { "Film kolorowy slajdowy", "Colour slide film", "Farbdiafilm", "Película de diapositivas en color", "Barevný diapozitivní film", "Pellicola diapositiva a colori", "Film diapositive couleur", "Színes diafilm", "Renkli slayt filmi" },
       { "Klasyczny slajd: głębokie błękity, ciepłe czerwienie", "Classic slide: deep blues, warm reds", "Klassisches Dia: tiefes Blau, warmes Rot", "Diapositiva clásica: azules profundos, rojos cálidos", "Klasický diapozitiv: hluboká modř, teplá červená", "Diapositiva classica: blu profondi, rossi caldi", "Diapositive classique : bleus profonds, rouges chauds", "Klasszikus dia: mély kékek, meleg vörösek", "Klasik slayt: derin maviler, sıcak kırmızılar" }, 64,
       0, 0, 0, 0, 0,
-      38, fv_11,
+      38, fv_12,
       { 5, 5, 5, 5 },
       {
         { {0,0}, {42,28}, {128,128}, {213,230}, {255,255}, {0,0}, {0,0}, {0,0} },
@@ -465,7 +467,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       { "Film kolorowy slajdowy", "Colour slide film", "Farbdiafilm", "Película de diapositivas en color", "Barevný diapozitivní film", "Pellicola diapositiva a colori", "Film diapositive couleur", "Színes diafilm", "Renkli slayt filmi" },
       { "Miękki, portretowy, neutralna skóra", "Soft, portrait-friendly, neutral skin", "Weich, porträtgeeignet, neutrale Haut", "Suave, de retrato, piel neutra", "Jemný, portrétní, neutrální pleť", "Morbido, da ritratto, pelle neutra", "Doux, pour le portrait, peau neutre", "Lágy, portrébarát, semleges bőrtónus", "Yumuşak, portreye uygun, nötr ten" }, 0,
       0, 0, 0, 0, 0,
-      33, fv_12,
+      33, fv_13,
       { 5, 5, 5, 5 },
       {
         { {0,0}, {42,28}, {128,128}, {213,230}, {255,255}, {0,0}, {0,0}, {0,0} },
@@ -477,7 +479,7 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
       { "Film kolorowy slajdowy", "Colour slide film", "Farbdiafilm", "Película de diapositivas en color", "Barevný diapozitivní film", "Pellicola diapositiva a colori", "Film diapositive couleur", "Színes diafilm", "Renkli slayt filmi" },
       { "Wersja Vivid: mocne czerwienie i błękity", "Vivid version: strong reds and blues", "Vivid-Version: kräftiges Rot und Blau", "Versión Vivid: rojos y azules intensos", "Verze Vivid: silné červené a modré tóny", "Versione Vivid: rossi e blu intensi", "Version Vivid : rouges et bleus intenses", "Vivid változat: erős vörösek és kékek", "Vivid sürüm: güçlü kırmızılar ve maviler" }, 100,
       0, 0, 0, 0, 0,
-      43, fv_13,
+      43, fv_14,
       { 5, 5, 5, 5 },
       {
         { {0,0}, {42,28}, {128,128}, {213,230}, {255,255}, {0,0}, {0,0}, {0,0} },
@@ -485,70 +487,10 @@ static const film_t films[] = {     /* base films first (BASE_COUNT), then the p
         { {0,0}, {42,28}, {128,128}, {213,230}, {255,255}, {0,0}, {0,0}, {0,0} },
         { {0,0}, {42,28}, {128,128}, {213,230}, {255,255}, {0,0}, {0,0}, {0,0} },
       }, 0, 0, 0 },
-    { 9, "Preset 1", "Własny preset 1",
-      { "Własny preset", "Own preset", "Eigenes Preset", "Preset propio", "Vlastní preset", "Preset personale", "Preset personnel", "Saját preset", "Özel preset" },
-      { "", "", "", "", "", "", "", "", "" }, 0,
-      0, 0, 0, 0, 0,
-      3, fv_14,
-      { 2, 2, 2, 2 },
-      {
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-      }, 0, 0, 0 },
-    { 9, "Preset 2", "Własny preset 2",
-      { "Własny preset", "Own preset", "Eigenes Preset", "Preset propio", "Vlastní preset", "Preset personale", "Preset personnel", "Saját preset", "Özel preset" },
-      { "", "", "", "", "", "", "", "", "" }, 0,
-      0, 0, 0, 0, 0,
-      3, fv_15,
-      { 2, 2, 2, 2 },
-      {
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-      }, 0, 0, 0 },
-    { 9, "Preset 3", "Własny preset 3",
-      { "Własny preset", "Own preset", "Eigenes Preset", "Preset propio", "Vlastní preset", "Preset personale", "Preset personnel", "Saját preset", "Özel preset" },
-      { "", "", "", "", "", "", "", "", "" }, 0,
-      0, 0, 0, 0, 0,
-      3, fv_16,
-      { 2, 2, 2, 2 },
-      {
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-      }, 0, 0, 0 },
-    { 9, "Preset 4", "Własny preset 4",
-      { "Własny preset", "Own preset", "Eigenes Preset", "Preset propio", "Vlastní preset", "Preset personale", "Preset personnel", "Saját preset", "Özel preset" },
-      { "", "", "", "", "", "", "", "", "" }, 0,
-      0, 0, 0, 0, 0,
-      3, fv_17,
-      { 2, 2, 2, 2 },
-      {
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-      }, 0, 0, 0 },
-    { 9, "Preset 5", "Własny preset 5",
-      { "Własny preset", "Own preset", "Eigenes Preset", "Preset propio", "Vlastní preset", "Preset personale", "Preset personnel", "Saját preset", "Özel preset" },
-      { "", "", "", "", "", "", "", "", "" }, 0,
-      0, 0, 0, 0, 0,
-      3, fv_18,
-      { 2, 2, 2, 2 },
-      {
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-        { {0,0}, {255,255}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0}, {0,0} },
-      }, 0, 0, 0 },
 };
 
 #define FILM_COUNT ((int)(sizeof(films) / sizeof(films[0])))
-#define BASE_COUNT 19
+#define BASE_COUNT 15
 
 static const popt_t popts[] = {
     { 0, "", 0 },

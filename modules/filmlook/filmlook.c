@@ -7,6 +7,8 @@
  *  that scrolls).
  *    both dials and joystick left/right = change value of the chosen row, joystick up/down = next row,
  *    SET = save, TRASH / INFO / MENU = save & close, half-shutter = close and shoot.
+ *  The tab "Zdjęcia" opens a viewer of the finished pictures of the FILMLOOK folder (dials / joystick: next picture, AE lock button: zoom in,
+ *  AF point selection button: zoom out, SET: whole picture <-> 100 %, MENU / TRASH / INFO: back to the panel).
  *  After every photo an IMG_xxxx.xmp sidecar is written (Lightroom / Camera Raw) and, when "JPG z efektem" is on,
  *  a finished JPG with the film look is developed in the background into the FILMLOOK folder of the card.
  *  RAW / JPEG files of the camera are never touched. No Canon property is written.
@@ -26,7 +28,7 @@
 #include "xmp.h"
 #include "develop.h"
 
-#define VERSION "v0.10"
+#define VERSION "v0.11"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
 extern int gui_state;
@@ -210,13 +212,13 @@ static void pal_mute_all(void)
 }
 
 /* what has to be redrawn (set from the key handler, handled in the shoot task) */
-#define D_ROW(r) (1 << (r))          /* rows 0..19 */
-#define D_INFO   (1 << 20)           /* kind / description block under the film row */
-#define D_BAR    (1 << 21)           /* scroll bar of the list */
-#define D_LISTALL (1 << 22)          /* the whole list: it scrolled, or the rows / the sliders changed with the film */
-#define D_STATUS (1 << 23)           /* the JPG status at the top left */
-#define D_PROG   (1 << 24)           /* the progress line under the title */
-#define D_FULL   (1 << 25)           /* the look or the language of the panel changed: new palette / new texts, everything is drawn again */
+#define D_ROW(r) (1 << (r))          /* rows 0..20 */
+#define D_INFO   (1 << 22)           /* kind / description block under the film row */
+#define D_BAR    (1 << 23)           /* scroll bar of the list */
+#define D_LISTALL (1 << 24)          /* the whole list: it scrolled, or the rows / the sliders changed with the film */
+#define D_STATUS (1 << 25)           /* the JPG status at the top left */
+#define D_PROG   (1 << 26)           /* the progress line under the title */
+#define D_FULL   (1 << 27)           /* the look or the language of the panel changed: new palette / new texts, everything is drawn again */
 static volatile int dirty = 0;
 static int msg_id = S_MSG_SAVED;     /* the text (i18n.h) that the next save shows in the hint line */
 static int dev_pending(void);
@@ -360,7 +362,7 @@ static void do_open(void)
 {
     int i, t_mode = 0, t0 = get_ms_clock();
     kill_ml_overlay();
-    st_set = 0;                                         /* the panel always opens on the film, never on the settings */
+    st_set = 0; st_view = 0;                            /* the panel always opens on the film, never on the settings or the photos */
     row = (st_film > 0) ? 2 : 0;                        /* start on the film row when a film is chosen */
     top = 0;
     list_build();
@@ -402,8 +404,427 @@ static void do_open(void)
     flog("screen opened, film", st_film);
 }
 
+/* ------------------------------------------------------------------ the viewer of the finished pictures (tab "Zdjęcia")
+ * viewer.h does the thinking (the list, the zoom levels, the decoding of a part of a picture, the palette picture); this part moves
+ * the bytes and the keys. The finished JPGs are in FILMLOOK/ of the card (a copy stays there also when the camera's own JPG is replaced).
+ * The picture goes into the same 8-bit layer as the panel: 231 palette entries for the picture (1 .. 231), the panel keeps 232 and up.
+ * It is made in RAM and put on the screen in one piece. The decoding runs in the shoot task and stops at once (vw_stop) when a key
+ * asks for something else. */
+#include "viewer.h"
+
+#ifndef IS_ERROR
+#define IS_ERROR(p) (1 & (uintptr_t)(p))
+#endif
+#ifndef ATTR_DIRECTORY
+#define ATTR_DIRECTORY 0x10
+#endif
+#define VW_ARENA_BYTES (384 * 1024)
+#define VW_HDR_BYTES   (16 * 1024)
+#define VW_CHUNK       (1024 * 1024)
+#define VW_IDLE_MS     120000
+
+static char vw_root[8];                    /* "B:/" */
+static uint8_t *vw_frame;                  /* 720 x 480 palette entries: what is on the screen now */
+static uint8_t *vw_hdrbuf, *vw_arena_mem;
+static uint32_t vw_hdrlen;
+static se_arena vw_ar;
+static vw_tile vw_t;
+static vw_pic vw_p;
+static vw_lay vw_L;                        /* the layout that is on the screen */
+static int vw_shown = 0;                   /* a picture is on the screen (vw_frame, vw_L, vw_lev, vw_cx, vw_cy are valid) */
+static int vw_cur = -1;                    /* the picture that vw_p and vw_t belong to */
+static int vw_lev = 0, vw_cx = 0, vw_cy = 0;                                /* the view that is on the screen */
+static volatile int vw_want = 0, vw_wlev = 0, vw_wcx = -1, vw_wcy = 0;     /* the view the keys ask for (wcx < 0: the middle of the picture) */
+static volatile int vw_abort = 0;          /* a key asked for something else: end the decoding */
+static volatile int vw_dead = 0;           /* the picture could not be shown: nothing is tried again before the next key */
+static int vw_msg_until = 0;               /* ms clock: a note over the picture goes away then */
+static int vw_pal_t = 0;
+static int vw_work_t = 0;                  /* ms clock: when the work for the picture on the screen next began; "wczytuję…" shows only when it takes long */
+static int vw_work_msg = 0;                /* the note is up */
+static int vwf_idx = -1;                   /* the picture of the open file */
+static struct { FILE *f; uint8_t *buf; uint32_t cap, base, len, size; } vwf;
+
+/* the palette entries of the picture */
+static void vw_pal_apply(void)
+{
+    int i, opacity = (LCD_Palette[3 * COLOR_BLACK + 2] >> 24) & 0xFF;
+    if (opacity == 0) opacity = 3;                      /* fully opaque */
+    for (i = 0; i < vw_nbx; i++) {
+        int e = pal_entry(vw_prgb[i], opacity);
+        EngDrvOut(LCD_Palette[3 * (1 + i)], e);
+        EngDrvOut(LCD_Palette[3 * (1 + i) + 0x300], e);
+    }
+}
+
+static void vw_free(void)
+{
+    if (vwf.f) { FIO_CloseFile(vwf.f); vwf.f = 0; }
+    if (vwf.buf) { fio_free(vwf.buf); vwf.buf = 0; }
+    if (vw_t.rgb) { fio_free(vw_t.rgb); vw_t.rgb = 0; }
+    if (vw_frame) { free(vw_frame); vw_frame = 0; }
+    if (vw_hdrbuf) { free(vw_hdrbuf); vw_hdrbuf = 0; }
+    if (vw_arena_mem) { free(vw_arena_mem); vw_arena_mem = 0; }
+    if (vw_hist) { free(vw_hist); vw_hist = 0; }
+    if (vw_inv) { free(vw_inv); vw_inv = 0; }
+    vwf.cap = 0; vw_t.cap = 0; vw_t.ok = 0;
+    vw_nbx = 0; vwf_idx = -1; vw_cur = -1; vw_shown = 0; vw_p.nlev = 0;
+}
+
+/* the buffers: the biggest tile and file cache that fit (the card may be busy with a JPG at the same time). 1 = not enough memory */
+static int vw_alloc(void)
+{
+    uint32_t c;
+    vw_free();
+    vw_frame = (uint8_t *)malloc((size_t)VW_W * VW_H);
+    vw_hdrbuf = (uint8_t *)malloc(VW_HDR_BYTES);
+    vw_arena_mem = (uint8_t *)malloc(VW_ARENA_BYTES);
+    vw_hist = (uint32_t *)malloc(32768 * sizeof(uint32_t));
+    vw_inv = (uint8_t *)malloc(32768);
+    for (c = 3u << 20; c >= (1200u << 10) && !vw_t.rgb; c = c / 4 * 3) if ((vw_t.rgb = (uint8_t *)fio_malloc(c)) != 0) vw_t.cap = c;
+    for (c = 8u << 20; c >= (64u << 10) && !vwf.buf; c >>= 1) if ((vwf.buf = (uint8_t *)fio_malloc(c)) != 0) vwf.cap = c;
+    if (!vw_frame || !vw_hdrbuf || !vw_arena_mem || !vw_hist || !vw_inv || !vw_t.rgb || !vwf.buf) {
+        flog("viewer: no memory, tile KB", (int)(vw_t.cap >> 10));
+        vw_free();
+        return 1;
+    }
+    se_arena_init(&vw_ar, vw_arena_mem, VW_ARENA_BYTES);
+    flog("viewer: tile KB", (int)(vw_t.cap >> 10));
+    flog("viewer: file cache KB", (int)(vwf.cap >> 10));
+    return 0;
+}
+
+/* the list: the JPGs of FILMLOOK/, in the order of their numbers */
+static int vw_scan(void)
+{
+    struct fio_file *file = alloc_fio_file();
+    struct fio_dirent *dirent;
+    char path[48], busy[64];
+    int bn;
+    vw_n = 0;
+    if (!file) return 0;
+    snprintf(path, sizeof(path), "%sFILMLOOK/WRITING.TMP", vw_root);          /* the note of a JPG that is being written right now */
+    bn = read_text(path, busy, sizeof(busy) - 1);
+    busy[bn > 0 ? bn : 0] = 0;
+    snprintf(path, sizeof(path), "%sFILMLOOK/", vw_root);
+    dirent = FIO_FindFirstEx(path, file);
+    if (IS_ERROR(dirent)) { free(file); return 0; }
+    do {
+        struct file_info fi = convert_fio_file_info(file);
+        if (fi.name[0] == 0 || (fi.mode & ATTR_DIRECTORY) || fi.size < 2000) continue;
+        if (busy[0] && strstr(busy, fi.name)) continue;            /* not finished */
+        vw_list_add(fi.name, 0);
+    } while (FIO_FindNextEx(dirent, file) == 0);
+    FIO_FindClose(dirent);
+    free(file);
+    vw_list_sort();
+    return vw_n;
+}
+
+/* the file cache: a window of the open file that starts at `off` and is as long as the buffer (the whole file when it fits) */
+static int vw_fill(uint32_t off)
+{
+    uint32_t have = 0;
+    if (!vwf.f || FIO_SeekSkipFile(vwf.f, off, SEEK_SET) < 0) return 1;
+    while (have < vwf.cap) {
+        uint32_t want = vwf.cap - have;
+        int got;
+        if (want > VW_CHUNK) want = VW_CHUNK;
+        got = FIO_ReadFile(vwf.f, vwf.buf + have, want);
+        if (got <= 0) break;
+        have += (uint32_t)got;
+        if ((uint32_t)got < want) break;                /* end of the file */
+    }
+    if (have == 0) { vwf.len = 0; return 1; }
+    vwf.base = off; vwf.len = have;
+    return 0;
+}
+
+static int vw_rd(void *ctx, uint32_t off, void *dst, uint32_t n)
+{
+    uint8_t *d = (uint8_t *)dst;
+    (void)ctx;
+    while (n) {
+        uint32_t c;
+        if (off < vwf.base || off >= vwf.base + vwf.len) { if (vw_fill(off)) return 1; }
+        c = vwf.base + vwf.len - off;
+        if (c > n) c = n;
+        memcpy(d, vwf.buf + (off - vwf.base), c);
+        d += c; off += c; n -= c;
+    }
+    return 0;
+}
+
+/* asked once per row of blocks while a picture is decoded: the palette of the screen is kept alive here, and a key (or the end of the
+ * viewer) ends the decoding */
+static void vw_overlay(const char *msg, int ms);
+static void vw_late_note(void)                          /* "wczytuję…" when the work takes more than 0.4 s (a quick one changes the picture at once, without a flash in the strip) */
+{
+    if (!vw_work_msg && vw_shown && get_ms_clock() - vw_work_t > 400) { vw_work_msg = 1; vw_overlay(TR(S_VW_LOAD), 0); }
+}
+
+static int vw_stop(void *c)
+{
+    int now = get_ms_clock();
+    (void)c;
+    if (now - vw_pal_t > 400) { vw_pal_t = now; pal_apply(); vw_pal_apply(); }
+    vw_late_note();
+    return vw_abort || ui_state != UI_VIEW;
+}
+
+static int vw_open(int i)                                  /* opens the file and reads its start (or all of it). 0 = ok */
+{
+    char path[64];
+    uint32_t size = 0;
+    if (vwf.f) { FIO_CloseFile(vwf.f); vwf.f = 0; }
+    vwf_idx = -1; vwf.len = 0; vwf.base = 0;
+    snprintf(path, sizeof(path), "%sFILMLOOK/%s", vw_root, vw_list[i].name);
+    if (FIO_GetFileSize(path, &size) != 0 || size < 2000) return 1;
+    vwf.f = FIO_OpenFile(path, O_RDONLY | O_SYNC);
+    if (!vwf.f) return 1;
+    vwf.size = size;
+    if (vw_fill(0)) { FIO_CloseFile(vwf.f); vwf.f = 0; return 1; }
+    vw_hdrlen = size < VW_HDR_BYTES ? size : VW_HDR_BYTES;
+    if (vw_hdrlen > vwf.len) vw_hdrlen = vwf.len;
+    memcpy(vw_hdrbuf, vwf.buf, vw_hdrlen);
+    vwf_idx = i;
+    return 0;
+}
+
+/* picture i becomes the current one: its size is read (the tile is not made yet). 0 = ok */
+static int vw_load(int i)
+{
+    se_jdec_info ji;
+    if (vw_open(i)) return 1;
+    if (se_jpeg_dec_info(vw_hdrbuf, vw_hdrlen, &ji) != SE_OK || ji.width < 16 || ji.height < 16) {
+        FIO_CloseFile(vwf.f); vwf.f = 0; vwf_idx = -1;
+        return 1;
+    }
+    vw_pic_set(&vw_p, ji.width, ji.height);
+    vw_t.ok = 0;
+    vw_cur = i;
+    return 0;
+}
+
+/* what is in vw_frame goes to the screen: the palette of the picture first, then the pixels */
+static void vw_blit(void)
+{
+    int y;
+    BMP_LOCK
+    (
+        ui_attach();
+        for (y = 0; y < VW_H; y++) memcpy(ui_fb + y * ui_pitch, vw_frame + y * VW_W, VW_W);
+    )
+}
+
+static void vw_text_screen(const char *msg)               /* only a note on the paper: nothing to show yet, no pictures, ... */
+{
+    vw_compose_text(vw_frame, msg);
+    vw_shown = 0;
+    vw_blit();
+}
+
+/* a short note over the picture: in the lower strip, or in the badge when the picture fills the screen. ms = 0: until the next picture */
+static void vw_overlay(const char *msg, int ms)
+{
+    if (!vw_shown) { vw_text_screen(msg); return; }
+    BMP_LOCK
+    (
+        ui_attach();
+        if (vw_has_bars(&vw_L)) vw_draw_bar_b(&vw_L, msg);
+        else vw_draw_badge("", 0, 0, 0, msg);
+    )
+    vw_msg_until = ms > 0 ? get_ms_clock() + ms : 0;
+}
+
+/* the picture of the keys could not be shown: back to what is on the screen, with a note for 3 s */
+static void vw_fail(int id, int wanted_new)
+{
+    dlog_add("viewer: failed, text, wanted, shown", id, vw_want, vw_cur);
+    if (vw_shown) {
+        if (wanted_new) vw_want = vw_cur;               /* the new picture could not be opened: the old one stays (its tile is still there) */
+        else vw_dead = 1;
+        vw_wlev = vw_lev; vw_wcx = vw_cx; vw_wcy = vw_cy;
+        vw_overlay(TR(id), 3000);
+    } else {
+        vw_dead = 1;
+        vw_text_screen(TR(id));
+    }
+}
+
+static void vw_render(void)
+{
+    int want, wlev, wcx, wcy, swlev, swcx, swcy, cx, cy, tx, ty, tw, th;
+    vw_lay L;
+    vw_src src;
+    se_err rc;
+
+    vw_abort = 0;
+    vw_work_t = get_ms_clock(); vw_work_msg = 0;
+    want = vw_want; swlev = wlev = vw_wlev; swcx = wcx = vw_wcx; swcy = wcy = vw_wcy;
+    if (want < 0 || want >= vw_n) { want = vw_n - 1; vw_want = want; }
+    if (want != vw_cur) {
+        if (vw_load(want)) { flog_s("viewer: cannot read", vw_list[want].name); vw_fail(S_VW_ERR, 1); return; }
+        wcx = -1;                                         /* a new picture: its middle */
+        vw_late_note();
+    }
+    wlev = clampi(wlev, 0, vw_p.nlev - 1);
+    if (wcx < 0) { wcx = vw_p.W / 2; wcy = vw_p.H / 2; }
+    cx = wcx; cy = wcy;
+    vw_layout(&vw_p, wlev, &cx, &cy, &L);
+    if (!vw_tile_has(&vw_t, &L)) {
+        int t0, dec;
+        if (!vw_tile_plan(&L, vw_t.cap, &tx, &ty, &tw, &th)) { vw_fail(S_VW_MEM, 0); return; }
+        if (vwf_idx != vw_cur && vw_open(vw_cur)) { vw_fail(S_VW_ERR, 0); return; }
+        src.read = vw_rd; src.rctx = 0; src.size = vwf.size; src.hdr = vw_hdrbuf; src.hdrlen = vw_hdrlen; src.stop = vw_stop; src.sctx = 0;
+        t0 = get_ms_clock();
+        rc = vw_decode_tile(&src, L.d, &vw_t, tx, ty, tw, th, &vw_ar);
+        dec = get_ms_clock() - t0;
+        dlog_add("viewer: decode ms, 1/d, tile width", dec, L.d, tw);
+        if (rc == SE_E_ABORT) return;                     /* the next call starts with what the keys ask for now */
+        if (rc != SE_OK) { flog("viewer: decode error", rc); vw_fail(rc == SE_E_NOMEM ? S_VW_MEM : S_VW_ERR, 0); return; }
+    }
+    if (ui_state != UI_VIEW) return;
+    {
+        int t0 = get_ms_clock(), t1;
+        vw_compose(vw_frame, &vw_t, &vw_p, &L, wlev, vw_list[vw_cur].name, vw_cur, vw_n);
+        t1 = get_ms_clock();
+        vw_pal_apply();
+        vw_blit();
+        dlog_add("viewer: palette picture ms, to the screen ms, colours", t1 - t0, get_ms_clock() - t1, vw_nbx);
+    }
+    vw_L = L; vw_lev = wlev; vw_cx = cx; vw_cy = cy; vw_shown = 1; vw_msg_until = 0;
+    if (vw_wlev == swlev) vw_wlev = wlev;                 /* what was asked for is what is shown now (unless a key asked for more meanwhile) */
+    if (vw_wcx == swcx) vw_wcx = cx;
+    if (vw_wcy == swcy) vw_wcy = cy;
+}
+
+/* every 50 ms in the shoot task while the viewer is open */
+static void vw_step(void)
+{
+    int now = get_ms_clock();
+    if (now - vw_pal_t > 400) { vw_pal_t = now; pal_apply(); vw_pal_apply(); }
+    if (now - last_input_ms > VW_IDLE_MS) { ui_state = UI_VCLOSING; return; }
+    if (vw_msg_until && now > vw_msg_until) { vw_msg_until = 0; if (vw_shown) vw_blit(); }
+    if (vw_n == 0 || vw_dead) return;
+    if (vw_want != vw_cur || !vw_shown || !vw_t.ok || vw_wlev != vw_lev || vw_wcx != vw_cx || vw_wcy != vw_cy) vw_render();
+}
+
+static void do_vopen(void)
+{
+    const char *d = get_dcim_dir();
+    int i = 0;
+    strcpy(vw_root, "B:/");
+    if (d) {
+        for (i = 0; i < 6 && d[i] && d[i] != '/'; i++) {}
+        if (d[i] == '/') { memcpy(vw_root, d, (size_t)i + 1); vw_root[i + 1] = 0; }
+    }
+    if (vw_alloc()) {                                   /* not enough memory: the panel stays, a note in its hint line */
+        msg_until = get_ms_clock() + 3000;
+        BMP_LOCK ( ui_attach(); draw_hint(TR(S_VW_MEM)); )
+        ui_state = UI_OPEN;
+        return;
+    }
+    vw_cur = -1; vw_shown = 0; vw_dead = 0; vw_abort = 0; vw_msg_until = 0; vw_nbx = 0; vwf_idx = -1;
+    vw_pal_t = get_ms_clock();
+    last_input_ms = get_ms_clock();
+    vw_text_screen(TR(S_VW_LOAD));                      /* at once: the list of the folder may take a moment */
+    vw_scan();
+    vw_want = vw_n > 0 ? vw_n - 1 : 0;                  /* the newest picture first */
+    vw_wlev = 0; vw_wcx = -1; vw_wcy = 0;
+    vw_lev = 0; vw_cx = 0; vw_cy = 0;
+    if (vw_n == 0) vw_text_screen(TR(S_VW_NONE));
+    last_input_ms = get_ms_clock();
+    flog_s("viewer opened, folder", vw_root);
+    flog("viewer: pictures", vw_n);
+    ui_state = UI_VIEW;
+}
+
+static void do_vclose(void)                             /* back to the panel */
+{
+    vw_free();
+    dlog_add("viewer closed", 0, 0, 0);
+    strcpy(st_last, "?"); prog_shown = -1;              /* the status and the progress line are drawn again */
+    paint_all();
+    pal_apply();
+    last_input_ms = get_ms_clock();
+    ui_state = UI_OPEN;
+}
+
+/* keys: only values change here, the shoot task shows them (vw_step) */
+static void vw_nav(int dir)                             /* the previous / next picture (round the ends) */
+{
+    if (vw_n < 2) return;
+    vw_want = (vw_want + dir + vw_n) % vw_n;
+    vw_wcx = -1;
+    vw_abort = 1;
+}
+
+static void vw_zoom(int dir)
+{
+    int nv;
+    if (vw_p.nlev < 1) return;                          /* no picture yet */
+    nv = clampi(vw_wlev + dir, 0, vw_p.nlev - 1);
+    if (nv != vw_wlev) { vw_wlev = nv; vw_abort = 1; }
+}
+
+static void vw_pan(int dx, int dy)                      /* a quarter of the part that is shown */
+{
+    if (vw_wlev == 0 || vw_wcx < 0) return;
+    vw_wcx += dx * (vw_L.sw / 4) * vw_L.d;
+    vw_wcy += dy * (vw_L.sh / 4) * vw_L.d;
+    vw_abort = 1;
+}
+
+static unsigned int vw_on_key(unsigned int key)
+{
+    klog_add(key);
+    last_input_ms = get_ms_clock();
+    switch (key) {
+    case MODULE_KEY_WHEEL_DOWN:
+    case MODULE_KEY_WHEEL_RIGHT: vw_dead = 0; vw_nav(+1); break;
+    case MODULE_KEY_WHEEL_UP:
+    case MODULE_KEY_WHEEL_LEFT:  vw_dead = 0; vw_nav(-1); break;
+    case MODULE_KEY_PRESS_RIGHT: vw_dead = 0; if (vw_wlev) vw_pan(+1, 0); else vw_nav(+1); break;
+    case MODULE_KEY_PRESS_LEFT:  vw_dead = 0; if (vw_wlev) vw_pan(-1, 0); else vw_nav(-1); break;
+    case MODULE_KEY_PRESS_DOWN:  vw_dead = 0; vw_pan(0, +1); break;
+    case MODULE_KEY_PRESS_UP:    vw_dead = 0; vw_pan(0, -1); break;
+    case MODULE_KEY_PRESS_ZOOMIN: vw_dead = 0; vw_zoom(+1); break;               /* the AE lock button */
+    case MODULE_KEY_PRESS_SET:
+    case MODULE_KEY_JOY_CENTER:                                                   /* the whole picture <-> 100 % */
+        vw_dead = 0;
+        if (vw_p.nlev > 1) { vw_wlev = vw_wlev ? 0 : vw_p.nlev - 1; vw_abort = 1; }
+        break;
+    case MODULE_KEY_TRASH:
+    case MODULE_KEY_INFO:
+    case MODULE_KEY_MENU:        vw_abort = 1; ui_state = UI_VCLOSING; return 0;
+    case MODULE_KEY_PRESS_HALFSHUTTER:
+    case MODULE_KEY_PLAY:        vw_abort = 1; ui_state = UI_CLOSING; return 1;  /* the whole screen closes, the key goes on to the camera */
+    default: break;
+    }
+    return 0;
+}
+
+/* the AF point selection button (Canon: zoom out) does not come as a module key: the raw event is looked at. It has to be declared
+ * before filmlook_keypress in MODULE_CBRS, because that one swallows every key while the panel is open */
+struct fl_event { int type; int param; void *obj; int arg; };
+static unsigned int filmlook_keypress_raw(unsigned int ev)
+{
+    const struct fl_event *e = (const struct fl_event *)ev;
+    if (ui_state != UI_VIEW || !e || e->type != 0) return 1;
+    if (e->param == 0xC) {                                                        /* BGMT_PRESS_ZOOM_OUT of the 5D II */
+        klog_add(0xC);
+        last_input_ms = get_ms_clock();
+        vw_dead = 0;
+        vw_zoom(-1);
+        return 0;
+    }
+    if (e->param == 0xD || e->param == 0xB) return 0;                             /* the releases of the two zoom buttons */
+    return 1;
+}
+
 static void do_close(void)
 {
+    vw_free();                                          /* (the viewer's memory, when the screen is closed from inside the viewer) */
     dirty = 0;
     want_save = 0;
     save_state();
@@ -436,10 +857,11 @@ static int film_changed(void)
 
 static void change_value(int dir)
 {
-    if (row == 0) {                                      /* tabs: 0 = no effect, 1.. = colour / b&w / slide / own, the last one = Ustawienia */
+    if (row == 0) {                                      /* tabs: 0 = no effect, 1.. = colour / b&w / slide, then "Zdjęcia" and "Ustawienia" */
         int ct = cur_tab();
         int nt = clampi(ct + dir, 0, TAB_SET);
-        if (nt != ct && (nt == TAB_SET || ct == TAB_SET)) {   /* to / from the settings: the chosen film (an own preset) stays chosen */
+        if (nt != ct && (nt >= TAB_VIEW || ct >= TAB_VIEW)) {   /* to / from the last two tabs: the chosen film (a slide film: they follow the slides) stays chosen */
+            st_view = (nt == TAB_VIEW);
             st_set = (nt == TAB_SET);
             list_build();
             top = 0;
@@ -493,6 +915,8 @@ static void change_value(int dir)
     }
     else if (row == AROW) {                              /* the dial does nothing here: SET (twice) restores the defaults of all films */
     }
+    else if (row == OROW) {                              /* the dial does nothing here: SET opens the viewer of the pictures */
+    }
     else {                                               /* a slider */
         int j = row - 4;
         int *p = sl_var(j);
@@ -526,7 +950,7 @@ static int row_enabled(int r)
 {
     if (r == 0) return 1;
     if (r == 1) return 0;
-    if (r == 2) return st_film > 0 && !st_set;
+    if (r == 2) return st_film > 0 && !st_set && !st_view;
     return lst_pos(r) >= 0;
 }
 
@@ -558,6 +982,7 @@ static unsigned int filmlook_keypress(unsigned int key)
         }
         return 1;
     }
+    if (ui_state == UI_VIEW) return vw_on_key(key);   /* the viewer of the finished pictures */
     if (ui_state != UI_OPEN) return 0;           /* opening / closing: swallow everything */
 
     klog_add(key);
@@ -579,6 +1004,7 @@ static unsigned int filmlook_keypress(unsigned int key)
             if (reset_armed) want_reset_all = 1;
             else { reset_armed = 1; arm_t = get_ms_clock(); arm_new = 1; dirty |= D_ROW(AROW); }
         }
+        else if (row == OROW) ui_state = UI_VOPENING;                   /* the viewer of the finished pictures */
         else want_save = 1;
         break;
     case MODULE_KEY_TRASH:
@@ -596,6 +1022,9 @@ static unsigned int filmlook_shoot_task(unsigned int ctx)
 {
     if (ui_state == UI_OPENING) do_open();
     else if (ui_state == UI_CLOSING) do_close();
+    else if (ui_state == UI_VOPENING) do_vopen();
+    else if (ui_state == UI_VIEW) vw_step();
+    else if (ui_state == UI_VCLOSING) do_vclose();
     else if (ui_state == UI_OPEN) {
         static int pal_t = 0;
         int now = get_ms_clock();
@@ -1419,6 +1848,7 @@ MODULE_INFO_START()
 MODULE_INFO_END()
 
 MODULE_CBRS_START()
+    MODULE_CBR(CBR_KEYPRESS_RAW, filmlook_keypress_raw, 0)
     MODULE_CBR(CBR_KEYPRESS, filmlook_keypress, 0)
     MODULE_CBR(CBR_SHOOT_TASK, filmlook_shoot_task, 0)
     MODULE_CBR(CBR_SECONDS_CLOCK, filmlook_seconds, 0)

@@ -12,14 +12,14 @@
 #define I18N_H
 
 #define NLANG 9
-static int st_lang = 0;                   /* 0 polski, 1 English, 2 Deutsch, 3 Español, 4 Čeština, 5 Italiano, 6 Français, 7 Magyar, 8 Türkçe */
+static int st_lang = 0;                   /* 0 Polski, 1 English, 2 Deutsch, 3 Español, 4 Čeština, 5 Italiano, 6 Français, 7 Magyar, 8 Türkçe */
 
 #define I18N_LIST(X) \
     X(S_TAB_NONE, "Bez efektu", "No effect", "Kein Effekt", "Sin efecto", "Bez efektu", "Nessun effetto", "Sans effet", "Nincs hatás", "Efekt yok") \
     X(S_TAB_C41, "C-41", "C-41", "C-41", "C-41", "C-41", "C-41", "C-41", "C-41", "C-41") \
     X(S_TAB_BW, "BW", "B&W", "S/W", "B/N", "Č/B", "B/N", "N&B", "F/F", "S/B") \
     X(S_TAB_SLIDE, "Slajd", "Slide", "Dia", "Diapositiva", "Diapozitiv", "Slide", "Diapositive", "Dia", "Slayt") \
-    X(S_TAB_OWN, "Własny", "Custom", "Eigene", "Personal", "Vlastní", "Personali", "Perso", "Saját", "Özel") \
+    X(S_TAB_VIEW, "Zdjęcia", "Photos", "Fotos", "Fotos", "Fotky", "Foto", "Photos", "Fotók", "Fotoğraflar") \
     X(S_TAB_SET, "Ustawienia", "Settings", "Einstellungen", "Ajustes", "Nastavení", "Impostazioni", "Réglages", "Beállítások", "Ayarlar") \
     X(S_SL_EFFECT, "Efekt", "Effect", "Effekt", "Efecto", "Efekt", "Effetto", "Effet", "Hatás", "Etki") \
     X(S_SL_GRAIN, "Ziarno", "Grain", "Korn", "Grano", "Zrno", "Grana", "Grain", "Szemcse", "Tane") \
@@ -33,8 +33,15 @@ static int st_lang = 0;                   /* 0 polski, 1 English, 2 Deutsch, 3 E
     X(S_SL_VIG, "Winieta", "Vignette", "Vignette", "Viñeta", "Vinětace", "Vignettatura", "Vignetage", "Vignettálás", "Vinyet") \
     X(S_HINT_KEYS, "pokrętło: zmiana\tjoystick: wiersz\tSET: zapis\tkosz: zamknij", "dial: change\tjoystick: row\tSET: save\ttrash: close", "Rad: ändern\tJoystick: Zeile\tSET: speichern\tLöschtaste: schließen", "rueda: cambiar\tjoystick: fila\tSET: guardar\tpapelera: cerrar", "kolečko: změna\tjoystick: řádek\tSET: uložit\tkoš: zavřít", "ghiera: modifica\tjoystick: riga\tSET: salva\tcestino: chiudi", "molette : modifier\tjoystick : ligne\tSET : enregistrer\tcorbeille : fermer", "tárcsa: módosít\tjoystick: sor\tSET: mentés\tkuka: bezár", "kadran: değiştir\tjoystick: satır\tSET: kaydet\tçöp kutusu: kapat") \
     X(S_OFF_NOTE, "Efekt filmu wyłączony", "Film effect off", "Filmeffekt aus", "Efecto de película desactivado", "Efekt filmu je vypnutý", "Effetto pellicola disattivato", "Effet pellicule désactivé", "A filmhatás ki van kapcsolva", "Film efekti kapalı") \
-    X(S_SET_NOTE1, "Dotyczą wszystkich filmów", "They apply to all films", "Gelten für alle Filme", "Valen para todas las películas", "Platí pro všechny filmy", "Valgono per tutti i film", "Valables pour tous les films", "Minden filmre érvényesek", "Tüm filmler için geçerli") \
-    X(S_SET_NOTE2, "JPG, miejsce zapisu, wygląd i język", "JPG, save location, appearance and language", "JPG, Speicherort, Aussehen und Sprache", "JPG, ubicación, aspecto e idioma", "JPG, umístění, vzhled a jazyk", "JPG, posizione, aspetto e lingua", "JPG, emplacement, apparence et langue", "JPG, mentés helye, megjelenés és nyelv", "JPG, kayıt yeri, görünüm ve dil") \
+    X(S_VW_NOTE1, "Gotowe zdjęcia z folderu FILMLOOK", "Finished photos from the FILMLOOK folder", "Fertige Fotos aus dem Ordner FILMLOOK", "Fotos terminadas de la carpeta FILMLOOK", "Hotové fotky ze složky FILMLOOK", "Foto finite dalla cartella FILMLOOK", "Photos terminées du dossier FILMLOOK", "Kész fotók a FILMLOOK mappából", "FILMLOOK klasöründeki hazır fotoğraflar") \
+    X(S_VW_NOTE2, "Blokada AE przybliża, wybór pola AF oddala", "AE lock zooms in, AF point button zooms out", "AE-Speicherung vergrößert, AF-Feldwahl verkleinert", "Bloqueo AE amplía, selección AF reduce", "Zámek AE přibližuje, volba AF oddaluje", "Blocco AE ingrandisce, selezione AF riduce", "Mémo expo agrandit, choix collimateur réduit", "AE-rögzítés nagyít, AF-pont gomb kicsinyít", "AE kilidi yakınlaştırır, AF noktası uzaklaştırır") \
+    X(S_VW_OPEN, "Przeglądarka zdjęć", "Photo viewer", "Bildbetrachter", "Visor de fotos", "Prohlížeč fotek", "Visualizzatore foto", "Visionneuse photo", "Fotónézegető", "Fotoğraf görüntüleyici") \
+    X(S_VW_SET, "SET: otwórz", "SET: open", "SET: öffnen", "SET: abrir", "SET: otevřít", "SET: apri", "SET : ouvrir", "SET: megnyit", "SET: aç") \
+    X(S_VW_HINT, "joystick: zdjęcia\tAE / AF: zoom\tSET: 100%\tMENU: wyjście", "joystick: photos\tAE / AF: zoom\tSET: 100%\tMENU: exit", "Joystick: Fotos\tAE / AF: Zoom\tSET: 100%\tMENU: Ende", "joystick: fotos\tAE / AF: zoom\tSET: 100%\tMENU: salir", "joystick: fotky\tAE / AF: zoom\tSET: 100%\tMENU: konec", "joystick: foto\tAE / AF: zoom\tSET: 100%\tMENU: esci", "joystick : photos\tAE / AF : zoom\tSET : 100%\tMENU : quitter", "joystick: fotók\tAE / AF: zoom\tSET: 100%\tMENU: kilép", "joystick: foto\tAE / AF: zoom\tSET: 100%\tMENU: çık") \
+    X(S_VW_LOAD, "wczytuję…", "loading…", "lade…", "cargando…", "načítám…", "carico…", "chargement…", "betöltés…", "yükleniyor…") \
+    X(S_VW_NONE, "Brak zdjęć w folderze FILMLOOK", "No photos in the FILMLOOK folder", "Keine Fotos im Ordner FILMLOOK", "No hay fotos en la carpeta FILMLOOK", "Ve složce FILMLOOK nejsou fotky", "Nessuna foto nella cartella FILMLOOK", "Aucune photo dans le dossier FILMLOOK", "Nincs fotó a FILMLOOK mappában", "FILMLOOK klasöründe fotoğraf yok") \
+    X(S_VW_ERR, "nie mogę wczytać zdjęcia", "cannot load the photo", "Foto nicht lesbar", "no se puede abrir la foto", "fotku nelze načíst", "impossibile aprire la foto", "photo illisible", "a fotó nem olvasható", "fotoğraf yüklenemedi") \
+    X(S_VW_MEM, "za mało pamięci aparatu", "not enough camera memory", "zu wenig Kamera-Speicher", "poca memoria en la cámara", "málo paměti fotoaparátu", "memoria fotocamera insufficiente", "mémoire de l'appareil insuffisante", "kevés a gép memóriája", "kamera belleği yetersiz") \
     X(S_LBL_JPG, "JPG z efektem", "JPG with effect", "JPG mit Effekt", "JPG con efecto", "JPG s efektem", "JPG con effetto", "JPG avec effet", "JPG filmhatással", "Efektli JPG") \
     X(S_LBL_PLACE, "Miejsce JPG", "JPG location", "JPG-Ablage", "Ubicación JPG", "Umístění JPG", "Posizione JPG", "Emplacement JPG", "JPG helye", "JPG konumu") \
     X(S_LBL_LOOK, "Wygląd", "Appearance", "Aussehen", "Aspecto", "Vzhled", "Aspetto", "Apparence", "Megjelenés", "Görünüm") \
@@ -78,6 +85,6 @@ static const char *const i18n_t[S_COUNT][NLANG] = {
 #define TR(id) (i18n_t[(id)][st_lang])
 
 /* the names of the languages are always written in the language itself */
-static const char *const lang_names[NLANG] = { "polski", "English", "Deutsch", "Español", "Čeština", "Italiano", "Français", "Magyar", "Türkçe" };
+static const char *const lang_names[NLANG] = { "Polski", "English", "Deutsch", "Español", "Čeština", "Italiano", "Français", "Magyar", "Türkçe" };
 
 #endif

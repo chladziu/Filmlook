@@ -3,10 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define VERSION "v0.10"
+#define VERSION "v0.11"
 #include "../films.h"
 #include "../state.h"
 #include "../panel.h"
+#include "../viewer.h"
 
 static int fails = 0;
 static const char *const lname[NLANG] = { "pl", "en", "de", "es", "cs", "it", "fr", "hu", "tr" };
@@ -39,11 +40,12 @@ int main(void)
         /* the tabs: one row, all together */
         {
             int tot = 0;
-            for (i = 0; i < TYPE_COUNT + 2; i++) { check_glyphs(&sf_xsb, "xsb", tab_text(i), "tab (bold)"); check_glyphs(&sf_xs, "xs", tab_text(i), "tab"); tot += sf_width(&sf_xsb, tab_text(i)) + TAB_GAP; }
+            for (i = 0; i < NTABS; i++) { check_glyphs(&sf_xsb, "xsb", tab_text(i), "tab (bold)"); check_glyphs(&sf_xs, "xs", tab_text(i), "tab"); tot += sf_width(&sf_xsb, tab_text(i)) + TAB_GAP; }
             if (tot > W) { printf("FAIL [%s] tabs: %d px > %d px\n", lname[l], tot, W); fails++; }
         }
         /* the big heading (name of the tab Ustawienia / Bez efektu) */
         FIT(sf_big, "big", TR(S_TAB_SET), W - 100, "heading Ustawienia");
+        FIT(sf_big, "big", TR(S_TAB_VIEW), W - 100, "heading Zdjęcia");
         FIT(sf_big, "big", TR(S_TAB_NONE), W - 100, "heading Bez efektu");
         /* sliders: label left of the bar */
         for (j = 0; j < NSL; j++) if (j != 3) FIT(sf_sml, "sml", TR(S_SL_EFFECT + j), BAR_X - 12 - M_L - 6, "slider label");
@@ -83,8 +85,29 @@ int main(void)
         snprintf(tmp, sizeof tmp, TR(S_ST_QUEUE), 4);   FIT(sf_xxs, "xxs", tmp, 132, "status queue");
         snprintf(tmp, sizeof tmp, TR(S_ST_BUSY), 88, 8); FIT(sf_xxs, "xxs", tmp, 132, "status time");
         /* notes under the heading */
-        FIT(sf_xs, "xs", TR(S_SET_NOTE1), W, "settings note 1");
-        FIT(sf_xs, "xs", TR(S_SET_NOTE2), W, "settings note 2");
+        FIT(sf_xs, "xs", TR(S_VW_NOTE1), W, "viewer note 1");
+        FIT(sf_xxs, "xxs", TR(S_VW_NOTE2), W, "viewer note 2 (smaller size)");
+        if (sf_width(&sf_xs, TR(S_VW_NOTE2)) > W) printf("note [%s] viewer note 2 uses the smaller size\n", lname[l]);
+        snprintf(tmp, sizeof tmp, "%s\t%s", TR(S_VW_OPEN), TR(S_VW_SET));
+        if (sf_width(&sf_sml, TR(S_VW_OPEN)) + 30 + sf_width(&sf_sml, TR(S_VW_SET)) > M_R3 - M_L) { printf("FAIL [%s] viewer row\n", lname[l]); fails++; }
+        check_glyphs(&sf_sml, "sml", TR(S_VW_OPEN), "viewer row"); check_glyphs(&sf_sml, "sml", TR(S_VW_SET), "viewer row");
+        /* the screen of the viewer (viewer.h): the hint strip (four items, justified over the whole width: the natural width plus some air must fit),
+         * the notes in the middle, the same texts in the badge (300 px) and the name / zoom / number in the upper strip */
+        {
+            static const int notes[] = { S_VW_LOAD, S_VW_NONE, S_VW_ERR, S_VW_MEM };       /* (S_VW_NONE is never shown in the badge) */
+            int k, gaps = 0;
+            const char *h = TR(S_VW_HINT);
+            for (k = 0; h[k]; k++) if (h[k] == '\t') gaps++;
+            if (gaps != 3) { printf("FAIL [%s] viewer hint needs 3 tabs (4 items)\n", lname[l]); fails++; }
+            check_glyphs(&sf_xxs, "xxs", h, "viewer hint");
+            if (sf_width(&sf_xxs, h) + 3 * 24 > M_R3 - M_L - SF_RPAD) { printf("FAIL [%s] viewer hint %d px (+ air) > %d px: \"%s\"\n", lname[l], sf_width(&sf_xxs, h), M_R3 - M_L - SF_RPAD, h); fails++; }
+            for (k = 0; k < (int)(sizeof notes / sizeof notes[0]); k++) {
+                FIT(sf_sml, "sml", TR(notes[k]), M_R3 - M_L - SF_RPAD, "viewer note in the middle");
+                if (notes[k] != S_VW_NONE) FIT(sf_xxs, "xxs", TR(notes[k]), VW_BADGE_W - 8, "viewer note in the badge");
+            }
+        }
+        FIT(sf_xxs, "xxs", "IMG_1234.JPG   100%   1024 / 1024", VW_BADGE_W - 8, "viewer badge");
+        FIT(sf_xxs, "xxs", "IMG_1234.JPG", 260, "viewer name");
         FIT(sf_xs, "xs", TR(S_OFF_NOTE), W, "no-effect note");
         /* every film: the kind line (kind, ISO, number) and the description; the smaller size is the fall-back */
         for (i = 0; i < BASE_COUNT; i++) {
