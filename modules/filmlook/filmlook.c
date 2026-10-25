@@ -26,7 +26,7 @@
 #include "xmp.h"
 #include "develop.h"
 
-#define VERSION "v0.7"
+#define VERSION "v0.7.1"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
 extern int gui_state;
@@ -135,9 +135,34 @@ static void save_state(void)
     else flog("save_state: cannot create file", 0);
 }
 
+/* reads a small text file into dst (at most max bytes), returns the byte count or -1 when there is no file.
+ * Magic Lantern refuses (ASSERT, with a red console on the screen) to read more than 8 KB straight into a normal
+ * variable, so the data goes through a buffer from fio_malloc first - the way the engine reads its JPGs. */
+static int read_text(const char *path, char *dst, int max)
+{
+    uint32_t size = 0;
+    uint8_t *tmp;
+    FILE *f;
+    int n = 0;
+    if (FIO_GetFileSize(path, &size) != 0) return -1;
+    if (size > (uint32_t)max) size = (uint32_t)max;
+    if (size == 0) return 0;
+    tmp = (uint8_t *)fio_malloc(size);
+    if (!tmp) return -1;
+    f = FIO_OpenFile(path, O_RDONLY | O_SYNC);
+    if (f) {
+        n = FIO_ReadFile(f, tmp, size);
+        FIO_CloseFile(f);
+        if (n > (int)size) n = (int)size;
+        if (n > 0) memcpy(dst, tmp, (size_t)n);
+    } else n = -1;
+    fio_free(tmp);
+    return n;
+}
+
 static void load_state(void)
 {
-    int n = read_file(SETTINGS_PATH, cfg_buf, sizeof(cfg_buf) - 1);
+    int n = read_text(SETTINGS_PATH, cfg_buf, sizeof(cfg_buf) - 1);
     cfg_parse(n);
 }
 
@@ -713,14 +738,19 @@ static int dev_write(void *ctx, const uint8_t *d, size_t n)
 static int jpg_complete(const char *path)
 {
     uint32_t size = 0;
-    uint8_t t[2] = { 0, 0 };
+    uint8_t *t;
     FILE *f;
     int ok = 0;
     if (FIO_GetFileSize(path, &size) != 0 || size < 2000) return 0;
+    t = (uint8_t *)fio_malloc(16);                       /* not a stack variable: see read_text */
+    if (!t) return 0;
     f = FIO_OpenFile(path, O_RDONLY | O_SYNC);
-    if (!f) return 0;
-    if (FIO_SeekSkipFile(f, size - 2, SEEK_SET) >= 0 && FIO_ReadFile(f, t, 2) == 2 && t[0] == 0xFF && t[1] == 0xD9) ok = 1;
-    FIO_CloseFile(f);
+    if (f) {
+        t[0] = t[1] = 0;
+        if (FIO_SeekSkipFile(f, size - 2, SEEK_SET) >= 0 && FIO_ReadFile(f, t, 2) == 2 && t[0] == 0xFF && t[1] == 0xD9) ok = 1;
+        FIO_CloseFile(f);
+    }
+    fio_free(t);
     return ok;
 }
 
@@ -728,7 +758,7 @@ static int jpg_complete(const char *path)
 static void dev_recover(void)
 {
     static char buf[80];
-    int n = read_file(MARK_NAME, buf, sizeof(buf) - 1);
+    int n = read_text(MARK_NAME, buf, sizeof(buf) - 1);
     if (n < 0) return;                                   /* no note: nothing was interrupted */
     buf[n > 0 ? n : 0] = 0;
     if (n > 0 && !jpg_complete(buf)) { FIO_RemoveFile(buf); flog_s("JPG: removed an unfinished file", buf); }
