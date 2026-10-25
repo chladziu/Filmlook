@@ -10,7 +10,7 @@
 #define JROW  (4 + NSL)                      /* row 14: JPG with the effect (off / half size / full size) */
 #define PROW  (JROW + 1)                     /* row 15: where the JPG goes (folder FILMLOOK / instead of the camera's JPG) */
 #define RROW  (PROW + 1)                     /* row 16: back to the default settings of this film */
-#define NROWS (RROW + 1)                     /* 0 type, 1 brand, 2 film, 3 push/pull, 4.. sliders (see sl_def), JPG row, place row, reset row */
+#define NROWS (RROW + 1)                     /* 0 type, 1 maker (only shown), 2 film, 3 push/pull, 4.. sliders (see sl_def), JPG row, place row, reset row */
 #define VIS   5                              /* rows 3..15 scroll in a window of 5 */
 
 /* ------------------------------------------------------------------ state */
@@ -72,6 +72,10 @@ static void memo_init(void)
     for (i = 0; i < TYPE_COUNT; i++) memo_group[i] = 0;
     for (i = 0; i < GROUP_COUNT; i++) memo_film[i] = 0;
 }
+
+/* the films of a type are one run in films[] (the brands of the type follow each other) */
+static int type_first(int t) { return groups[types[t].first_group].first; }
+static int type_films(int t) { const group_t *g = &groups[types[t].first_group + types[t].ngroups - 1]; return g->first + g->n - type_first(t); }
 
 /* 0 = no effect, 1.. = type + 1 */
 static int cur_type(void) { return st_film > 0 ? groups[films[st_film - 1].group].type + 1 : 0; }

@@ -1,7 +1,7 @@
 /*
  * filmlook.c - film look simulation for Canon EOS 5D Mark II (Magic Lantern module)
  *
- *  TRASH opens ONE full-screen panel: type (colour / black & white / slide) -> brand -> film + settings
+ *  TRASH opens ONE full-screen panel: type (colour / black & white / slide) -> film + settings (the maker is shown above the film name)
  *  (Push/Pull slider when the film has push / pull variants, effect strength, grain, contrast and the "own look"
  *  sliders: fade, warmth, shadows, highlights, saturation, vignette, halation, and the JPG switch - a list of 4 rows
  *  that scrolls).
@@ -417,26 +417,16 @@ static void change_value(int dir)
             }
             dirty |= D_ROW(0) | D_ROW(1) | D_ROW(2) | D_INFO | film_changed() | D_LISTALL;
         }
-    } else if (row == 1) {                               /* brand inside the type */
+    } else if (row == 2) {                               /* film inside the type (the makers follow each other, row 1 only shows the maker) */
         if (st_film > 0) {
-            int g = films[st_film - 1].group;
-            int t = groups[g].type;
-            int ng = types[t].first_group + clampi(g - types[t].first_group + dir, 0, types[t].ngroups - 1);
-            if (ng != g) {
-                remember();
-                st_film = 1 + groups[ng].first + clampi(memo_film[ng], 0, groups[ng].n - 1);
-                remember();
-                dirty |= D_ROW(1) | D_ROW(2) | D_INFO | film_changed();
-            }
-        }
-    } else if (row == 2) {                               /* film inside the brand */
-        if (st_film > 0) {
-            const group_t *g = &groups[films[st_film - 1].group];
-            int pos = clampi(st_film - 1 - g->first + dir, 0, g->n - 1);
-            if (1 + g->first + pos != st_film) {
-                st_film = 1 + g->first + pos;
+            int t = groups[films[st_film - 1].group].type;
+            int nf = 1 + clampi(st_film - 1 + dir, type_first(t), type_first(t) + type_films(t) - 1);
+            if (nf != st_film) {
+                int g0 = films[st_film - 1].group;
+                st_film = nf;
                 remember();
                 dirty |= D_ROW(2) | D_INFO | film_changed();
+                if (films[nf - 1].group != g0) dirty |= D_ROW(1);
             }
         }
     } else if (row == 3) {                               /* push / pull: next / previous notch */
@@ -483,12 +473,13 @@ static void set_row(int r)
     }
 }
 
-/* rows that can not be changed right now are skipped: brand / film without a film, the rows of the list that the
+/* rows that can not be changed right now are skipped: the maker row (it only shows), the film without a film, the rows of the list that the
  * chosen film does not have (nothing at all without a film), push-pull for a film without variants */
 static int row_enabled(int r)
 {
     if (r == 0) return 1;
-    if (r == 1 || r == 2) return st_film > 0;
+    if (r == 1) return 0;
+    if (r == 2) return st_film > 0;
     if (lst_pos(r) < 0) return 0;
     if (r == 3) return n_opts() > 1;
     return 1;

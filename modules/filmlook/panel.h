@@ -6,7 +6,7 @@
  *   title (heavy retro serif)                                          version
  *   ---------------------------------------------------------------------
  *   type tabs: Bez efektu | C-41 | BW | Slajd | Własny      (spread over the full width)
- *   Marka                                                  ‹ Kodak ›
+ *   brand (small, only shown: the choice is made among the films of the type)
  *   ‹                       FILM NAME (large)                       ›
  *   kind of film · ISO                                             3 / 34
  *   description (justified)
@@ -153,7 +153,8 @@ static void draw_tabs(void)
     }
 }
 
-/* row 1: brand ("Marka  ‹ Kodak ›", centred, the chosen brand bold),
+/* row 1: the maker of the film (small, centred; it is only shown, it can not be chosen: the dial runs through all the films
+ *        of the type),
  * row 2: the film name, large, the arrows right next to it */
 static void draw_sel(int r)
 {
@@ -161,16 +162,7 @@ static void draw_sel(int r)
     int off = (st_film == 0);
 
     if (r == 1) {
-        sf_run run[3];
-        const char *val = off ? "-" : groups[films[st_film - 1].group].brand;
-        char tmp[64];
-        int c = off ? PC_DIM : (on ? PC_ACCENT : PC_TEXT);
-        draw_mark(on, Y_BRAND - 22, 28);
-        run[0].f = &sf_xs; run[0].s = "Marka     "; run[0].col = off ? PC_DIM : PC_SOFT;
-        if (off) snprintf(tmp, sizeof(tmp), "%s", val);
-        else     snprintf(tmp, sizeof(tmp), "\xE2\x80\xB9   %s   \xE2\x80\xBA", val);
-        run[1].f = off ? &sf_xs : &sf_xsb; run[1].s = tmp; run[1].col = c;
-        sf_line_runs(M_L, M_R3, Y_BRAND, 24, 7, run, 2, SF_CENTER);
+        sf_line(&sf_xs, M_L, M_R3, Y_BRAND, 24, 7, off ? " " : groups[films[st_film - 1].group].brand, PC_SOFT, SF_CENTER);
     } else {
         sf_run run[3];
         const char *name = off ? "Bez efektu" : films[st_film - 1].name;
@@ -186,19 +178,19 @@ static void draw_sel(int r)
     }
 }
 
-/* kind of film · ISO · number in the brand, then the description: both lines centred */
+/* kind of film · ISO · number among the films of the type, then the description: both lines centred */
 static void draw_info(void)
 {
     char tmp[96], num[24];
     if (st_film > 0) {
         const film_t *f = &films[st_film - 1];
-        const group_t *g = &groups[f->group];
+        const int ty = groups[f->group].type;
         const char *d = films[eff_film() - 1].desc;
         const sf_font *kf = &sf_xs, *df = &sf_xs;
         sf_run run[2];
         if (f->iso > 0) snprintf(tmp, sizeof(tmp), "%s \xC2\xB7 ISO %d", f->kind, f->iso);
         else            snprintf(tmp, sizeof(tmp), "%s", f->kind);
-        snprintf(num, sizeof(num), "   \xC2\xB7   %d / %d", st_film - g->first, g->n);
+        snprintf(num, sizeof(num), "   \xC2\xB7   %d / %d", st_film - type_first(ty), type_films(ty));
         run[0].f = kf; run[0].s = tmp; run[0].col = PC_ACCENT;
         run[1].f = kf; run[1].s = num; run[1].col = PC_SOFT;
         if (sf_runs_width(run, 2) > M_R - M_L) { kf = &sf_xxs; run[0].f = kf; run[1].f = kf; }   /* very long kinds use the smallest size */
