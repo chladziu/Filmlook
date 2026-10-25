@@ -602,9 +602,10 @@ static volatile int cover_now = -1;          /* ... and now: a different value m
 PROP_HANDLER(PROP_LAST_JOB_STATE) { cam_job = buf[0]; }
 PROP_HANDLER(PROP_CARD_COVER)
 {
-    cover_now = buf[0];
-    if (cover_base < 0) cover_base = buf[0];
-    else if (buf[0] != cover_base) dlog_add("card cover property changed to", buf[0], cover_base, 0);
+    int v = (int)buf[0];
+    cover_now = v;
+    if (cover_base < 0) cover_base = v;
+    else if (v != cover_base) dlog_add("card cover property changed to", v, cover_base, 0);
 }
 
 /* the job may go on: the camera is not shutting down and the card cover is closed */
