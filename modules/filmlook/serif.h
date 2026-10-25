@@ -265,22 +265,31 @@ static int ui_cap(int px, int py, int a, int b, int y0, int h, int rl, int rr)
 }
 
 /* Bar with rounded ends: the track x..x+w (colour track), the part fx0..fx1 filled with colour fill.
- * ra / rb: the filled part is rounded at its left / right end (not at the zero line of a two-sided bar) */
-static void ui_bar(int x, int y, int w, int h, int fx0, int fx1, int fill, int track, int ra, int rb)
+ * ra / rb: the filled part is rounded at its left / right end (not at the zero line of a two-sided bar).
+ * mark >= 0: a small marker (2 x 4 px, colour soft) above the bar at that x (the zero / normal position).
+ * The whole band of the row (y - 11 .. y + h + 8, columns xa .. xb-1) is written in this one pass: whatever stood there
+ * before (the marker or the bar of another row after the list scrolled) is replaced, nothing is wiped first. */
+static void ui_bar(int x, int y, int w, int h, int fx0, int fx1, int fill, int track, int ra, int rb, int mark, int xa, int xb, int soft)
 {
     int px, py;
+    unsigned char bg = ui_ramp[track][0];
     if (fx1 > fx0 && fx1 - fx0 < h) {                  /* a very small value is still a visible dot */
         if (rb) fx1 = fx0 + h; else fx0 = fx1 - h;
         if (fx0 < x) { fx0 = x; fx1 = x + h; }
         if (fx1 > x + w) { fx1 = x + w; fx0 = x + w - h; }
     }
-    for (py = y; py < y + h; py++) {
+    for (py = y - 11; py < y + h + 9; py++) {
         unsigned char *row = ui_fb + py * ui_pitch;
-        for (px = x - 1; px <= x + w; px++) {
-            int lt = ui_cap(px, py, x, x + w, y, h, 1, 1);
-            int lf = (fx1 > fx0) ? ui_cap(px, py, fx0, fx1, y, h, ra, rb) : 0;
-            if (lf > 0) row[px] = ui_ramp[fill][lf];
-            else        row[px] = ui_ramp[track][lt];
+        int in_bar = (py >= y && py < y + h);
+        int in_mark = (mark >= 0 && py >= y - 5 && py < y - 1);
+        for (px = xa; px < xb; px++) {
+            if (in_bar) {
+                int lt = ui_cap(px, py, x, x + w, y, h, 1, 1);
+                int lf = (fx1 > fx0) ? ui_cap(px, py, fx0, fx1, y, h, ra, rb) : 0;
+                if (lf > 0) row[px] = ui_ramp[fill][lf];
+                else        row[px] = ui_ramp[track][lt];
+            } else if (in_mark && px >= mark - 1 && px < mark + 1) row[px] = ui_ramp[soft][3];
+            else row[px] = bg;
         }
     }
 }

@@ -165,6 +165,8 @@ def pack(q):
 def build_font(name, face, chars, extra_glyphs=None):
     glyphs, bits = [], bytearray()
     asc = desc = 0
+    hb = glyph_bitmap(face, "H", face.hi("H"))
+    cap = -hb[2]                                                  # cap height in px: the arrows are centred on it
     for ch in sorted(set(chars), key=ord):
         if ch == " ":
             glyphs.append((ord(ch), int(round(face.adv(" ") * face.size * 16 / 1000)), 0, 0, 0, 0, 0, ord(ch))); continue
@@ -179,6 +181,8 @@ def build_font(name, face, chars, extra_glyphs=None):
             print("  empty %r" % ch); continue
         q, x, y = g
         h, w = q.shape
+        if ch in "‹›":                                            # the arrows of the font sit low: centre them on the capitals
+            y = int(round(-cap / 2.0 - h / 2.0))
         off = len(bits)
         bits += pack(q)
         kc = ord(POLISH.get(ch, ch))
@@ -247,9 +251,9 @@ def main(beth, titlef, idxp, out):
             kern = kerning(face, all_chars)
     # bold (selected tab, selected brand): the same size with a stroke round the letters; only the letters it needs
     bold_chars = name_chars | set("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ")
-    bface = Face(beth, 25, 0.78, 0.4, None, 3)
-    print("smlb", 25, len(bold_chars))
-    fonts.append(build_font("smlb", bface, bold_chars))
+    bface = Face(beth, 21, 0.72, 0.4, None, 3)
+    print("xsb", 21, len(bold_chars))
+    fonts.append(build_font("xsb", bface, bold_chars))
     # title: the whole text as one picture
     tface = Face(titlef, 33, 0.9, 0.0)
     hi = tface.hi("Film Look Simulation")
