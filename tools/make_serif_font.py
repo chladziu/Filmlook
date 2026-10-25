@@ -239,7 +239,7 @@ def main(beth, titlef, idxp, out):
     import string
     name_chars = set("".join(f["name"] + f["brand"] for f in idx)) | set(string.ascii_letters + string.digits + " ‹›.-+/&()'")
     all_chars = [chr(c) for c in range(0x20, 0x7F)] + list("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ·‹›–—…°×")
-    SIZES = dict(big=(56, 1.0, 0.0), mid=(46, 1.0, 0.0), med=(30, 0.85, 0.3), sml=(25, 0.78, 0.4), xs=(21, 0.72, 0.4), xxs=(18, 0.65, 0.5))
+    SIZES = dict(big=(56, 1.0, 0.0), mid=(46, 1.0, 0.0), sml=(25, 0.78, 0.4), xs=(21, 0.72, 0.4), xxs=(18, 0.65, 0.5))
     fonts = []
     kern = None
     for nm, (sz, gm, tr) in SIZES.items():

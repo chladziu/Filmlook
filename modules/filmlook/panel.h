@@ -91,7 +91,7 @@ static void draw_static(void)
 {
     int r;
     for (r = 0; r < 480; r++) memset(ui_fb + r * ui_pitch, ui_ramp[PC_BG][3], 720);
-    sf_line(&sf_title, M_L, M_L + 480, Y_TITLE, 28, 3, "\001", PC_ACCENT, SF_LEFT);
+    sf_line(&sf_title, 130, 590, Y_TITLE, 28, 3, "\001", PC_ACCENT, SF_CENTER);          /* centred on the screen (360) */
     sf_line(&sf_xxs, M_R - 90, M_R3, Y_TITLE, 17, 5, VERSION, PC_SOFT, SF_RIGHT);
     draw_rule(Y_RULE_A);
     draw_rule(Y_RULE_B);
