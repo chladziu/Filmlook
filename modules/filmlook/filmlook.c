@@ -29,120 +29,17 @@
 #define VERSION "v0.6"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
-#define NSL   10                             /* sliders: rows 4..13 */
-#define JROW  (4 + NSL)                      /* row 14: JPG with the effect (off / half size / full size) */
-#define NROWS (JROW + 1)                     /* 0 type, 1 brand, 2 film, 3 push/pull, 4.. sliders (see sl_def), JPG row */
-#define VIS   4                              /* rows 3..14 scroll in a window of 4 */
-
 extern int gui_state;
 extern int lv;
 extern int set_config_var(const char *name, int new_value);
 extern int get_config_var(const char *name);
 
-/* ------------------------------------------------------------------ state */
-static int st_film = 0;                   /* 0 = Off, 1.. = index into films[] + 1 (always a base film) */
-static int st_push = 0;                   /* push / pull of the film in stops, 0 = normal (see popts[]) */
-static int st_strength = 100;             /* 0..100 */
-static int st_grain = 100;                /* 0..200 */
-static int st_contrast = 0;               /* -50..50 */
-static int st_fade = 0;                   /* Matowość 0..100: lifted blacks */
-static int st_warm = 0;                   /* Ciepło -100..100 */
-static int st_shadow = 0;                 /* Cienie -100..100 */
-static int st_high = 0;                   /* Światła -100..100 */
-static int st_sat = 0;                    /* Nasycenie -100..100 */
-static int st_vig = 0;                    /* Winieta 0..100 */
-static int st_hal = 0;                    /* Halation 0..100: glow round bright lights (JPG only) */
-static int st_jpg = 0;                    /* JPG z efektem: 0 off, 1 half size, 2 full size */
-
-/* the sliders of the panel: rows 4 .. 13 */
-static const struct { const char *name; short lo, hi, step; unsigned char signed_; } sl_def[NSL] = {
-    { "Efekt",     0, 100, 5, 0 },  { "Ziarno",     0, 200, 5, 0 },  { "Kontrast", -50, 50, 5, 1 },
-    { "Matowość",  0, 100, 5, 0 },  { "Ciepło",  -100, 100, 5, 1 },  { "Cienie", -100, 100, 5, 1 },
-    { "Światła", -100, 100, 5, 1 }, { "Nasycenie", -100, 100, 5, 1 }, { "Winieta", 0, 100, 5, 0 },
-    { "Halation", 0, 100, 5, 0 },
-};
-
-static int *sl_var(int j)
-{
-    switch (j) {
-    case 0: return &st_strength;  case 1: return &st_grain;   case 2: return &st_contrast;
-    case 3: return &st_fade;      case 4: return &st_warm;    case 5: return &st_shadow;
-    case 6: return &st_high;      case 7: return &st_sat;     case 8: return &st_vig;
-    default: return &st_hal;
-    }
-}
+#include "state.h"
 
 static void cur_look(look_t *L)
 {
     L->strength = st_strength; L->grain = st_grain; L->contrast = st_contrast; L->fade = st_fade; L->warm = st_warm;
     L->shadow = st_shadow; L->high = st_high; L->sat = st_sat; L->vig = st_vig; L->hal = st_hal;
-}
-
-/* panel life cycle: opening and closing need the Canon GUI task to run, so they are done in the
- * shoot task (the key handler only requests them) */
-#define UI_CLOSED   0
-#define UI_OPENING  1
-#define UI_OPEN     2
-#define UI_CLOSING  3
-static volatile int ui_state = UI_CLOSED;
-static int row = 0;                       /* 0 type, 1 brand, 2 film, 3 push/pull, 4.. sliders */
-static int top = 3;                       /* first visible row of the scrolling list (3..NROWS-VIS) */
-static int last_input_ms = 0;
-
-static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
-
-/* films[] is sorted by group (= brand inside one type: tools/preset2films.py), groups[] by type.
- * memo_group / memo_film remember the last brand of every type and the last film of every brand,
- * so that switching back and forth returns to where the user was */
-static int memo_group[TYPE_COUNT];        /* relative to types[t].first_group */
-static int memo_film[GROUP_COUNT];        /* relative to groups[g].first */
-
-static void memo_init(void)
-{
-    int i;
-    for (i = 0; i < TYPE_COUNT; i++) memo_group[i] = 0;
-    for (i = 0; i < GROUP_COUNT; i++) memo_film[i] = 0;
-}
-
-/* 0 = no effect, 1.. = type + 1 */
-static int cur_type(void) { return st_film > 0 ? groups[films[st_film - 1].group].type + 1 : 0; }
-
-/* push / pull: a base film may have variants (Tri-X +1, Portra 400 -1 ...) that are not in the Film list.
- * popts[f->pfirst .. +f->np-1] are its options sorted by shift, the normal film among them */
-static int n_opts(void) { return st_film > 0 ? films[st_film - 1].np : 0; }
-
-static int cur_opt(void)                      /* index of the option that is selected now */
-{
-    const film_t *f = &films[st_film - 1];
-    int i, zero = 0;
-    for (i = 0; i < f->np; i++) {
-        if (popts[f->pfirst + i].shift == st_push) return i;
-        if (popts[f->pfirst + i].shift == 0) zero = i;
-    }
-    return zero;
-}
-
-/* index into films[] + 1 of the film that is really used: the base film or its push / pull variant */
-static int eff_film(void)
-{
-    if (st_film > 0 && n_opts() > 0) return 1 + popts[films[st_film - 1].pfirst + cur_opt()].film;
-    return st_film;
-}
-
-static void fix_push(void)
-{
-    if (st_film == 0 || n_opts() == 0) st_push = 0;
-    else st_push = popts[films[st_film - 1].pfirst + cur_opt()].shift;
-}
-
-static void remember(void)
-{
-    if (st_film > 0) {
-        int g = films[st_film - 1].group;
-        int t = groups[g].type;
-        memo_group[t] = g - types[t].first_group;
-        memo_film[g] = st_film - 1 - groups[g].first;
-    }
 }
 
 /* ------------------------------------------------------------------ log */
@@ -259,26 +156,14 @@ static void load_state(void)
     st_strength = clampi(st_strength, 0, 100);
     st_grain = clampi(st_grain, 0, 200);
     st_contrast = clampi(st_contrast, -50, 50);
-    { int j; for (j = 3; j < NSL; j++) *sl_var(j) = clampi(*sl_var(j), sl_def[j].lo, sl_def[j].hi); }
+    { int j; for (j = 0; j < NSL; j++) *sl_var(j) = clampi(*sl_var(j), sl_def[j].lo, sl_def[j].hi); }
     st_jpg = clampi(st_jpg, 0, 2);
 }
 
 /* ------------------------------------------------------------------ drawing */
-/* Colour scheme: light beige paper (#E5DECA) with dark brown text. The 256 colours of the camera's screen are fixed, so
- * five of them (PAL_BASE..PAL_BASE+4, not used by the panel otherwise) are re-programmed while the panel is open and
- * given back to Canon when it closes. */
-#define PAL_BASE 240
-#define C_BG     (PAL_BASE + 0)       /* #E5DECA  paper */
-#define C_TEXT   (PAL_BASE + 1)       /* #26211C  main text */
-#define C_ACCENT (PAL_BASE + 2)       /* #A03E18  selected row, title (rust) */
-#define C_SOFT   (PAL_BASE + 3)       /* #60584A  secondary text */
-#define C_DIM    (PAL_BASE + 4)       /* #968D78  tracks, lines, switched-off rows */
-
-/* LCD_Palette (bmp.h): 3 words per colour: register 1, register 2, current value; EngDrvOut (dryos.h) writes a register */
-
-static const unsigned char pal_rgb[5][3] = {
-    { 229, 222, 202 }, { 38, 33, 28 }, { 160, 62, 24 }, { 96, 88, 74 }, { 150, 141, 120 }
-};
+/* panel.h draws every row (serif letters, rounded bars) into the screen buffer; the 16 colours it needs are palette
+ * entries PAL_BASE.. of the camera, programmed while the panel is open and given back to Canon when it closes. */
+#include "panel.h"
 
 /* palette entry = opacity, Y, U, V (signed bytes); white is Y 235, so Y is scaled by 235/255 */
 static int pal_entry(const unsigned char *c, int opacity)
@@ -298,7 +183,7 @@ static void pal_apply(void)
     int i, opacity = (LCD_Palette[3 * COLOR_BLACK + 2] >> 24) & 0xFF;
     if (opacity == 0) opacity = 3;                      /* fully opaque */
     if (!bmp_is_on()) return;
-    for (i = 0; i < 5; i++) {
+    for (i = 0; i < PAL_COUNT; i++) {
         int e = pal_entry(pal_rgb[i], opacity);
         EngDrvOut(LCD_Palette[3 * (PAL_BASE + i)], e);
         EngDrvOut(LCD_Palette[3 * (PAL_BASE + i) + 0x300], e);
@@ -308,7 +193,7 @@ static void pal_apply(void)
 static void pal_restore(void)                           /* back to what Canon had there */
 {
     int i;
-    for (i = 0; i < 5; i++) {
+    for (i = 0; i < PAL_COUNT; i++) {
         int e = LCD_Palette[3 * (PAL_BASE + i) + 2];
         EngDrvOut(LCD_Palette[3 * (PAL_BASE + i)], e);
         EngDrvOut(LCD_Palette[3 * (PAL_BASE + i) + 0x300], e);
@@ -317,248 +202,17 @@ static void pal_restore(void)                           /* back to what Canon ha
 
 /* what has to be redrawn (set from the key handler, handled in the shoot task) */
 #define D_ROW(r) (1 << (r))          /* rows 0..14 */
-#define D_INFO   (1 << 15)           /* description block under the film row */
+#define D_INFO   (1 << 15)           /* kind / description block under the film row */
 #define D_BAR    (1 << 16)           /* scroll bar of the list */
-#define D_CLR    (1 << 17)           /* the list scrolled: wipe its area before the rows are drawn again */
+#define D_CLR    (1 << 17)           /* the list scrolled (nothing to wipe any more: every row repaints its whole area) */
 #define D_LIST   (D_ROW(3) | D_ROW(4) | D_ROW(5) | D_ROW(6) | D_ROW(7) | D_ROW(8) | D_ROW(9) | D_ROW(10) | D_ROW(11) | D_ROW(12) | D_ROW(13) | D_ROW(14) | D_BAR)
 static volatile int dirty = 0;
 
-/* ---- Polish letters. The stock ML fonts have no ą ę ł ś ź ż ć ń, so ML/FONTS/FILM23.RBF (made by
- * tools/make_polish_font.py) carries them in slots 0x80..0x91. Texts in this file are plain UTF-8 and are converted
- * when drawn. Without the font file the letters are replaced by their plain ASCII look-alikes. */
-static unsigned int pl_spec = 0;        /* upper 16 bits of the font spec of FILM23, 0 = not available */
-
-static const struct { unsigned char a, b, code, ascii; } pl_map[] = {
-    {0xC4,0x85,0x80,'a'}, {0xC4,0x87,0x81,'c'}, {0xC4,0x99,0x82,'e'}, {0xC5,0x82,0x83,'l'}, {0xC5,0x84,0x84,'n'},
-    {0xC3,0xB3,0x85,'o'}, {0xC5,0x9B,0x86,'s'}, {0xC5,0xBA,0x87,'z'}, {0xC5,0xBC,0x88,'z'},
-    {0xC4,0x84,0x89,'A'}, {0xC4,0x86,0x8A,'C'}, {0xC4,0x98,0x8B,'E'}, {0xC5,0x81,0x8C,'L'}, {0xC5,0x83,0x8D,'N'},
-    {0xC3,0x93,0x8E,'O'}, {0xC5,0x9A,0x8F,'S'}, {0xC5,0xB9,0x90,'Z'}, {0xC5,0xBB,0x91,'Z'}
-};
-
-static void pl_convert(const char *in, char *out, int cap, int polish)
+/* the drawing functions write straight into the screen buffer of the camera (call with BMP_LOCK held) */
+static void ui_attach(void)
 {
-    int o = 0;
-    const unsigned char *p = (const unsigned char *)in;
-    while (*p && o < cap - 1) {
-        if (*p < 0x80) { out[o++] = *p++; continue; }
-        {
-            int k, hit = 0;
-            for (k = 0; k < (int)(sizeof(pl_map) / sizeof(pl_map[0])); k++) {
-                if (p[0] == pl_map[k].a && p[1] == pl_map[k].b) {
-                    out[o++] = (pl_spec && polish) ? (char)pl_map[k].code : (char)pl_map[k].ascii;
-                    p += 2; hit = 1; break;
-                }
-            }
-            if (!hit) { out[o++] = '?'; p++; while ((*p & 0xC0) == 0x80) p++; }
-        }
-    }
-    out[o] = 0;
-}
-
-static void pl_load_font(void)
-{
-    uint32_t size = 0;
-    if (FIO_GetFileSize("ML/FONTS/FILM23.RBF", &size) == 0 && size > 1000) {
-        uint32_t f = font_by_name("FILM23", COLOR_WHITE, COLOR_BLACK);
-        if ((f & 0xFFFF0000) != (FONT_CANON & 0xFFFF0000)) pl_spec = f & 0xFFFF0000;
-    }
-    flog("polish font loaded", pl_spec != 0);
-}
-
-/* prints a line of text and wipes only what is left of the previous, longer text:
- * the new text is never drawn on a cleared background, so nothing blinks */
-static int put_text(int font, int fg, int x, int y, const char *s)
-{
-    char buf[112];
-    int w;
-    int polish = pl_spec && (font & 0xFFFF0000) == (FONT_MED & 0xFFFF0000);      /* only the 23 px font has the letters */
-    pl_convert(s, buf, sizeof(buf), polish);
-    if (polish) font = pl_spec;                                                  /* Polish-capable copy of the 23 px font */
-    w = bmp_printf(FONT(font, fg, C_BG), x, y, "%s", buf);
-    return w < 0 ? 0 : w;
-}
-
-static void text_line(int font, int fg, int x, int y, int maxx, int h, const char *s)
-{
-    int w = put_text(font, fg, x, y, s);
-    if (x + w < maxx) bmp_fill(C_BG, x + w, y, maxx - (x + w), h);
-}
-
-static void draw_bar(int x, int y, int w, int v, int lo, int hi, int color)
-{
-    int fw = ((v - lo) * w) / (hi - lo);
-    bmp_fill(C_BG, x - 4, y, w + 8, 8);             /* old knob above / below the track */
-    bmp_fill(C_BG, x - 4, y + 12, w + 8, 8);
-    bmp_fill(C_BG, x - 4, y + 8, 4, 4);             /* knob at the very ends sticks out beside the track */
-    bmp_fill(C_BG, x + w, y + 8, 4, 4);
-    bmp_fill(C_DIM, x, y + 8, w, 4);
-    if (lo < 0) {                                   /* bipolar: fill from the middle (the zero) to the knob */
-        int zx = ((0 - lo) * w) / (hi - lo);
-        if (fw > zx) bmp_fill(color, x + zx, y + 8, fw - zx, 4);
-        else if (fw < zx) bmp_fill(color, x + fw, y + 8, zx - fw, 4);
-    } else if (fw > 0) bmp_fill(color, x, y + 8, fw, 4);
-    bmp_fill(color, x + fw - 4, y, 8, 20);
-}
-
-/* bottom line: key help, or a short confirmation message */
-static void draw_hint(const char *msg)
-{
-    if (msg) text_line(FONT_MED, C_ACCENT, 40, 440, 700, 28, msg);
-    else     text_line(FONT_MED, C_SOFT, 40, 440, 700, 28, "pokrętło: zmiana  joystick: wiersz  SET: zapis  TRASH: zamknij");
-}
-
-static void draw_static(void)
-{
-    bmp_fill(C_BG, 0, 0, 720, 480);
-    bmp_fill(C_ACCENT, 0, 0, 720, 6);
-    bmp_printf(FONT(FONT_MED_LARGE, C_ACCENT, C_BG), 40, 20, "Film Look Simulation");
-    bmp_printf(FONT(FONT_MED, C_SOFT, C_BG), 600, 24, VERSION);
-    bmp_fill(C_DIM, 40, 66, 640, 2);
-    bmp_fill(C_DIM, 40, 252, 640, 2);
-    bmp_fill(C_DIM, 40, 424, 640, 2);
-    draw_hint(0);
-}
-
-/* row 0: the film type as a tab bar. The texts never move, only their colour and the underline change,
- * so redrawing the bar over itself does not blink */
-static void draw_tabs(void)
-{
-    int on = (row == 0);
-    int ct = cur_type();
-    int x = 122, i;
-    const int y = 78;
-
-    bmp_fill(on ? C_ACCENT : C_BG, 40, y - 2, 4, 32);
-    text_line(FONT_MED_LARGE, on ? C_ACCENT : C_TEXT, 64, y - 2, 118, 32, "Typ");
-    for (i = 0; i <= TYPE_COUNT; i++) {
-        const char *s = (i == 0) ? "Bez efektu" : types[i - 1].name;
-        int sel = (i == ct);
-        int c = sel ? (on ? C_ACCENT : C_TEXT) : C_SOFT;
-        int w = put_text(FONT_MED, c, x, y, s);
-        bmp_fill(sel ? c : C_BG, x, y + 28, w, 3);
-        x += w + 16;
-    }
-}
-
-/* rows 1 (brand) and 2 (film): label, < value >  */
-static void draw_sel(int r)
-{
-    int on = (row == r);
-    int y = (r == 1) ? 114 : 156;
-    int off = (st_film == 0);
-    int c = off ? C_DIM : (on ? C_ACCENT : C_TEXT);
-    const char *val;
-
-    if (r == 1) val = off ? "-" : groups[films[st_film - 1].group].brand;
-    else        val = off ? "-" : films[st_film - 1].name;
-
-    bmp_fill(on ? C_ACCENT : C_BG, 40, y + 4, 4, 32);
-    text_line(FONT_MED_LARGE, c, 64, y + 4, 224, 32, r == 1 ? "Marka" : "Film");
-    bmp_printf(FONT(FONT_LARGE, off ? C_DIM : (on ? C_ACCENT : C_DIM), C_BG), 230, y, "<");
-    text_line(FONT_LARGE, off ? C_DIM : C_TEXT, 262, y, 660, 40, val);
-    bmp_printf(FONT(FONT_LARGE, off ? C_DIM : (on ? C_ACCENT : C_DIM), C_BG), 668, y, ">");
-}
-
-/* kind | ISO, position in the brand, short description */
-static void draw_info(void)
-{
-    char tmp[80];
-    if (st_film > 0) {
-        const film_t *f = &films[st_film - 1];
-        const group_t *g = &groups[f->group];
-        if (f->iso > 0) snprintf(tmp, sizeof(tmp), "%s  |  ISO %d", f->kind, f->iso);
-        else            snprintf(tmp, sizeof(tmp), "%s", f->kind);
-        text_line(FONT_MED, C_ACCENT, 64, 194, 612, 28, tmp);
-        snprintf(tmp, sizeof(tmp), "%d / %d", st_film - g->first, g->n);
-        text_line(FONT_MED, C_SOFT, 620, 194, 716, 28, tmp);
-        text_line(FONT_MED, C_SOFT, 64, 222, 716, 28, films[eff_film() - 1].desc);
-    } else {
-        text_line(FONT_MED, C_ACCENT, 64, 194, 612, 28, "Efekt filmu wyłączony");
-        text_line(FONT_MED, C_SOFT, 620, 194, 716, 28, "");
-        text_line(FONT_MED, C_SOFT, 64, 222, 716, 28, "Zdjęcia zostają bez zmian, plik XMP nie powstaje");
-    }
-}
-
-/* row 3: push / pull as a slider. The scale is -2..+2 stops with "Normalnie" in the middle; a notch is drawn
- * only where the film has a variant, the knob jumps from notch to notch */
-#define PUSH_RANGE 2
-static void draw_push(void)
-{
-    int on = (row == 3);
-    int n = n_opts();
-    int y = 262 + (3 - top) * 40;
-    int c = (n > 1) ? (on ? C_ACCENT : C_TEXT) : C_DIM;
-    const int bx = 252, bw = 170;
-
-    bmp_fill(on ? C_ACCENT : C_BG, 40, y + 2, 4, 28);
-    text_line(FONT_MED, c, 64, y + 4, 240, 28, "Push/Pull");
-    bmp_fill(C_BG, bx - 4, y + 4, bw + 8, 8);
-    bmp_fill(C_BG, bx - 4, y + 16, bw + 8, 8);
-    bmp_fill(C_BG, bx - 4, y + 12, 4, 4);
-    bmp_fill(C_BG, bx + bw, y + 12, 4, 4);
-    bmp_fill(C_DIM, bx, y + 12, bw, 4);
-    if (n > 1) {
-        const film_t *f = &films[st_film - 1];
-        int i, kx = bx + ((st_push + PUSH_RANGE) * bw) / (2 * PUSH_RANGE);
-        int cx = bx + bw / 2;
-        for (i = 0; i < f->np; i++) {
-            int xx = bx + ((popts[f->pfirst + i].shift + PUSH_RANGE) * bw) / (2 * PUSH_RANGE);
-            bmp_fill(C_SOFT, xx - 1, y + 8, 2, 16);
-        }
-        if (kx > cx) bmp_fill(c, cx, y + 12, kx - cx, 4);
-        else         bmp_fill(c, kx, y + 12, cx - kx, 4);
-        bmp_fill(c, kx - 4, y + 4, 8, 20);
-        text_line(FONT_MED, c, 440, y + 4, 716, 28, popts[f->pfirst + cur_opt()].label);
-    } else {
-        text_line(FONT_MED, C_DIM, 440, y + 4, 716, 28, st_film > 0 ? "brak wariantów" : "-");
-    }
-}
-
-static void draw_slider(int r)       /* r = 4..13 */
-{
-    int j = r - 4;
-    int on = (row == r);
-    int c = on ? C_ACCENT : C_TEXT;
-    int y = 262 + (r - top) * 40;
-    int v = *sl_var(j);
-    char tmp[32];
-
-    bmp_fill(on ? C_ACCENT : C_BG, 40, y + 2, 4, 28);
-    text_line(FONT_MED, c, 64, y + 4, 240, 28, sl_def[j].name);
-    draw_bar(252, y + 4, 300, v, sl_def[j].lo, sl_def[j].hi, c);
-    if (sl_def[j].signed_) snprintf(tmp, sizeof(tmp), "%s%d", v >= 0 ? "+" : "", v);
-    else                   snprintf(tmp, sizeof(tmp), "%d %%", v);
-    text_line(FONT_MED_LARGE, c, 592, y, 700, 32, tmp);
-}
-
-/* the list of rows 3..14 scrolls in a window of VIS rows; row r is drawn only when it is visible */
-/* last row: JPG with the film look, developed in the background after every photo */
-static void draw_jpg(void)
-{
-    static const char *const opt[3] = { "wyłączony", "połowa (2808 px)", "pełny (5616 px)" };
-    int on = (row == JROW);
-    int c = on ? C_ACCENT : C_TEXT;
-    int y = 262 + (JROW - top) * 40;
-    bmp_fill(on ? C_ACCENT : C_BG, 40, y + 2, 4, 28);
-    text_line(FONT_MED, c, 64, y + 4, 240, 28, "JPG z efektem");
-    bmp_printf(FONT(FONT_MED_LARGE, on ? C_ACCENT : C_DIM, C_BG), 252, y, "<");
-    text_line(FONT_MED, st_jpg ? c : C_SOFT, 284, y + 4, 640, 28, opt[st_jpg]);
-    bmp_printf(FONT(FONT_MED_LARGE, on ? C_ACCENT : C_DIM, C_BG), 660, y, ">");
-}
-
-static void draw_slot(int r)
-{
-    if (r < top || r >= top + VIS) return;
-    if (r == 3) draw_push(); else if (r == JROW) draw_jpg(); else draw_slider(r);
-}
-
-static void draw_scrollbar(void)
-{
-    const int x = 708, y0 = 262, h = 160, th = (h * VIS) / (NROWS - 3);
-    int ty = y0 + ((top - 3) * (h - th)) / (NROWS - 3 - VIS);
-    bmp_fill(C_BG, x, y0, 6, h);
-    bmp_fill(C_DIM, x + 2, y0, 2, h);
-    bmp_fill(C_SOFT, x, ty, 6, th);
+    ui_fb = bmp_vram();
+    ui_pitch = BMPPITCH;
 }
 
 static int msg_until = 0;            /* ms clock: show the "saved" message until then */
@@ -571,21 +225,21 @@ static void redraw_dirty(void)
         want_save = 0;
         save_state();
         msg_until = get_ms_clock() + 1200;
-        BMP_LOCK ( draw_hint("Zapisano"); )
+        BMP_LOCK ( ui_attach(); draw_hint("Zapisano"); )
         flog_s("settings saved, film", st_film > 0 ? films[eff_film() - 1].full : "Off");
     } else if (msg_until && get_ms_clock() > msg_until) {
         msg_until = 0;
-        BMP_LOCK ( draw_hint(0); )
+        BMP_LOCK ( ui_attach(); draw_hint(0); )
     }
     if (!d) return;
     dirty &= ~d;
     BMP_LOCK
     (
+        ui_attach();
         if (d & D_ROW(0))  draw_tabs();
         if (d & D_ROW(1))  draw_sel(1);
         if (d & D_ROW(2))  draw_sel(2);
         if (d & D_INFO)    draw_info();
-        if (d & D_CLR)     bmp_fill(C_BG, 30, 256, 670, 166);
         { int r; for (r = 3; r < NROWS; r++) if (d & D_ROW(r)) draw_slot(r); }
         if (d & D_BAR)     draw_scrollbar();
     )
@@ -608,14 +262,10 @@ static void paint_all(void)
 {
     BMP_LOCK
     (
+        ui_attach();
         draw_static();
         dirty = 0;
-        draw_tabs();
-        draw_sel(1);
-        draw_sel(2);
-        draw_info();
-        { int r; for (r = 3; r < NROWS; r++) draw_slot(r); }
-        draw_scrollbar();
+        paint_rows();
     )
 }
 
@@ -1054,7 +704,7 @@ static unsigned int filmlook_init(void)
     load_state();
     kill_ml_overlay();
     flog_s("FILMLOOK module loaded", VERSION);
-    pl_load_font();
+    pal_build();
     flog_s("film", st_film > 0 ? films[st_film - 1].full : "Off");
     return 0;
 }
