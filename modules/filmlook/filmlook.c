@@ -20,6 +20,7 @@
 #include <bmp.h>
 #include <fileprefix.h>
 #include <config.h>
+#include <powersave.h>
 
 #include "films.h"
 #include "xmp.h"
@@ -273,8 +274,7 @@ static void load_state(void)
 #define C_SOFT   (PAL_BASE + 3)       /* #60584A  secondary text */
 #define C_DIM    (PAL_BASE + 4)       /* #968D78  tracks, lines, switched-off rows */
 
-extern int LCD_Palette[];             /* ML / Canon: 3 ints per colour: register 1, register 2, current value */
-extern void EngDrvOut(unsigned int reg, unsigned int value);
+/* LCD_Palette (bmp.h): 3 words per colour: register 1, register 2, current value; EngDrvOut (dryos.h) writes a register */
 
 static const unsigned char pal_rgb[5][3] = {
     { 229, 222, 202 }, { 38, 33, 28 }, { 160, 62, 24 }, { 96, 88, 74 }, { 150, 141, 120 }
@@ -288,8 +288,8 @@ static int pal_entry(const unsigned char *c, int opacity)
     int u = ((b - y) * 564) / 1000;
     int v = ((r - y) * 713) / 1000;
     y = (y * 235) / 255; u = (u * 235) / 255; v = (v * 235) / 255;
-    if (u < -127) u = -127; if (u > 127) u = 127;
-    if (v < -127) v = -127; if (v > 127) v = 127;
+    u = u < -127 ? -127 : (u > 127 ? 127 : u);
+    v = v < -127 ? -127 : (v > 127 ? 127 : v);
     return ((opacity & 0xFF) << 24) | ((y & 0xFF) << 16) | ((u & 0xFF) << 8) | (v & 0xFF);
 }
 
@@ -993,8 +993,10 @@ static void dev_task(void *arg)
         for (i = 0; i < DEV_Q; i++) {
             dev_job_t *j = &dev_q[i];
             if (!j->used) continue;
+            powersave_prohibit();                       /* the camera must not switch itself off in the middle of a photo */
             if (dev_run(j) == 0 || ++j->tries >= 12) j->used = 0;
             else msleep(5000);
+            powersave_permit();
         }
     }
 }
