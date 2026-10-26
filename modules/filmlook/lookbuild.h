@@ -213,9 +213,39 @@ static int lb_film_halation(const film_t *f)
     return 0;
 }
 
-/* arena: 9 KB for the per-hue tables. scale: decode scale (1, 2, 4) of the delivered frame, out_h its height.
+/* ---- grain plates (v0.13): see tools/make_grain.py ---- */
+#define FL_GP_CLASSES   6
+#define FL_GP_VARIANTS  6
+#define FL_GP_NOMINAL16 96            /* the grain "width" of a plate, 6 px, in 1/16 px */
+#ifndef GP_K
+#define GP_K 2318                     /* gp_amp per GrainAmount point (x100): sets the rms of the plate grain to that of the old lattice grain */
+#endif
+
+/* the class of plates a film takes its grain from: 0 colour negative, 1 cine negative, 2 slide, 3 B&W silver (Tri-X, HP5),
+ * 4 B&W T-grain (Delta), 5 B&W dye image (XP2) */
+static int fl_grain_class(const film_t *f)
+{
+    int type = groups[f->group].type;
+    if (type == 2) return 2;
+    if (type == 1) {
+        if (lb_has(f->full, "XP2")) return 5;
+        if (lb_has(f->full, "Delta")) return 4;
+        return 3;
+    }
+    return lb_has(f->full, "Vision3") ? 1 : 0;
+}
+
+/* how much more the grain shows in the shadows than in the highlights, 0..256 (silver halide: little; dye clouds: more) */
+static const short fl_gp_bias[FL_GP_CLASSES] = { 70, 70, 90, 30, 30, 60 };
+/* the amount of the plate grain per class, 256 = 1.0: set so that the rms of every film is the one the lattice grain had (that one came from the
+ * manufacturers' figures, tools/grain_targets.py); measured with IMG_8730 at the luma, see tools/grain_check.py */
+static const short fl_gp_gain[FL_GP_CLASSES] = { 270, 270, 310, 320, 305, 280 };
+
+/* arena: 9 KB for the per-hue tables. permille: width of the delivered frame relative to the full 5616 px, in 1/1000
+ * (1000 = full size, 500 = half size, 688 = 3861 px), out_h its height.
  * Returns 0, or -1 when the arena is too small. */
-static int fl_build_look(se_look *lk, se_arena *ar, const film_t *f, const look_t *L, int scale, int out_h)
+static int fl_build_look(se_look *lk, se_arena *ar, const film_t *f, const look_t *L, int permille, int out_h,
+                         const int8_t *plate, unsigned seed)
 {
     int val[ATTR_COUNT];
     unsigned char has[ATTR_COUNT];
@@ -303,7 +333,7 @@ static int fl_build_look(se_look *lk, se_arena *ar, const film_t *f, const look_
         /* spacing of the coarse lattice in 1/16 pixel: 1 px .. 9.3 px at full size (GrainSize 0..100), smaller when the
          * frame is delivered smaller, but never below 1.5 px (a lattice finer than the pixels is only white noise) */
         int size = lb_val(val, "GrainSize", ""), rough = lb_val(val, "GrainFrequency", "");
-        int sa = (16 + (size * 4) / 3) / (scale > 0 ? scale : 1), sb, wb;
+        int sa = ((16 + (size * 4) / 3) * (permille > 0 ? permille : 1000)) / 1000, sb, wb;
         if (sa < 24) sa = 24;
         sb = (sa * 5) / 8;                                       /* the fine layer: 0.625 of it, not below 1 px */
         if (sb < 16) sb = 16;
@@ -313,6 +343,19 @@ static int fl_build_look(se_look *lk, se_arena *ar, const film_t *f, const look_
         wb = 51 + (rough * 179) / 100;                           /* the fine layer: 0.2 .. 0.9 of the coarse one */
         lk->grain_w_a = GRAIN_K;
         lk->grain_w_b = (GRAIN_K * wb) / 256;
+        if (plate && lk->grain > 0) {                            /* the grain from a plate: same size as the lattice grain above */
+            int v, bias = fl_gp_bias[fl_grain_class(f)];
+            unsigned st = (unsigned)(((unsigned)FL_GP_NOMINAL16 * 65536u) / (unsigned)sa);
+            lk->gp = plate;
+            lk->gp_stride = st < 65536u ? 65536u : st;          /* never magnified: only skipping texels keeps the grain round */
+            lk->gp_amp = (lk->grain * GP_K / 100 * fl_gp_gain[fl_grain_class(f)]) >> 8;
+            lk->gp_seed = seed;
+            for (v = 0; v < 256; v++) {
+                int base = (v * (255 - v)) >> 6;                /* 4v(1-v): fades out in the whites and in the blacks */
+                int w = base + (base * bias * (255 - 2 * v)) / (255 * 256);
+                lk->gp_tone[v] = (uint8_t)lb_clamp(w, 0, 255);
+            }
+        }
     }
 
     /* vignette: Lightroom's PostCropVignetteAmount is negative for dark corners */
@@ -334,7 +377,7 @@ static int fl_build_look(se_look *lk, se_arena *ar, const film_t *f, const look_
     if (hal > 0) {
         lk->hal_amount = hal * 3;
         lk->hal_thresh = 180;
-        lk->hal_radius = lb_clamp(28 / (scale > 0 ? scale : 1), 1, 48);
+        lk->hal_radius = lb_clamp((28 * (permille > 0 ? permille : 1000)) / 1000, 1, 48);
         lk->hal_tint[0] = 255; lk->hal_tint[1] = 80; lk->hal_tint[2] = 36;
     }
     return 0;

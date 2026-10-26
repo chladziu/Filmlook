@@ -221,6 +221,11 @@ static int grain_layer_begin(gl_t *g, se_arena *ar, int w, unsigned inc, unsigne
 #define LUT_BYTES  ((size_t)LUT_N * LUT_N * LUT_N * 3)
 static void lut_build(uint8_t *lut, const se_look *lk);
 
+struct gp_col { uint8_t lx, c, ws, wo; int8_t nb; };     /* lx: texel in the cell, c: cell + 1, nb: the neighbour cell (-1, 0, 1), ws / wo: weights of the cell and its neighbour (256 = 1.0) */
+
+/* the most cells of a plate walk across a row: 5616 px at 4 texels per pixel is 88 */
+#define SE_GP_CELLS 112
+
 struct se_look_run {
     se_look  lk;
     int      w;
@@ -241,11 +246,39 @@ struct se_look_run {
     int     *gn;              /* grain: the noise of one row              */
     gl_t     gl[2];           /* grain: the coarse and the fine layer     */
     int      ngl;
+    struct gp_col *gp_c;      /* plate grain: per column, where it is in its cell and how it blends with the neighbour cell */
+    int      gp_ncx;          /* cells across */
+    int      gp_j;            /* cell row the hashes below are for */
+    unsigned gp_h[3][SE_GP_CELLS + 2];                     /* the random numbers of the cells of the row above, this row and the row below (index c + 1) */
+    uint16_t gp_T[256];       /* tone weight x amplitude: the grain of a texel value t is t * T[v] / 2^16 */
+    const int8_t *gp_rp[2][SE_GP_CELLS + 2];               /* this row: per cell (index c + 1) the plate row it reads; [0] the cell row of the row itself, [1] its neighbour */
+    uint8_t  gp_ox[2][SE_GP_CELLS + 2], gp_xm[2][SE_GP_CELLS + 2];  /* ... and the shift and the mirror (255 / 0) across */
 
     int     *vx2;             /* vignette: squared horizontal distance of every column, pre-shifted */
     int      vshift;          /* right shift that brings the squared distance below 65536 */
     int      vscale;          /* 255 * 65536 / (max squared distance >> vshift) */
 };
+
+/* the weights of a texel `l` of a cell of `n` texels near the border of its neighbour (SE_GP_BLEND texels each side):
+ * sin and cos of 45 degrees + 45 degrees * (distance from the border + 1/2) / SE_GP_BLEND, so that the two neighbours, which
+ * are independent grain, keep the rms of the grain across the border (ws^2 + wo^2 = 1). Inside the cell: wo = 0. */
+static void gp_blend(unsigned l, unsigned n, int8_t *nb, uint8_t *ws, uint8_t *wo)
+{
+    static const uint8_t tws[SE_GP_BLEND] = { 190, 206, 220, 231, 241, 248, 253, 255 };
+    static const uint8_t two[SE_GP_BLEND] = { 172, 152, 132, 109, 86, 62, 38, 13 };
+    unsigned d;
+    *nb = 0; *ws = 255; *wo = 0;
+    if (l < SE_GP_BLEND) { *nb = -1; d = l; }
+    else if (l >= n - SE_GP_BLEND) { *nb = 1; d = n - 1 - l; }
+    else return;
+    *ws = tws[d]; *wo = two[d];
+}
+
+/* cells across a row of `width` pixels when the plate is walked with `stride` (16.16) */
+static int gp_cells(unsigned stride, int width)
+{
+    return (int)((((unsigned)(width - 1) * stride) >> 16) / SE_GP_W) + 1;
+}
 
 /* lattice points of one grain layer in a row of `width` pixels */
 static int grain_lattice(unsigned inc, int width) { return (int)(((unsigned)(width - 1) * inc) >> 16) + 2; }
@@ -259,7 +292,8 @@ size_t se_look_bytes(const se_look *lk, int width)
 {
     size_t n;
     size_t vig = lk->vig_amount > 0 ? (size_t)width * sizeof(int) + 16 : 0;
-    if (lk->grain > 0) vig += (size_t)width * sizeof(int) + 16 + grain_layer_bytes(lk->grain_inc_a, width) +
+    if (lk->grain > 0 && lk->gp) vig += (size_t)width * sizeof(struct gp_col) + 16;
+    else if (lk->grain > 0) vig += (size_t)width * sizeof(int) + 16 + grain_layer_bytes(lk->grain_inc_a, width) +
                               (lk->grain_w_b > 0 ? grain_layer_bytes(lk->grain_inc_b, width) : 0);
     vig += LUT_BYTES + 16;                                           /* the colour table */
     if (lk->hal_amount <= 0)
@@ -347,7 +381,20 @@ se_err se_look_begin(se_look_run **out, const se_look *lk,
         r->flat = SE_NEW(ar, uint8_t, (size_t)width * 3);
         if (!r->flat) return SE_E_NOMEM;
     }
-    if (lk->grain > 0) {
+    if (lk->grain > 0 && lk->gp && lk->gp_stride >= 65536u && gp_cells(lk->gp_stride, width) <= SE_GP_CELLS) {
+        int x, v;
+        r->gp_c = SE_NEW(ar, struct gp_col, width);
+        if (!r->gp_c) return SE_E_NOMEM;
+        r->gp_ncx = gp_cells(lk->gp_stride, width);
+        r->gp_j = -1;
+        for (x = 0; x < width; x++) {
+            unsigned u = ((unsigned)x * lk->gp_stride) >> 16, lx = u % SE_GP_W;
+            struct gp_col *g = &r->gp_c[x];
+            g->lx = (uint8_t)lx; g->c = (uint8_t)(u / SE_GP_W + 1);
+            gp_blend(lx, SE_GP_W, &g->nb, &g->ws, &g->wo);
+        }
+        for (v = 0; v < 256; v++) r->gp_T[v] = (uint16_t)(((unsigned)lk->gp_amp * lk->gp_tone[v] + 8) >> 4);
+    } else if (lk->grain > 0) {
         r->gn = SE_NEW(ar, int, width);
         if (!r->gn) return SE_E_NOMEM;
         r->ngl = lk->grain_w_b > 0 ? 2 : 1;
@@ -726,6 +773,71 @@ static void grain_row(const se_look *lk, se_look_run *r, uint8_t *row, int w, in
     }
 }
 
+/* Grain from a plate. The plate is walked in its own texel space: column x is at texel u = x * stride, row y at v = y * stride.
+ * That space is cut into cells of SE_GP_W x SE_GP_H texels, and every cell reads the (cyclic) plate with a shift and a mirror of
+ * its own: the plate has no seam inside a cell, and the cells differ from each other, so the eye finds no repeating pattern.
+ * Because the plate is cyclic, a cell can also be read a little beyond its own border: that is what the blend near a border uses. */
+static void gp_cells_row(se_look_run *r, const se_look *lk, int k, int j, unsigned ly)
+{
+    int c;
+    const unsigned *h = r->gp_h[j - r->gp_j + 1];                /* the row above, the row itself or the row below */
+    for (c = 0; c < r->gp_ncx + 2; c++) {
+        unsigned yy = (h[c] & 0x200) ? (SE_GP_H - 1 - ly) : ly;
+        r->gp_ox[k][c] = (uint8_t)h[c];
+        r->gp_xm[k][c] = (h[c] & 0x100) ? 255 : 0;
+        r->gp_rp[k][c] = lk->gp + (size_t)((yy + (h[c] >> 10)) % SE_GP_H) * SE_GP_W * 3;
+    }
+}
+
+/* the grain of the texel of column g, in cell row set k, as three signed bytes (blended with the next cell across when near a border) */
+static void gp_samp(const se_look_run *r, int k, const struct gp_col *g, int *o)
+{
+    int c = g->c;
+    const int8_t *a = r->gp_rp[k][c] + (size_t)(((g->lx ^ r->gp_xm[k][c]) + r->gp_ox[k][c]) & 255) * 3;
+    if (!g->wo) { o[0] = a[0]; o[1] = a[1]; o[2] = a[2]; return; }
+    {
+        int cn = c + g->nb;
+        const int8_t *b = r->gp_rp[k][cn] + (size_t)(((g->lx ^ r->gp_xm[k][cn]) + r->gp_ox[k][cn]) & 255) * 3;
+        o[0] = (g->ws * a[0] + g->wo * b[0]) >> 8;
+        o[1] = (g->ws * a[1] + g->wo * b[1]) >> 8;
+        o[2] = (g->ws * a[2] + g->wo * b[2]) >> 8;
+    }
+}
+
+static void grain_row_plate(const se_look *lk, se_look_run *r, uint8_t *row, int w, int y)
+{
+    unsigned v = ((unsigned)y * lk->gp_stride) >> 16, ly = v % SE_GP_H;
+    int j = (int)(v / SE_GP_H), x;
+    int8_t nby = 0;
+    uint8_t wys = 255, wyo = 0;
+    const uint16_t *T = r->gp_T;
+    if (lk->gp_amp <= 0) return;
+    if (j != r->gp_j) {                                          /* a new row of cells: the random numbers of the cells of the three rows around it */
+        int k, c;
+        for (k = 0; k < 3; k++)
+            for (c = 0; c < r->gp_ncx + 2; c++) r->gp_h[k][c] = grain_hash((unsigned)(c - 1), (unsigned)(j + k - 1), lk->gp_seed);
+        r->gp_j = j;
+    }
+    gp_blend(ly, SE_GP_H, &nby, &wys, &wyo);
+    gp_cells_row(r, lk, 0, j, ly);
+    if (wyo) gp_cells_row(r, lk, 1, j + nby, ly);
+    for (x = 0; x < w; x++) {
+        int t[3];
+        uint8_t *p = row + x * 3;
+        gp_samp(r, 0, &r->gp_c[x], t);
+        if (wyo) {
+            int t2[3];
+            gp_samp(r, 1, &r->gp_c[x], t2);
+            t[0] = (wys * t[0] + wyo * t2[0]) >> 8;
+            t[1] = (wys * t[1] + wyo * t2[1]) >> 8;
+            t[2] = (wys * t[2] + wyo * t2[2]) >> 8;
+        }
+        p[0] = (uint8_t)clamp8(p[0] + ((t[0] * T[p[0]] + 32768) >> 16));
+        p[1] = (uint8_t)clamp8(p[1] + ((t[1] * T[p[1]] + 32768) >> 16));
+        p[2] = (uint8_t)clamp8(p[2] + ((t[2] * T[p[2]] + 32768) >> 16));
+    }
+}
+
 /* Darkened corners: the factor depends on the squared distance from the centre of the frame. */
 static void vignette_row(const se_look *lk, const se_look_run *r, uint8_t *row, int w, int y)
 {
@@ -749,7 +861,10 @@ static se_err emit_one(se_look_run *r, uint8_t *dst,
                        se_look_emit emit, void *ctx)
 {
     if (r->vx2) vignette_row(&r->lk, r, dst, r->w, r->y_out);
-    if (r->lk.grain > 0) grain_row(&r->lk, r, dst, r->w, r->y_out);
+    if (r->lk.grain > 0) {
+        if (r->gp_c) grain_row_plate(&r->lk, r, dst, r->w, r->y_out);
+        else grain_row(&r->lk, r, dst, r->w, r->y_out);
+    }
     r->y_out++;
     return emit(ctx, dst, r->w) == 0 ? SE_OK : SE_E_IO;
 }

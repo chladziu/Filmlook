@@ -4,7 +4,8 @@
  *
  *   film=<full name>        the chosen film ("Off" = no effect)
  *   push=<stops>            push / pull of the chosen film
- *   jpg=<0..2>              JPG with the effect: off / half / full size
+ *   mpix=<0..3>             JPG with the effect: off / 5.2 / 10 / 21 Mpix (the 5D2's own S-RAW, M-RAW and full sizes)
+ *                           (v0.12 wrote jpg=<0..2>: off / half / full; still read: 1 -> 5.2 Mpix, 2 -> 21 Mpix)
  *   mod=<film>;<10 numbers> the sliders of a film the user changed (order of sl_def); a film without this line has the
  *                           defaults. The films themselves live in the module and are never rewritten.
  * Files of the versions before 0.7 (one set of sliders for all films: strength= grain= ... and own1..own5) are still read.
@@ -19,7 +20,7 @@ static int cfg_build(void)
 {
     int i, j, n;
     if (cur_slot > 0) vals_get(&film_v[cur_slot - 1]);  /* the sliders in use go back to their film first */
-    n = snprintf(cfg_buf, sizeof(cfg_buf), "film=%s\npush=%d\njpg=%d\ntheme=%d\nlang=%d\n", st_film > 0 ? films[st_film - 1].full : "Off", st_push, st_jpg, st_theme, st_lang);
+    n = snprintf(cfg_buf, sizeof(cfg_buf), "film=%s\npush=%d\nmpix=%d\ntheme=%d\nlang=%d\n", st_film > 0 ? films[st_film - 1].full : "Off", st_push, st_jpg, st_theme, st_lang);
     for (i = 0; i < BASE_COUNT && n < (int)sizeof(cfg_buf) - 200; i++) {
         const short *v = (const short *)&film_v[i];
         int differs = 0;
@@ -99,7 +100,8 @@ static void cfg_parse(int n)
         cfg_buf[n] = 0;
         parse_film(cfg_buf);
         parse_after(cfg_buf, "push", &st_push);
-        parse_after(cfg_buf, "jpg", &st_jpg);
+        if (parse_after(cfg_buf, "jpg", &st_jpg)) st_jpg = st_jpg == 2 ? 3 : st_jpg;   /* v0.12: 0 off, 1 half, 2 full */
+        parse_after(cfg_buf, "mpix", &st_jpg);
         parse_after(cfg_buf, "theme", &st_theme);
         parse_after(cfg_buf, "lang", &st_lang);
         for (s = cfg_buf; *s; ) {                       /* "mod=<film>;<10 numbers>": the sliders of a film the user changed */
@@ -151,7 +153,7 @@ static void cfg_parse(int n)
     st_film = clampi(st_film, 0, BASE_COUNT);
     fix_push();
     remember();
-    st_jpg = clampi(st_jpg, 0, 2);
+    st_jpg = clampi(st_jpg, 0, 3);
     st_theme = clampi(st_theme, 0, 1);
     st_lang = clampi(st_lang, 0, NLANG - 1);
     cur_slot = 0;

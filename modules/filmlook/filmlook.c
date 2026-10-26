@@ -26,9 +26,13 @@
 #include "xmp.h"
 #include "develop.h"
 
-#define VERSION "v0.12"
+#define VERSION "v0.14"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
+#ifndef FL_GRAIN_PLATES
+#define FL_GRAIN_PLATES 0     /* v0.14: the old grain again (the plates stay in the engine, in tools/make_grain.py and data/); 1 = take the grain from ML/DATA/FILMLOOK.GRN */
+#endif
+#define GRAIN_PATH    "ML/DATA/FILMLOOK.GRN"       /* the grain plates, made on the PC by tools/make_grain.py */
 extern int gui_state;
 extern int lv;
 extern int gui_menu_shown(void);
@@ -475,8 +479,8 @@ static void change_value(int dir)
     }
     else if (row == RROW) {                              /* the dial does nothing here: SET restores the defaults */
     }
-    else if (row == JROW) {                              /* JPG with the effect: off / half / full size */
-        int nv = clampi(st_jpg + dir, 0, 2);
+    else if (row == JROW) {                              /* JPG with the effect: off / 5.2 / 10 / 21 Mpix */
+        int nv = clampi(st_jpg + dir, 0, 3);
         if (nv != st_jpg) { st_jpg = nv; dirty |= D_ROW(JROW); }
     }
     else if (row == TROW) {                              /* the look of the panel */
@@ -608,7 +612,7 @@ typedef struct {
     char dir[40];
     char prefix[8];
     int film;
-    int jpg;                     /* JPG z efektem at the time of the photo: 0 off, 1 half size, 2 full size */
+    int jpg;                     /* JPG z efektem at the time of the photo: 0 off, 1 5.2 Mpix, 2 10 Mpix, 3 21 Mpix */
     look_t look;
 } qitem_t;
 static qitem_t queue[QMAX];
@@ -1007,6 +1011,50 @@ static void dev_recover(void)
 
 /* the rows of the picture that the film look has finished: the progress of the line under the title (30 .. 930 of 1000;
  * before it the source is read, after it the JPG is written) */
+#if FL_GRAIN_PLATES
+/* ---- grain plates: several variants per class of film (ML/DATA/FILMLOOK.GRN), one is taken at random for every photo ----
+ * File: "FLGR", u16 version (1), u16 classes, u16 variants, u16 width (256), u16 height (128), u16 0, then class after class, variant after
+ * variant, SE_GP_BYTES each. A photo never gets the variant the last photo of the same class had. Without the file (or with a wrong one) the
+ * lattice grain of the engine is used. */
+static uint32_t gp_rng = 0x9E3779B9u;
+static unsigned char gp_last[FL_GP_CLASSES];             /* variant + 1 of the last photo of a class, 0 = none yet */
+
+/* 0 = dst holds the plate (SE_GP_BYTES), *var = its variant; otherwise there is no usable plate */
+static int grain_load(int cls, int8_t *dst, int *var)
+{
+    uint32_t size = 0;
+    uint8_t *tmp;
+    FILE *f;
+    int ok = 0;
+    if (FIO_GetFileSize(GRAIN_PATH, &size) != 0 || size < 16 + SE_GP_BYTES) return 1;
+    tmp = (uint8_t *)fio_malloc(SE_GP_BYTES);
+    if (!tmp) return 1;
+    f = FIO_OpenFile(GRAIN_PATH, O_RDONLY | O_SYNC);
+    if (f) {
+        if (FIO_ReadFile(f, tmp, 16) == 16 && tmp[0] == 'F' && tmp[1] == 'L' && tmp[2] == 'G' && tmp[3] == 'R') {
+            int ver = tmp[4] | (tmp[5] << 8), ncls = tmp[6] | (tmp[7] << 8), nv = tmp[8] | (tmp[9] << 8);
+            int pw = tmp[10] | (tmp[11] << 8), ph = tmp[12] | (tmp[13] << 8);
+            if (ver == 1 && ncls > cls && nv >= 1 && pw == SE_GP_W && ph == SE_GP_H && size >= 16u + (uint32_t)ncls * (uint32_t)nv * SE_GP_BYTES) {
+                int v;
+                gp_rng = gp_rng * 1664525u + 1013904223u + (uint32_t)get_ms_clock();
+                v = nv > 1 ? (int)((((gp_rng >> 8) & 0xFFFFu) * (uint32_t)(nv - 1)) >> 16) : 0;          /* one of the others than the last one */
+                if (nv > 1 && gp_last[cls] && v >= gp_last[cls] - 1) v++;
+                if (FIO_SeekSkipFile(f, 16 + (cls * nv + v) * (int)SE_GP_BYTES, SEEK_SET) >= 0 &&
+                    FIO_ReadFile(f, tmp, SE_GP_BYTES) == (int)SE_GP_BYTES) {
+                    memcpy(dst, tmp, SE_GP_BYTES);
+                    gp_last[cls] = (unsigned char)(v + 1);
+                    *var = v; ok = 1;
+                }
+            }
+        }
+        FIO_CloseFile(f);
+    }
+    fio_free(tmp);
+    return ok ? 0 : 1;
+}
+
+#endif
+
 static void dev_progress_cb(void *ctx, int permille)
 {
     int v = 30 + (permille * 9) / 10;
@@ -1020,9 +1068,16 @@ static int dev_run(const dev_job_t *j)
     char src[96], r[8];
     uint32_t size = 0;
     const film_t *f = &films[j->film - 1];
-    int scale = (j->mode == 2) ? 1 : 2;
-    size_t need = (j->mode == 2) ? fl_mem_needed(5616, 1) : fl_mem_needed(5616, 2);
+    static const short widths[4] = { 0, 2784, 3861, 5616 };        /* the sizes of the 5D2's own S-RAW (5.2 Mpix), M-RAW (10 Mpix) and full RAW (21 Mpix) */
+    static const char mpix[4] = { 0, 5, 10, 21 };
+    int mode = clampi(j->mode, 1, 3);
+    int twidth = widths[mode];
+    size_t need = fl_mem_needed_w(5616, twidth);
     uint8_t *mem;
+#if FL_GRAIN_PLATES
+    int8_t *plate = 0;                                   /* the grain plate of this photo, in the same block as the working memory (NULL: lattice grain) */
+    int gvar = -1;
+#endif
     fl_io io;
     fl_result res;
     int t0 = 0, t_proc = 0, ok = 0, retry = 0, i, root;
@@ -1040,13 +1095,19 @@ static int dev_run(const dev_job_t *j)
     snprintf(dio.dst, sizeof(dio.dst), "%sFILMLOOK/%s%04d.JPG", r, j->prefix, j->number);
     snprintf(dio.mark, sizeof(dio.mark), "%s%s", r, MARK_NAME);
 
+#if FL_GRAIN_PLATES
+    mem = (uint8_t *)malloc(need + SE_GP_BYTES + 16);
+    if (mem) plate = (int8_t *)(((uint32_t)(mem + need) + 15u) & ~15u);
+    else mem = (uint8_t *)malloc(need);                  /* no room for the plate: the lattice grain */
+#else
     mem = (uint8_t *)malloc(need);
+#endif
     dio.ibuf = 0; dio.icap = 0;
     dio.obuf = (uint8_t *)fio_malloc(IOBUF);
     dio.big = 0; dio.cap = 0;
     if (mem && dio.obuf) {
         uint32_t c;                                      /* room for the whole finished JPG, as much as there is */
-        for (c = (j->mode == 2) ? 12u << 20 : 4u << 20; c >= (1u << 20) && !dio.big; c >>= 1)
+        for (c = mode == 3 ? 12u << 20 : mode == 2 ? 6u << 20 : 4u << 20; c >= (1u << 20) && !dio.big; c >>= 1)
             if ((dio.big = (uint8_t *)fio_malloc(c)) != 0) dio.cap = c;
         for (c = 8u << 20; c >= IOBUF && !dio.ibuf; c >>= 1)      /* and room for the source: it is read in one go, so */
             if ((dio.ibuf = (uint8_t *)fio_malloc(c)) != 0) dio.icap = c;      /* the card is not touched while the picture is made */
@@ -1072,7 +1133,11 @@ static int dev_run(const dev_job_t *j)
         io.write = dev_write; io.wctx = 0;
         io.mem = mem; io.mem_size = need;
         io.progress = dev_progress_cb; io.pctx = 0;
-        fl_develop(&io, f, &j->look, scale, 90, &res);
+#if FL_GRAIN_PLATES
+        if (plate && grain_load(fl_grain_class(f), plate, &gvar) == 0) { io.grain_plate = plate; io.grain_seed = gp_rng; }
+#endif
+        io.clock = get_ms_clock;
+        fl_develop_w(&io, f, &j->look, twidth, 90, &res);
         t_proc = get_ms_clock() - t0;
         FIO_CloseFile(dio.in);
         if (res.rc == 0 && !dev_alive()) res.rc = SE_E_IO;
@@ -1095,6 +1160,16 @@ static int dev_run(const dev_job_t *j)
                 dev_prog = 1000; dev_end_ms = get_ms_clock();
                 flog_s("JPG written", dio.dst);
                 flog("JPG width", res.out_w);
+                flog("JPG Mpix asked for", mpix[mode]);
+#if FL_GRAIN_PLATES
+                flog("JPG grain class of the film", fl_grain_class(f));
+                flog("JPG grain plate variant (-1 = the lattice grain, no plate file)", gvar);
+#endif
+                flog("JPG ms decoder (entropy decoding, IDCT)", t_proc - gate_waited - res.ms_rows);
+                flog("JPG ms resampler", res.ms_rows - res.ms_look);
+                flog("JPG ms film and grain", res.ms_look - res.ms_enc);
+                flog("JPG ms encoder", res.ms_enc);
+                flog("JPG resampled (1) or straight from the decoder (0)", res.resampled);
                 flog("JPG ms the picture itself (decode, film, encode)", t_proc - gate_waited > 0 ? t_proc - gate_waited : t_proc);
                 flog("JPG ms waiting for the camera", gate_waited);
                 flog("JPG ms reading the source from the card", dio.ms_read);
@@ -1102,7 +1177,7 @@ static int dev_run(const dev_job_t *j)
                 flog("JPG ms all, without the waiting", dev_last_ms);
                 flog("JPG ms since the shot", get_ms_clock() - j->t_shot);
                 if (ui_state == UI_CLOSED && !is_play_mode() && !QR_MODE) {          /* a short note on the screen: the JPG is ready (nothing is drawn over the panel or the pictures) */
-                    NotifyBox(3500, "Film Look: %04d ready, %d.%d s", j->number % 10000, dev_last_ms / 1000, (dev_last_ms % 1000) / 100);
+                    NotifyBox(3500, "Film Look: %04d ready, %d.%d s (%d Mpix)", j->number % 10000, dev_last_ms / 1000, (dev_last_ms % 1000) / 100, mpix[mode]);
                 }
                 flog("JPG source window KB", (int)(dio.icap >> 10));
                 flog("JPG bytes", (int)dio.total);

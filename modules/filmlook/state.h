@@ -32,7 +32,7 @@ static int st_high = 0;                   /* Światła -100..100 */
 static int st_sat = 0;                    /* Nasycenie -100..100 */
 static int st_vig = 0;                    /* Winieta 0..100 */
 static int st_hal = 0;                    /* Halation 0..100: glow round bright lights (JPG only) */
-static int st_jpg = 0;                    /* JPG z efektem: 0 off, 1 half size, 2 full size */
+static int st_jpg = 0;                    /* JPG z efektem: 0 off, 1 = 5.2 Mpix (2784 px), 2 = 10 Mpix (3861 px), 3 = 21 Mpix (5616 px) */
 static int st_theme = 1;                  /* the look of the panel: 0 = cream paper, 1 = night (black) */
 static int st_set = 0;                    /* the tab "Ustawienia" (the last one) is shown: the settings that count for all films. Not saved: the panel opens on the film */
 static int reset_armed = 0;               /* the row "all films back to the defaults" got its first SET and waits for the second one */

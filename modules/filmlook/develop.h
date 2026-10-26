@@ -1,6 +1,6 @@
 /* develop.h - "develop" one photo with a film look: read the JPEG that the camera made (the preview that Canon embeds in
- * every CR2, or a .JPG file), decode it at 1/1, 1/2 or 1/4 size, run the film look over it row by row and write a new
- * JPEG. Nothing here knows about the camera or the PC: the file access goes through the fl_io callbacks, so the same code
+ * every CR2, or a .JPG file), decode it at 1/1, 1/2 or 1/4 size, bring it to the wanted width (an area-average resampler,
+ * only when the decoder's sizes do not fit), run the film look over it row by row and write a new JPEG. Nothing here knows about the camera or the PC: the file access goes through the fl_io callbacks, so the same code
  * is tested on a PC (tools/hostdev.c) and runs in the module (filmlook.c).
  * Streaming everywhere: nothing larger than a few hundred KB is ever allocated, the frame itself is never held. */
 #ifndef FL_DEVELOP_H
@@ -23,6 +23,9 @@ typedef struct {
     size_t   mem_size;
     void (*progress)(void *ctx, int permille);                         /* optional: how far the rows are, 0..1000 */
     void *pctx;
+    int (*clock)(void);                                                /* optional: milliseconds, for the time per stage in fl_result */
+    const int8_t *grain_plate;                                         /* optional: a grain plate (engine/look.h, SE_GP_BYTES), NULL = lattice grain */
+    uint32_t grain_seed;                                               /* picks the shifts of the cells of the plate: any number, different for every photo */
 } fl_io;
 
 typedef struct {
@@ -35,7 +38,11 @@ typedef struct {
     int src_w, src_h, out_w, out_h;
     int rc;                 /* 0 = ok, otherwise an se_err */
     int look_radius;        /* halation radius really used */
-    int scale;              /* 1 = full size, 2 = half size: what was really delivered */
+    int scale;              /* decoder scale that was used: 1, 2 or 4 */
+    int resampled;          /* 1 = the picture went through the resampler (the wanted width is not a decoder size) */
+    int ms_rows;            /* with io.clock: ms in everything after the decoder (resampling, film, grain, encoder) ... */
+    int ms_look;            /* ... ms in the film / grain stage and the encoder together ... */
+    int ms_enc;             /* ... and ms in the JPEG encoder alone. Decoder = all - ms_rows, resampler = ms_rows - ms_look, film = ms_look - ms_enc */
     size_t mem_peak;        /* working memory really used */
 } fl_result;
 
@@ -142,6 +149,18 @@ typedef struct {
     se_look_run *run;
     int ow, err;
     int rows, oh;                                       /* output rows made so far, and all of them */
+    /* the resampler (rs_on = 0: the decoded rows go straight to the look). The decoded frame is sw x sh, the wanted one
+     * ow x oh, both only get smaller. Area average in integers: a source pixel is ow units wide and an output pixel sw
+     * units, the weight of a source pixel in an output pixel is the overlap of the two. */
+    int rs_on, dw, sh;                                  /* decoded width and height */
+    uint16_t *rs_h;                                     /* ow*3: the source row made narrower, value * 256 */
+    uint32_t *rs_acc;                                   /* ow*3: the output row that is being summed up */
+    uint8_t *rs_out;                                    /* ow*3: the finished output row */
+    uint32_t rs_rh, rs_rv;                              /* 2^32 / dw, 2^32 / sh (rounded up) */
+    uint32_t rs_end;                                    /* end (in units) of the output row that is being summed */
+    uint32_t rs_pos;                                    /* start (in units) of the next source row */
+    int rs_oy;                                          /* output rows finished */
+    int ms_rows, ms_look, ms_enc;                       /* time per stage (only with io->clock) */
 } fl_ctx;
 
 static int fl_src_read(void *ctx, uint32_t off, void *dst, uint32_t n)
@@ -159,30 +178,140 @@ static int fl_enc_sink(void *ctx, const uint8_t *data, size_t len)
 static int fl_look_emit(void *ctx, const uint8_t *row, int width)
 {
     fl_ctx *c = (fl_ctx *)ctx;
+    int t = c->io->clock ? c->io->clock() : 0;
     (void)width;
     if (se_jpeg_write_rows(c->enc, row, 1) != SE_OK) { c->err = 1; return -1; }
+    if (c->io->clock) c->ms_enc += c->io->clock() - t;
+    return 0;
+}
+
+static int fl_look_row1(fl_ctx *c, const uint8_t *row)
+{
+    int t = c->io->clock ? c->io->clock() : 0, rc;
+    rc = se_look_rows(c->run, row, 1, fl_look_emit, c);
+    if (c->io->clock) c->ms_look += c->io->clock() - t;
+    if (rc != SE_OK) { c->err = 1; return -1; }
+    c->rows++;
+    if (c->io->progress && (c->rows & 7) == 0) c->io->progress(c->io->pctx, c->rows >= c->oh ? 1000 : (c->rows * 1000) / c->oh);
+    return 0;
+}
+
+/* one source row of dw pixels -> ow pixels (area average), value * 256 */
+static void fl_rs_hrow(fl_ctx *c, const uint8_t *src)
+{
+    const uint32_t sw = (uint32_t)c->dw, dw = (uint32_t)c->ow;      /* a source pixel is dw units wide, an output pixel sw units */
+    uint32_t i, k = 0, out_end = sw, pos = 0, a0 = 0, a1 = 0, a2 = 0;
+    uint16_t *h = c->rs_h;
+    for (i = 0; i < sw; i++, src += 3) {
+        uint32_t end = pos + dw;
+        if (end < out_end) {
+            a0 += src[0] * dw; a1 += src[1] * dw; a2 += src[2] * dw;
+        } else {
+            uint32_t part = out_end - pos, rest = end - out_end;
+            a0 += src[0] * part; a1 += src[1] * part; a2 += src[2] * part;
+            h[k * 3 + 0] = (uint16_t)(((uint64_t)a0 * c->rs_rh + (1u << 23)) >> 24);
+            h[k * 3 + 1] = (uint16_t)(((uint64_t)a1 * c->rs_rh + (1u << 23)) >> 24);
+            h[k * 3 + 2] = (uint16_t)(((uint64_t)a2 * c->rs_rh + (1u << 23)) >> 24);
+            k++; out_end += sw;
+            a0 = src[0] * rest; a1 = src[1] * rest; a2 = src[2] * rest;
+        }
+        pos = end;
+    }
+    if (k < dw) {                                       /* (rounding at the very end: the last output pixel) */
+        h[k * 3 + 0] = (uint16_t)(((uint64_t)a0 * c->rs_rh + (1u << 23)) >> 24);
+        h[k * 3 + 1] = (uint16_t)(((uint64_t)a1 * c->rs_rh + (1u << 23)) >> 24);
+        h[k * 3 + 2] = (uint16_t)(((uint64_t)a2 * c->rs_rh + (1u << 23)) >> 24);
+    }
+}
+
+/* the summed output row -> 8 bit, to the look */
+static int fl_rs_finish(fl_ctx *c)
+{
+    int i, n = c->ow * 3;
+    for (i = 0; i < n; i++) {
+        uint32_t v = (uint32_t)(((uint64_t)c->rs_acc[i] * c->rs_rv + (1ull << 39)) >> 40);
+        c->rs_out[i] = (uint8_t)(v > 255 ? 255 : v);
+        c->rs_acc[i] = 0;
+    }
+    c->rs_oy++;
+    return fl_look_row1(c, c->rs_out);
+}
+
+static int fl_look_rows_run(void *ctx, const uint8_t *rgb, int nrows, int width)
+{
+    fl_ctx *c = (fl_ctx *)ctx;
+    int r;
+    if (width != c->dw) { c->err = 1; return -1; }
+    if (!c->rs_on) {
+        int t = c->io->clock ? c->io->clock() : 0, rc = se_look_rows(c->run, rgb, nrows, fl_look_emit, c);
+        if (c->io->clock) c->ms_look += c->io->clock() - t;
+        if (rc != SE_OK) { c->err = 1; return -1; }
+        c->rows += nrows;
+    } else {
+        const uint32_t dh = (uint32_t)c->oh, sh = (uint32_t)c->sh;      /* a source row is dh units tall, an output row sh units */
+        for (r = 0; r < nrows; r++) {
+            uint32_t end = c->rs_pos + dh, from = c->rs_pos;
+            int i, n = c->ow * 3;
+            if (c->rs_oy >= c->oh) break;                                 /* (rows beyond the last output row) */
+            fl_rs_hrow(c, rgb + (size_t)r * c->dw * 3);
+            while (from < end && c->rs_oy < c->oh) {
+                uint32_t to = end < c->rs_end ? end : c->rs_end, w = to - from;
+                for (i = 0; i < n; i++) c->rs_acc[i] += (uint32_t)c->rs_h[i] * w;
+                from = to;
+                if (to == c->rs_end) { if (fl_rs_finish(c)) return -1; c->rs_end += sh; }
+            }
+            c->rs_pos = end;
+        }
+    }
+    if (c->io->progress) c->io->progress(c->io->pctx, c->rows >= c->oh ? 1000 : (c->rows * 1000) / c->oh);
     return 0;
 }
 
 static int fl_look_rows(void *ctx, const uint8_t *rgb, int nrows, int width)
 {
     fl_ctx *c = (fl_ctx *)ctx;
-    if (width != c->ow) { c->err = 1; return -1; }
-    if (se_look_rows(c->run, rgb, nrows, fl_look_emit, c) != SE_OK) { c->err = 1; return -1; }
-    c->rows += nrows;
-    if (c->io->progress) c->io->progress(c->io->pctx, c->rows >= c->oh ? 1000 : (c->rows * 1000) / c->oh);
-    return 0;
+    int t = c->io->clock ? c->io->clock() : 0, rc = fl_look_rows_run(ctx, rgb, nrows, width);
+    if (c->io->clock) c->ms_rows += c->io->clock() - t;
+    return rc;
 }
 
-/* memory the develop needs for a frame of src_w pixels at 1/dscale size */
+/* the decoder delivers 1/1 or 1/2 of the size: the smallest one that is not smaller than the wanted width */
+static int fl_pick_scale(int src_w, int target_w)
+{
+    int half = (src_w * 4 + 7) / 8;
+    return (target_w > 0 && half >= target_w) ? 2 : 1;
+}
+
+/* the delivered size for a source of src_w x src_h and the wanted width (0 or too big: as wide as the source). The picture
+ * is never made bigger. When the decoder's own size fits exactly, its rounding is kept (so the sizes of before do not change). */
+static void fl_out_size(int src_w, int src_h, int target_w, int *dscale, int *dw, int *ow, int *oh)
+{
+    int tw = (target_w <= 0 || target_w > src_w) ? src_w : target_w, d = fl_pick_scale(src_w, tw), w, h;
+    se_jpeg_scaled_size(src_w, src_h, d, &w, &h);
+    *dscale = d; *dw = w;
+    if (tw == w) { *ow = w; *oh = h; }
+    else { *ow = tw; *oh = (int)(((long)src_h * tw + src_w / 2) / src_w); }
+}
+
+/* memory the develop needs for a frame of src_w pixels wanted tw pixels wide (and a frame no taller than 2/3 of that) */
+static size_t fl_mem_needed_w(int src_w, int tw)
+{
+    int d, dw, ow, oh;
+    size_t extra;
+    fl_out_size(src_w, src_w * 2 / 3, tw, &d, &dw, &ow, &oh);
+    extra = dw != ow ? (size_t)ow * 21 + 64 : 0;                    /* the resampler: 16 bit row, 32 bit sums, 8 bit row */
+    return FL_HDR_BYTES + (size_t)ow * 3 * SE_JPEG_MCU + 8 * 1024 + (size_t)dw * 16 * 6 + 16 * 1024 + SE_LOOK_BUDGET + 12 * 1024 + (size_t)ow * 4 + 4096 + extra;
+}
+
+/* (as before) memory for a frame at 1/dscale size */
 static size_t fl_mem_needed(int src_w, int dscale)
 {
-    size_t ow = (size_t)((src_w + dscale - 1) / dscale);
-    return FL_HDR_BYTES + ow * 3 * SE_JPEG_MCU + 8 * 1024 + ow * 16 * 6 + 16 * 1024 + SE_LOOK_BUDGET + 12 * 1024 + ow * 4 + 4096;
+    return fl_mem_needed_w(src_w, dscale == 2 ? (src_w + 1) / 2 : src_w);
 }
 
-/* dscale: 1, 2 or 4. quality: JPEG quality of the result. */
-static void fl_develop(const fl_io *io, const film_t *f, const look_t *L, int dscale, int quality, fl_result *res)
+/* target_w: the wanted width of the new JPEG (the height follows; 0 = as wide as the source; never wider than the source).
+ * quality: JPEG quality of the result. */
+static void fl_develop_w(const fl_io *io, const film_t *f, const look_t *L, int target_w, int quality, fl_result *res)
 {
     se_arena ar, lookar;
     se_look lk;
@@ -192,11 +321,12 @@ static void fl_develop(const fl_io *io, const film_t *f, const look_t *L, int ds
     fl_ctx c;
     uint8_t *hdr, *strip;
     uint32_t hlen, poff = 0, plen = 0;
-    int ow, oh;
+    int ow, oh, dw, dscale, permille;
     size_t lookneed;
     se_err rc;
 
     memset(res, 0, sizeof *res);
+    memset(&c, 0, sizeof c);
     se_arena_init(&ar, io->mem, io->mem_size);
     hdr = SE_NEW(&ar, uint8_t, FL_HDR_BYTES);
     if (!hdr) { res->rc = SE_E_NOMEM; return; }
@@ -210,9 +340,10 @@ static void fl_develop(const fl_io *io, const film_t *f, const look_t *L, int ds
     if (io->read(io->rctx, poff, hdr, hlen) != 0) { res->rc = SE_E_IO; return; }
     rc = se_jpeg_dec_info(hdr, hlen, &ji);
     if (rc != SE_OK) { res->rc = rc; return; }
-    if (dscale == 2 && ji.width < 3200) dscale = 1;          /* a small JPG (S / M size) is not made even smaller */
-    se_jpeg_scaled_size(ji.width, ji.height, dscale, &ow, &oh);
+    fl_out_size(ji.width, ji.height, target_w, &dscale, &dw, &ow, &oh);
+    permille = (ow * 1000 + 2808) / 5616;                    /* the width relative to the full 5616 px (grain size, halation radius) */
     res->src_w = ji.width; res->src_h = ji.height; res->out_w = ow; res->out_h = oh; res->scale = dscale;
+    res->resampled = dw != ow;
 
     /* the look: its tables and the halation delay line live in their own arena */
     {
@@ -221,7 +352,7 @@ static void fl_develop(const fl_io *io, const film_t *f, const look_t *L, int ds
         uint8_t *mem = (uint8_t *)se_arena_alloc(&ar, tabs + budget, 8);
         if (!mem) { res->rc = SE_E_NOMEM; return; }
         se_arena_init(&lookar, mem, tabs + budget);
-        if (fl_build_look(&lk, &lookar, f, L, dscale, oh) != 0) { res->rc = SE_E_NOMEM; return; }
+        if (fl_build_look(&lk, &lookar, f, L, permille, oh, io->grain_plate, io->grain_seed) != 0) { res->rc = SE_E_NOMEM; return; }
         lookneed = se_look_fit(&lk, ow, budget);
         (void)lookneed;
         res->look_radius = lk.hal_amount > 0 ? lk.hal_radius : 0;
@@ -230,6 +361,17 @@ static void fl_develop(const fl_io *io, const film_t *f, const look_t *L, int ds
     }
 
     c.io = io; c.base = poff; c.ow = ow; c.err = 0; c.rows = 0; c.oh = oh > 0 ? oh : 1;
+    c.dw = dw; c.rs_on = dw != ow; c.sh = (ji.height * (dscale == 2 ? 4 : 8) + 7) / 8;
+    if (c.rs_on) {
+        c.rs_h = SE_NEW(&ar, uint16_t, (size_t)ow * 3);
+        c.rs_acc = SE_NEW(&ar, uint32_t, (size_t)ow * 3);
+        c.rs_out = SE_NEW(&ar, uint8_t, (size_t)ow * 3);
+        if (!c.rs_h || !c.rs_acc || !c.rs_out) { res->rc = SE_E_NOMEM; return; }
+        memset(c.rs_acc, 0, (size_t)ow * 3 * sizeof(uint32_t));
+        c.rs_rh = 0xFFFFFFFFu / (uint32_t)dw + 1;            /* 2^32 / dw, 2^32 / sh, rounded up (no 64 bit division: the camera has none) */
+        c.rs_rv = 0xFFFFFFFFu / (uint32_t)c.sh + 1;
+        c.rs_end = (uint32_t)c.sh; c.rs_pos = 0; c.rs_oy = 0;
+    }
     c.enc = SE_NEW(&ar, se_jpeg, 1);
     strip = SE_NEW(&ar, uint8_t, SE_JPEG_STRIP_BYTES(ow));
     if (!c.enc || !strip) { res->rc = SE_E_NOMEM; return; }
@@ -250,6 +392,13 @@ static void fl_develop(const fl_io *io, const film_t *f, const look_t *L, int ds
     if (rc == SE_OK && c.err) rc = SE_E_IO;
     res->rc = rc;
     res->mem_peak = ar.peak;
+    res->ms_rows = c.ms_rows; res->ms_look = c.ms_look; res->ms_enc = c.ms_enc;
+}
+
+/* (as before) dscale 1 = as wide as the source, 2 = half of it */
+static void fl_develop(const fl_io *io, const film_t *f, const look_t *L, int dscale, int quality, fl_result *res)
+{
+    fl_develop_w(io, f, L, dscale == 2 ? 2808 : 0, quality, res);
 }
 
 #endif

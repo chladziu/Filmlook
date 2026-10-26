@@ -68,6 +68,11 @@ int main(void)
     /* since v0.12 there is no "place of the JPG": the key is not written, and an old file that has it still loads (the key is ignored) */
     snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nplace=2\njpg=1\ntheme=1\n"); n = (int)strlen(cfg_buf); st_jpg = 0; st_theme = 0; cfg_parse(n); CHECK(st_jpg == 1 && st_theme == 1 && st_film == a);
     n = cfg_build(); CHECK(!strstr(cfg_buf, "place="));
+    /* the size of the JPG: since v0.13 mpix= 0 off, 1 = 5.2, 2 = 10, 3 = 21 Mpix; the old jpg= (0 off, 1 half, 2 full) is still read */
+    CHECK(strstr(cfg_buf, "mpix=1") && !strstr(cfg_buf, "jpg="));
+    snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\njpg=2\n"); n = (int)strlen(cfg_buf); st_jpg = 0; cfg_parse(n); CHECK(st_jpg == 3);
+    snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nmpix=2\n"); n = (int)strlen(cfg_buf); st_jpg = 0; cfg_parse(n); CHECK(st_jpg == 2);
+    snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nmpix=9\n"); n = (int)strlen(cfg_buf); st_jpg = 0; cfg_parse(n); CHECK(st_jpg == 3);
     /* the look of the panel: 0 cream, 1 night; anything else is cut to that, a file without the key leaves the default */
     snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\ntheme=7\n"); n = (int)strlen(cfg_buf); st_theme = 0; cfg_parse(n); CHECK(st_theme == 1);
     snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\ntheme=-4\n"); n = (int)strlen(cfg_buf); st_theme = 1; cfg_parse(n); CHECK(st_theme == 0);

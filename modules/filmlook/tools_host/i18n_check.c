@@ -52,7 +52,7 @@ int main(void)
             const int lab[3] = { S_LBL_JPG, S_LBL_LOOK, S_LBL_LANG };
             int k;
             for (k = 0; k < 3; k++) FIT(sf_sml, "sml", TR(lab[k]), CH_X - M_L - 6, "settings label");
-            for (k = 0; k < 3; k++) {
+            for (k = 0; k < 4; k++) {
                 snprintf(tmp, sizeof tmp, "\xE2\x80\xB9  %s  \xE2\x80\xBA", TR(S_JPG_OFF + k)); FIT(sf_sml, "sml", tmp, M_R3 - CH_X - 4, "JPG option");
             }
             for (k = 0; k < 2; k++) { snprintf(tmp, sizeof tmp, "\xE2\x80\xB9  %s  \xE2\x80\xBA", TR(S_TH_CREAM + k)); FIT(sf_sml, "sml", tmp, M_R3 - CH_X - 4, "theme option"); }

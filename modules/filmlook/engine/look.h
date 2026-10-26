@@ -72,6 +72,12 @@
  */
 #define SE_GRAIN_AMP 38
 
+/* the size of a grain plate (see se_look.gp): texels across and down, bytes in all */
+#define SE_GP_W 256
+#define SE_GP_H 128
+#define SE_GP_BYTES (SE_GP_W * SE_GP_H * 3)
+#define SE_GP_BLEND 8           /* texels on each side of a cell border that are blended with the neighbour cell */
+
 /* Tunables of one frame. The film module fills this from a film (lookbuild.h); there is no stock file any more.
  * Changes against the original Soup Engine file (GPL v2): per-hue tables of 1536 entries instead of 6 sectors (so the
  * 8 Lightroom colour bands fit), an integer sine table, vignette, mono flag, no divides in the pixel loops. */
@@ -105,6 +111,20 @@ typedef struct {
      * step per pixel), w = how much of each layer (256 = 1.0). */
     int      grain_inc_a, grain_inc_b;
     int      grain_w_a, grain_w_b;
+
+    /* Grain from a plate (v0.13). A plate is a tile of real-looking film grain made on the PC (tools/make_grain.py):
+     * SE_GP_H rows of SE_GP_W texels, three signed bytes (R, G, B) each, so the grain of a colour film is colour grain.
+     * The luma rms of a plate is about 32. gp == NULL: the lattice noise above is used (and it is mono).
+     * The plate is walked with gp_stride texels per output pixel (16.16, never below 1.0: only skipping texels keeps
+     * the grain round). The walk is cut into cells of SE_GP_W x SE_GP_H texels and every cell gets a shift and a mirroring
+     * of its own from gp_seed, so even a frame much bigger than the plate shows no repeating pattern. Next to the border of
+     * two cells (SE_GP_BLEND texels each side) the two neighbours are blended with weights sin / cos, which keeps the rms
+     * and hides the seam (a cut through grain that is a few pixels wide would show as a faint line). */
+    const int8_t *gp;
+    unsigned gp_stride;
+    int      gp_amp;         /* the grain of a texel value t at the middle tone: t * gp_amp * tone / 2^20 levels, rounded */
+    unsigned gp_seed;
+    uint8_t  gp_tone[256];   /* weight of the grain by the tone of the channel (0..255; about 4v(1-v)) */
 
     /* Vignette: vig_tab[i] is the brightness (256 = unchanged) at i / 255 of the squared distance to the corner. */
     int      vig_amount;     /* 0 = none                                  */

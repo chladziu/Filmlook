@@ -36,8 +36,9 @@ static int st_lang = 0;                   /* 0 Polski, 1 English, 2 Deutsch, 3 E
     X(S_LBL_LOOK, "Wygląd", "Appearance", "Aussehen", "Aspecto", "Vzhled", "Aspetto", "Apparence", "Megjelenés", "Görünüm") \
     X(S_LBL_LANG, "Język", "Language", "Sprache", "Idioma", "Jazyk", "Lingua", "Langue", "Nyelv", "Dil") \
     X(S_JPG_OFF, "wyłączony", "off", "aus", "desactivado", "vypnuto", "disattivato", "désactivé", "kikapcsolva", "kapalı") \
-    X(S_JPG_HALF, "połowa (2808 px)", "half (2808 px)", "halb (2808 px)", "mitad (2808 px)", "polovina (2808 px)", "metà (2808 px)", "moitié (2808 px)", "fél (2808 px)", "yarım (2808 px)") \
-    X(S_JPG_FULL, "pełny (5616 px)", "full (5616 px)", "voll (5616 px)", "completo (5616 px)", "plná (5616 px)", "intera (5616 px)", "pleine (5616 px)", "teljes (5616 px)", "tam (5616 px)") \
+    X(S_JPG_S, "5,2 Mpix (2784 px)", "5.2 Mpix (2784 px)", "5,2 Mpix (2784 px)", "5,2 Mpix (2784 px)", "5,2 Mpix (2784 px)", "5,2 Mpix (2784 px)", "5,2 Mpix (2784 px)", "5,2 Mpix (2784 px)", "5,2 Mpix (2784 px)") \
+    X(S_JPG_M, "10 Mpix (3861 px)", "10 Mpix (3861 px)", "10 Mpix (3861 px)", "10 Mpix (3861 px)", "10 Mpix (3861 px)", "10 Mpix (3861 px)", "10 Mpix (3861 px)", "10 Mpix (3861 px)", "10 Mpix (3861 px)") \
+    X(S_JPG_L, "21 Mpix (5616 px)", "21 Mpix (5616 px)", "21 Mpix (5616 px)", "21 Mpix (5616 px)", "21 Mpix (5616 px)", "21 Mpix (5616 px)", "21 Mpix (5616 px)", "21 Mpix (5616 px)", "21 Mpix (5616 px)") \
     X(S_TH_CREAM, "krem", "cream", "Creme", "crema", "krémový", "crema", "crème", "krém", "krem") \
     X(S_TH_NIGHT, "noc", "night", "Nacht", "noche", "noční", "notte", "nuit", "éjszaka", "gece") \
     X(S_RST_FILM, "Domyślne tego filmu", "Defaults for this film", "Standardwerte dieses Films", "Predeterminado: esta película", "Výchozí hodnoty tohoto filmu", "Valori predefiniti del film", "Réglages d'origine du film", "A film alapértékei", "Bu filmin varsayılanları") \
