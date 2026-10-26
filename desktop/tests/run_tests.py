@@ -289,7 +289,7 @@ except ImportError:
     print("(numpy / pillow not installed: resizer accuracy not checked)")
 
 if args.hashes:
-    with open(args.hashes, "w") as f:
+    with open(args.hashes, "w", newline="\n") as f:                  # LF also on Windows, so that the files can be compared with diff
         f.write("\n".join(sorted(hashes, key=lambda s: s.split("  ", 1)[1])) + "\n")
     print("wrote", args.hashes, "(%d lines)" % len(hashes))
 

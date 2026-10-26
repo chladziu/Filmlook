@@ -133,8 +133,16 @@ jobs:
         run: |
           ls -la
           wc -l hashes-*.txt
-          diff hashes-linux.txt hashes-windows.txt && echo "Linux == Windows"
-          diff hashes-linux.txt hashes-macos.txt && echo "Linux == macOS"
+          rc=0
+          for other in windows macos; do
+            if diff hashes-linux.txt hashes-$other.txt > diff-$other.txt; then
+              echo "Linux == $other: $(wc -l < hashes-linux.txt) pictures, the same bytes"
+            else
+              rc=1
+              echo "::error title=Linux and $other make different pictures::$(head -c 3000 diff-$other.txt | sed ':a;N;$!ba;s/\n/%0A/g')"
+            fi
+          done
+          exit $rc
 
   # ---------------------------------------------------------------- everything in one download
   package:
