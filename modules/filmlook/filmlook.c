@@ -26,7 +26,7 @@
 #include "xmp.h"
 #include "develop.h"
 
-#define VERSION "v0.14"
+#define VERSION "v0.16"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
 #ifndef FL_GRAIN_PLATES
