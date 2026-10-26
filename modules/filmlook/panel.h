@@ -174,16 +174,16 @@ static void draw_tabs(void)
  * row 2: the film name, large, the arrows right next to it */
 static void draw_sel(int r)
 {
-    int on = (row == r) && !st_set && !st_view;
-    int off = (st_film == 0) || st_set || st_view;       /* (the tabs "Ustawienia" and "Zdjęcia": the name row is only a heading, without arrows) */
+    int on = (row == r) && !st_set;
+    int off = (st_film == 0) || st_set;                  /* (the tab "Ustawienia": the name row is only a heading, without arrows) */
 
     if (r == 1) {
         sf_line(&sf_xs, M_L, M_R3, Y_BRAND, 24, 7, (off || is_own(st_film)) ? " " : groups[films[st_film - 1].group].brand, PC_SOFT, SF_CENTER);     /* no maker for the own presets */
     } else {
         sf_run run[3];
-        const char *name = st_set ? TR(S_TAB_SET) : (st_view ? TR(S_TAB_VIEW) : (off ? TR(S_TAB_NONE) : films[st_film - 1].name));
+        const char *name = st_set ? TR(S_TAB_SET) : (off ? TR(S_TAB_NONE) : films[st_film - 1].name);
         const sf_font *f = &sf_big;
-        int c = (st_set || st_view) ? PC_TEXT : (off ? PC_DIM : (on ? PC_ACCENT : PC_TEXT));
+        int c = st_set ? PC_TEXT : (off ? PC_DIM : (on ? PC_ACCENT : PC_TEXT));
         int ca = off ? PC_BG : (on ? PC_ACCENT : PC_DIM);
         if (sf_width(f, name) > M_R - M_L - 100) f = &sf_mid;
         draw_mark(on, Y_NAME - 50, 62);
@@ -201,12 +201,6 @@ static void draw_info(void)
     if (st_set) {                                        /* (the settings need no description: the two lines are blank) */
         sf_line(&sf_xs, M_L, M_R3, Y_KIND, 24, 7, " ", PC_BG, SF_CENTER);
         sf_line(&sf_xs, M_L, M_R3, Y_DESC, 24, 7, " ", PC_BG, SF_CENTER);
-    } else if (st_view) {
-        const sf_font *df = &sf_xs;
-        const char *d = TR(S_VW_NOTE2);
-        sf_line(&sf_xs, M_L, M_R3, Y_KIND, 24, 7, TR(S_VW_NOTE1), PC_ACCENT, SF_CENTER);
-        if (sf_width(df, d) > M_R - M_L) df = &sf_xxs;
-        sf_line(df, M_L, M_R3, Y_DESC, 24, 7, d, PC_TEXT, SF_CENTER);
     } else if (st_film > 0) {
         const film_t *f = &films[st_film - 1];
         const int ty = groups[f->group].type;
@@ -322,13 +316,6 @@ static void draw_jpg(void)
     draw_choice(JROW, TR(S_LBL_JPG), TR(S_JPG_OFF + st_jpg), PC_TEXT, st_jpg ? PC_TEXT : PC_SOFT);
 }
 
-/* where the JPG goes: its own folder, or in place of the camera's JPG (RAW+JPG or JPG shooting; with RAW alone there is no
- * JPG to replace and the file goes to FILMLOOK) */
-static void draw_place(void)
-{
-    draw_choice(PROW, TR(S_LBL_PLACE), TR(S_PL_FOLDER + st_place), st_jpg ? PC_TEXT : PC_SOFT, st_jpg ? (st_place ? PC_MOD : PC_TEXT) : PC_SOFT);
-}
-
 /* the look of the panel: cream paper / night. The dial changes it at once (the whole panel is drawn again) */
 static void draw_theme(void)
 {
@@ -366,21 +353,11 @@ static void draw_reset_all(void)
     draw_reset_line(AROW, TR(S_RST_ALL), films_mod_n(), reset_armed);
 }
 
-/* tab "Zdjęcia": the one row, SET opens the viewer */
-static void draw_open(void)
-{
-    int on = (row == OROW), yb = slot_y(OROW);
-    char tmp[160];
-    draw_mark(on, yb - 22, 26);
-    snprintf(tmp, sizeof(tmp), "%s\t%s", TR(S_VW_OPEN), TR(S_VW_SET));
-    sf_line(&sf_sml, M_L, M_R3, yb, 25, 7, tmp, on ? PC_ACCENT : PC_TEXT, SF_JUST);
-}
-
 static void draw_slot(int r)
 {
     int p = lst_pos(r);
     if (p < top || p >= top + VIS) return;           /* (also when the row does not exist for this film: p = -1) */
-    if (r == 3) draw_push(); else if (r == JROW) draw_jpg(); else if (r == PROW) draw_place(); else if (r == TROW) draw_theme(); else if (r == LROW) draw_lang(); else if (r == RROW) draw_reset(); else if (r == AROW) draw_reset_all(); else if (r == OROW) draw_open(); else draw_slider(r);
+    if (r == 3) draw_push(); else if (r == JROW) draw_jpg(); else if (r == TROW) draw_theme(); else if (r == LROW) draw_lang(); else if (r == RROW) draw_reset(); else if (r == AROW) draw_reset_all(); else draw_slider(r);
 }
 
 /* a place of the list without a row: paper (and, without a film, a short note in the second place) */

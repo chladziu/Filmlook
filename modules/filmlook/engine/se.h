@@ -20,7 +20,6 @@ typedef int se_err;
 #define SE_E_NOMEM          -4   /* arena exhausted                    */
 #define SE_E_CORRUPT        -5   /* internal inconsistency in the data */
 #define SE_E_IO             -6   /* host/camera I/O failed             */
-#define SE_E_ABORT          -7   /* the caller asked to stop           */
 
 const char *se_strerror(se_err e);
 

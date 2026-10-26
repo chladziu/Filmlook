@@ -1,10 +1,10 @@
 /* PC test of the panel screen: uimock <out.ppm> [film full name] [key=value ...]
- * keys: row top push strength grain contrast hal fade warm shadow high sat vig jpg place prog=<0..1000> msg=<text> status=<text>
+ * keys: row top push strength grain contrast hal fade warm shadow high sat vig jpg prog=<0..1000> msg=<text> status=<text>
  * The picture is made by the very same panel.h / serif.h that the camera runs. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define VERSION "v0.11"
+#define VERSION "v0.12"
 #include "../films.h"
 #include "../state.h"
 #include "../panel.h"
@@ -42,11 +42,9 @@ int main(int argc, char **argv)
         else if (!strncmp(a, "sat=", 4)) st_sat = v;
         else if (!strncmp(a, "vig=", 4)) st_vig = v;
         else if (!strncmp(a, "jpg=", 4)) st_jpg = v;
-        else if (!strncmp(a, "place=", 6)) st_place = v;
         else if (!strncmp(a, "theme=", 6)) st_theme = v;
         else if (!strncmp(a, "lang=", 5)) st_lang = v;
         else if (!strncmp(a, "set=", 4)) st_set = v;
-        else if (!strncmp(a, "view=", 5)) st_view = v;
         else if (!strncmp(a, "armed=", 6)) reset_armed = v;
     }
     fix_push();

@@ -19,7 +19,7 @@ static int cfg_build(void)
 {
     int i, j, n;
     if (cur_slot > 0) vals_get(&film_v[cur_slot - 1]);  /* the sliders in use go back to their film first */
-    n = snprintf(cfg_buf, sizeof(cfg_buf), "film=%s\npush=%d\njpg=%d\nplace=%d\ntheme=%d\nlang=%d\n", st_film > 0 ? films[st_film - 1].full : "Off", st_push, st_jpg, st_place, st_theme, st_lang);
+    n = snprintf(cfg_buf, sizeof(cfg_buf), "film=%s\npush=%d\njpg=%d\ntheme=%d\nlang=%d\n", st_film > 0 ? films[st_film - 1].full : "Off", st_push, st_jpg, st_theme, st_lang);
     for (i = 0; i < BASE_COUNT && n < (int)sizeof(cfg_buf) - 200; i++) {
         const short *v = (const short *)&film_v[i];
         int differs = 0;
@@ -100,7 +100,6 @@ static void cfg_parse(int n)
         parse_film(cfg_buf);
         parse_after(cfg_buf, "push", &st_push);
         parse_after(cfg_buf, "jpg", &st_jpg);
-        parse_after(cfg_buf, "place", &st_place);
         parse_after(cfg_buf, "theme", &st_theme);
         parse_after(cfg_buf, "lang", &st_lang);
         for (s = cfg_buf; *s; ) {                       /* "mod=<film>;<10 numbers>": the sliders of a film the user changed */
@@ -153,7 +152,6 @@ static void cfg_parse(int n)
     fix_push();
     remember();
     st_jpg = clampi(st_jpg, 0, 2);
-    st_place = clampi(st_place, 0, 2);
     st_theme = clampi(st_theme, 0, 1);
     st_lang = clampi(st_lang, 0, NLANG - 1);
     cur_slot = 0;

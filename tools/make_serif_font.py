@@ -268,7 +268,7 @@ def main(beth, titlef, idxp, out, tstroke="0"):
     name_chars = set("".join(f["name"] + f["brand"] for f in idx)) | set(string.ascii_letters + string.digits + " ‹›.-+/&()'")
     here0 = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/modules/filmlook"
     if os.path.exists(os.path.join(here0, "i18n.h")):
-        name_chars |= ui_chars(here0, ids=["S_TAB_SET", "S_TAB_NONE", "S_TAB_VIEW"])      # the big line also shows the name of the tab "Ustawienia" / "Bez efektu" in every language
+        name_chars |= ui_chars(here0, ids=["S_TAB_SET", "S_TAB_NONE"])      # the big line also shows the name of the tab "Ustawienia" / "Bez efektu" in every language
     all_chars = [chr(c) for c in range(0x20, 0x7F)] + list("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ·‹›–—…°×")
     kern_chars = list(all_chars)                                     # the kerning table is made for these; the other letters use the pairs of their base letter
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/modules/filmlook"

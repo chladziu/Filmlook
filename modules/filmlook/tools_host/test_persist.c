@@ -24,7 +24,7 @@ static void reload(void)                         /* what happens at the next sta
     char keep[sizeof(cfg_buf)];
     memcpy(keep, cfg_buf, (size_t)n + 1);
     memset(film_v, 0x55, sizeof film_v);        /* nothing may survive in RAM */
-    st_film = 0; st_push = 0; st_jpg = 0; st_place = 0;
+    st_film = 0; st_push = 0; st_jpg = 0;
     st_strength = 7; st_grain = 7; st_contrast = 7; st_fade = 7; st_warm = 7; st_shadow = 7; st_high = 7; st_sat = 7; st_vig = 7; st_hal = 7;
     memcpy(cfg_buf, keep, (size_t)n + 1);
     cfg_parse(n);
@@ -47,7 +47,7 @@ int main(void)
     CHECK(OWN_TYPE < 0 && own_film(1) == 0 && !is_own(a) && !is_own(0));     /* since v0.11 there are no own presets */
     choose(c); st_grain = 55; st_fade = 10;
     CHECK(mod_n() == 2);
-    choose(b); st_jpg = 2; st_place = 2; st_push = 0;
+    choose(b); st_jpg = 2; st_push = 0;
 
     n = cfg_build();
     CHECK(n > 0 && strstr(cfg_buf, "film=Ilford HP5 Plus\n") && strstr(cfg_buf, "mod=Kodak Portra 400;70,140,20,30,0,0,0,0,0,0\n"));
@@ -55,7 +55,7 @@ int main(void)
     printf("--- settings file:\n%s---\n", cfg_buf);
 
     reload();
-    CHECK(st_film == b && st_warm == -15 && st_sat == 40 && st_jpg == 2 && st_place == 2);
+    CHECK(st_film == b && st_warm == -15 && st_sat == 40 && st_jpg == 2);
     choose(a); CHECK(st_strength == 70 && st_grain == 140 && st_contrast == 20 && st_hal == 30);
     choose(c); CHECK(st_strength == 100 && st_grain == 55 && st_fade == 10 && mod_n() == 2);
 
@@ -65,10 +65,9 @@ int main(void)
     CHECK(strstr(cfg_buf, "mod=Ilford HP5 Plus;"));
     choose(c); CHECK(reset_film() == 2); CHECK(st_grain == 100 && st_fade == 0 && st_strength == 100);
 
-    /* the place of the JPG: 0 folder, 1 the camera's JPG, 2 + the RAW preview; anything else is cut to that */
-    snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nplace=9\njpg=1\n"); n = (int)strlen(cfg_buf); st_place = 0; cfg_parse(n); CHECK(st_place == 2);
-    snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nplace=-3\njpg=1\n"); n = (int)strlen(cfg_buf); st_place = 2; cfg_parse(n); CHECK(st_place == 0);
-    st_place = 2; n = cfg_build(); CHECK(strstr(cfg_buf, "place=2\n"));
+    /* since v0.12 there is no "place of the JPG": the key is not written, and an old file that has it still loads (the key is ignored) */
+    snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nplace=2\njpg=1\ntheme=1\n"); n = (int)strlen(cfg_buf); st_jpg = 0; st_theme = 0; cfg_parse(n); CHECK(st_jpg == 1 && st_theme == 1 && st_film == a);
+    n = cfg_build(); CHECK(!strstr(cfg_buf, "place="));
     /* the look of the panel: 0 cream, 1 night; anything else is cut to that, a file without the key leaves the default */
     snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\ntheme=7\n"); n = (int)strlen(cfg_buf); st_theme = 0; cfg_parse(n); CHECK(st_theme == 1);
     snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\ntheme=-4\n"); n = (int)strlen(cfg_buf); st_theme = 1; cfg_parse(n); CHECK(st_theme == 0);
@@ -87,15 +86,13 @@ int main(void)
     CHECK(reset_all() == 3); CHECK(films_mod_n() == 0 && st_fade == 0 && st_hal == 0);
     choose(a); CHECK(st_grain == 100); choose(b); CHECK(st_sat == 0);
     /* the rows of the list: under a film the sliders and the reset of the film, in the tab Ustawienia the five rows of the settings,
-     * in the tab Zdjęcia the one row that opens the viewer */
-    choose(a); st_set = 0; st_view = 0; list_build();
-    CHECK(lst_n == 10 && lst[0] == 4 && lst[lst_n - 1] == RROW && lst_pos(HROW) < 0 && lst_pos(JROW) < 0 && lst_pos(OROW) < 0);
+     * (there is no tab for pictures any more) */
+    choose(a); st_set = 0; list_build();
+    CHECK(lst_n == 10 && lst[0] == 4 && lst[lst_n - 1] == RROW && lst_pos(HROW) < 0 && lst_pos(JROW) < 0);
     st_set = 1; list_build();
-    CHECK(lst_n == 5 && lst[0] == JROW && lst[1] == PROW && lst[2] == TROW && lst[3] == LROW && lst[4] == AROW && cur_tab() == TAB_SET);
-    st_set = 0; st_view = 1; list_build();
-    CHECK(lst_n == 1 && lst[0] == OROW && cur_tab() == TAB_VIEW && lst_pos(OROW) == 0);
-    st_view = 0; list_build(); CHECK(cur_tab() == cur_type());
-    CHECK(TAB_VIEW == TYPE_COUNT + 1 && TAB_SET == TYPE_COUNT + 2 && NTABS == TYPE_COUNT + 3 && NROWS == OROW + 1);
+    CHECK(lst_n == 4 && lst[0] == JROW && lst[1] == TROW && lst[2] == LROW && lst[3] == AROW && cur_tab() == TAB_SET);
+    st_set = 0; list_build(); CHECK(cur_tab() == cur_type());
+    CHECK(TAB_SET == TYPE_COUNT + 1 && NTABS == TYPE_COUNT + 2 && NROWS == AROW + 1);
 
     /* limits: a damaged file never gives values outside the sliders */
     snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nmod=Kodak Portra 400;500,900,-900,900,900,-900,900,-900,900,900\nmod=No such film;1,2,3,4,5,6,7,8,9,10\nmod=Ilford HP5 Plus;1,2\n");

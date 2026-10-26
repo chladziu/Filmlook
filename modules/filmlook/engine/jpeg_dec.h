@@ -92,22 +92,4 @@ se_err se_jpeg_decode_stream_scaled(const void *hdr, size_t hdrlen,
                                     se_jdec_sink sink, void *ctx,
                                     se_jdec_info *info);
 
-/*
- * A part of the picture, at a reduced size (the viewer of the finished pictures).
- *
- * scale is 1, 2, 4 or 8: the picture is delivered at 1/scale of its size (the blocks give 8, 4, 2 or 1 samples per side).
- * (x0, y0, w, h) is the wanted part in DELIVERED samples (see se_jpeg_scaled_size); the sink gets only its rows, w samples wide.
- * Blocks outside it are read and thrown away, and decoding stops after the last row of blocks that is needed, so a view of the
- * top of the picture is quicker than one of the bottom. `stop` is asked once per row of blocks: when it returns non-zero the
- * decoding ends with SE_E_ABORT (the user asked for something else meanwhile). `hdr` / `total` / `read`: as above.
- */
-typedef int (*se_jdec_stop_fn)(void *ctx);
-
-se_err se_jpeg_decode_window(const void *hdr, size_t hdrlen, uint32_t total,
-                             se_jdec_read_fn read, void *rctx, int scale,
-                             int x0, int y0, int w, int h,
-                             se_jdec_stop_fn stop, void *sctx,
-                             se_arena *a, se_jdec_sink sink, void *ctx,
-                             se_jdec_info *info);
-
 #endif /* SE_JPEG_DEC_H */
