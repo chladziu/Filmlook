@@ -24,7 +24,7 @@ static void reload(void)                         /* what happens at the next sta
     char keep[sizeof(cfg_buf)];
     memcpy(keep, cfg_buf, (size_t)n + 1);
     memset(film_v, 0x55, sizeof film_v);        /* nothing may survive in RAM */
-    st_film = 0; st_push = 0; st_jpg = 0;
+    st_film = 0; st_push = 0; st_jpg = 0; st_roll = 0;
     st_strength = 7; st_grain = 7; st_contrast = 7; st_fade = 7; st_warm = 7; st_shadow = 7; st_high = 7; st_sat = 7; st_vig = 7; st_hal = 7;
     memcpy(cfg_buf, keep, (size_t)n + 1);
     cfg_parse(n);
@@ -95,9 +95,18 @@ int main(void)
     choose(a); st_set = 0; list_build();
     CHECK(lst_n == 10 && lst[0] == 4 && lst[lst_n - 1] == RROW && lst_pos(HROW) < 0 && lst_pos(JROW) < 0);
     st_set = 1; list_build();
-    CHECK(lst_n == 4 && lst[0] == JROW && lst[1] == TROW && lst[2] == LROW && lst[3] == AROW && cur_tab() == TAB_SET);
+    CHECK(lst_n == 5 && lst[0] == JROW && lst[1] == KROW && lst[2] == TROW && lst[3] == LROW && lst[4] == AROW && cur_tab() == TAB_SET);
     st_set = 0; list_build(); CHECK(cur_tab() == cur_type());
-    CHECK(TAB_SET == TYPE_COUNT + 1 && NTABS == TYPE_COUNT + 2 && NROWS == AROW + 1);
+    CHECK(TAB_SET == TYPE_COUNT + 1 && TAB_ROLL == TYPE_COUNT + 2 && NTABS == TYPE_COUNT + 3 && NROWS == CROW + 1 && RROW0 == AROW + 1 && NROWS < 64);
+
+    /* the film roll setting: kept in the settings file, a damaged value is cut to the table */
+    st_roll = 3; n = cfg_build(); CHECK(strstr(cfg_buf, "\nroll=3\n") != 0);
+    st_roll = 3; reload(); CHECK(st_roll == 3 && roll_size() == 24);
+    st_roll = 4; reload(); CHECK(st_roll == 4 && roll_size() == 36);
+    snprintf(cfg_buf, sizeof(cfg_buf), "film=Off\nroll=77\n"); n = (int)strlen(cfg_buf); cfg_parse(n); CHECK(st_roll == RL_SIZES - 1);
+    snprintf(cfg_buf, sizeof(cfg_buf), "film=Off\nroll=-3\n"); n = (int)strlen(cfg_buf); cfg_parse(n); CHECK(st_roll == 0);
+    snprintf(cfg_buf, sizeof(cfg_buf), "film=Off\n"); n = (int)strlen(cfg_buf); st_roll = 2; cfg_parse(n); CHECK(st_roll == 2);   /* a file from before v0.15 has no roll= line: the value stays */
+    st_roll = 0;
 
     /* limits: a damaged file never gives values outside the sliders */
     snprintf(cfg_buf, sizeof(cfg_buf), "film=Kodak Portra 400\nmod=Kodak Portra 400;500,900,-900,900,900,-900,900,-900,900,900\nmod=No such film;1,2,3,4,5,6,7,8,9,10\nmod=Ilford HP5 Plus;1,2\n");

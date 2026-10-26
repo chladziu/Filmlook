@@ -26,9 +26,10 @@
 #include "xmp.h"
 #include "develop.h"
 
-#define VERSION "v0.14"
+#define VERSION "v0.15"
 #define LOG_PATH      "ML/LOGS/FILMLOOK.LOG"
 #define SETTINGS_PATH "ML/SETTINGS/FILMLOOK.TXT"
+#define ROLL_PATH     "ML/SETTINGS/FILMLOOK.ROL"   /* the film rolls: counters and the photos that wait / are to be developed (roll.h) */
 #ifndef FL_GRAIN_PLATES
 #define FL_GRAIN_PLATES 0     /* v0.14: the old grain again (the plates stay in the engine, in tools/make_grain.py and data/); 1 = take the grain from ML/DATA/FILMLOOK.GRN */
 #endif
@@ -214,7 +215,7 @@ static void pal_mute_all(void)
 }
 
 /* what has to be redrawn (set from the key handler, handled in the shoot task) */
-#define D_ROW(r) (1 << (r))          /* rows 0..19 */
+#define D_ROW(r) ((r) < 20 ? (1 << (r)) : D_LISTALL)     /* rows 0..19; the rows of the rolls (20..) are drawn with the whole list */
 #define D_INFO   (1 << 20)           /* kind / description block under the film row */
 #define D_BAR    (1 << 21)           /* scroll bar of the list */
 #define D_LISTALL (1 << 22)          /* the whole list: it scrolled, or the rows / the sliders changed with the film */
@@ -224,6 +225,8 @@ static void pal_mute_all(void)
 static volatile int dirty = 0;
 static int msg_id = S_MSG_SAVED;     /* the text (i18n.h) that the next save shows in the hint line */
 static int dev_pending(void);
+static int roll_send_all(void);                  /* roll part, below: every roll goes to the lab, returns the photos */
+static int roll_forget_all(void);                /* roll part, below: counters and photos forgotten, returns the films that had something */
 static volatile int dev_last_ms;
 static volatile int dev_phase;                   /* 0 nothing, 1 waits for the camera, 2 makes the JPG, 3 writes it to the card */
 static int dev_prog_now(void);                   /* progress line, 0..1000 */
@@ -241,6 +244,10 @@ static volatile int want_reset = 0;  /* SET on the row "Domyślne tego filmu" */
 static volatile int want_reset_all = 0;   /* the second SET on the row "Domyślne wszystkich filmów" */
 static volatile int arm_new = 0;     /* the first SET on that row: the hint line asks for the second one */
 static int arm_t = 0;                /* ms clock of the first SET */
+static volatile int want_roll_go = 0;     /* the second SET on "Wywołaj rolki teraz" */
+static volatile int want_roll_clr = 0;    /* the second SET on "Wyczyść liczniki rolek" */
+static int arm_msg = S_MSG_ARM;      /* the text of the hint line that asks for the second SET */
+static int rl_ver_shown = -1;        /* rl_ver (roll.h) as the list of the rolls shows it */
 
 /* the JPG status at the top left: the number of JPGs that wait or are made now, otherwise how long the last one took */
 static char st_last[32] = "?";                  /* what the status field shows now ('?' = not drawn yet) */
@@ -255,6 +262,22 @@ static void status_text(char *t, int n)
     else if (pend > 0) snprintf(t, n, TR(S_ST_QUEUE), pend);
     else if (ms > 0)   snprintf(t, n, TR(S_ST_BUSY), ms / 1000, (ms % 1000) / 100);
     else               t[0] = 0;
+}
+
+/* the list was rebuilt: the selected row must still be there (the list of the rolls changes by itself) and inside the window of 3 */
+static void fix_row(void)
+{
+    int p;
+    if (row < 3) return;
+    p = lst_pos(row);
+    if (p < 0) {
+        if (lst_n == 0) { row = 0; top = 0; return; }
+        p = lst_n - 1;
+        row = lst[p];
+    }
+    if (p < top) top = p;
+    if (p >= top + VIS) top = p - VIS + 1;
+    top = clampi(top, 0, lst_n > VIS ? lst_n - VIS : 0);
 }
 
 static void redraw_dirty(void)
@@ -284,11 +307,40 @@ static void redraw_dirty(void)
     if (arm_new) {                                      /* the first SET: ask for the second one (the row itself changed its text, see draw_reset_all) */
         arm_new = 0;
         msg_until = get_ms_clock() + 5000;
-        BMP_LOCK ( ui_attach(); draw_hint(TR(S_MSG_ARM)); )
+        BMP_LOCK ( ui_attach(); draw_hint(TR(arm_msg)); )
     }
     if (reset_armed && get_ms_clock() - arm_t > 5000) {   /* nobody pressed the second SET: the question is gone */
         reset_armed = 0;
         d |= D_ROW(AROW); dirty |= D_ROW(AROW);
+    }
+    if (roll_armed && get_ms_clock() - arm_t > 5000) {   /* nobody pressed the second SET on the rolls: the question is gone */
+        roll_armed = 0;
+        d |= D_LISTALL; dirty |= D_LISTALL;
+    }
+    if (want_roll_go) {                                 /* "Wywołaj rolki teraz": every roll goes to the lab */
+        int n;
+        want_roll_go = 0; roll_armed = 0;
+        n = roll_send_all();
+        flog("rolls sent to the lab, photos", n);
+        msg_id = S_MSG_GO; want_save = 1;
+        rl_ver_shown = -1;
+    }
+    if (want_roll_clr) {                                /* "Wyczyść liczniki rolek": counters and waiting photos are forgotten */
+        int n;
+        want_roll_clr = 0; roll_armed = 0;
+        n = roll_forget_all();
+        flog("roll counters cleared, films", n);
+        msg_id = S_MSG_CLR; want_save = 1;
+        rl_ver_shown = -1;
+    }
+    if (rl_ver != rl_ver_shown) {                       /* a photo joined a roll, or a JPG of a roll is done: the list of the rolls shows it */
+        rl_ver_shown = rl_ver;
+        if (st_rolltab) {
+            if (!rl_visible()) st_rolltab = 0;                               /* the last roll is gone and the option is off: back to the film */
+            list_build();
+            fix_row();
+            d |= D_LISTALL | D_INFO | D_ROW(0) | D_ROW(1) | D_ROW(2); dirty |= D_LISTALL | D_INFO | D_ROW(0) | D_ROW(1) | D_ROW(2);
+        } else { d |= D_ROW(0); dirty |= D_ROW(0); }                          /* (the icon in the tab row may appear / disappear; the list of the settings stays as it is) */
     }
     if (want_save) {
         want_save = 0;
@@ -364,7 +416,10 @@ static void do_open(void)
 {
     int i, t_mode = 0, t0 = get_ms_clock();
     kill_ml_overlay();
-    st_set = 0;                                         /* the panel always opens on the film, never on the settings */
+    st_set = 0;                                         /* the panel always opens on the film, never on the settings or the rolls */
+    st_rolltab = 0;
+    roll_armed = 0; want_roll_go = 0; want_roll_clr = 0;
+    rl_ver_shown = rl_ver;
     row = (st_film > 0) ? 2 : 0;                        /* start on the film row when a film is chosen */
     top = 0;
     list_build();
@@ -440,13 +495,17 @@ static int film_changed(void)
 
 static void change_value(int dir)
 {
-    if (row == 0) {                                      /* tabs: 0 = no effect, 1.. = colour / b&w / slide / own, the last one = Ustawienia */
-        int ct = cur_tab();
-        int nt = clampi(ct + dir, 0, TAB_SET);
-        if (nt != ct && (nt == TAB_SET || ct == TAB_SET)) {   /* to / from the settings: the chosen film (an own preset) stays chosen */
+    if (row == 0) {                                      /* tabs, left to right: no effect, colour / b&w / slide, the rolls (only with a roll), Ustawienia */
+        int ids[NTABS], nn = tab_order(ids), ct = cur_tab(), pos = 0, k, nt;
+        for (k = 0; k < nn; k++) if (ids[k] == ct) pos = k;
+        nt = ids[clampi(pos + dir, 0, nn - 1)];
+        if (nt != ct && (nt == TAB_SET || nt == TAB_ROLL || ct == TAB_SET || ct == TAB_ROLL)) {   /* to / from the settings or the rolls: the chosen film stays chosen */
             st_set = (nt == TAB_SET);
+            st_rolltab = (nt == TAB_ROLL);
+            if (roll_armed) { roll_armed = 0; msg_until = 1; }
             list_build();
             top = 0;
+            rl_ver_shown = rl_ver;
             dirty |= D_ROW(0) | D_ROW(1) | D_ROW(2) | D_INFO | D_LISTALL;
         } else if (nt != ct) {
             remember();
@@ -483,6 +542,14 @@ static void change_value(int dir)
         int nv = clampi(st_jpg + dir, 0, 3);
         if (nv != st_jpg) { st_jpg = nv; dirty |= D_ROW(JROW); }
     }
+    else if (row == KROW) {                              /* the film roll: off / 6 / 12 / 24 / 36 photos */
+        int nv = clampi(st_roll + dir, 0, RL_SIZES - 1);
+        if (nv != st_roll) { st_roll = nv; dirty |= D_ROW(KROW) | D_ROW(0); }          /* (the icon of the rolls in the tab row appears / goes) */
+    }
+    else if (row == XROW || row == CROW) {               /* the dial does nothing here: SET (twice) */
+    }
+    else if (row >= RROW0 && row < XROW) {               /* the list of the rolls is only shown */
+    }
     else if (row == TROW) {                              /* the look of the panel */
         int nv = clampi(st_theme + dir, 0, 1);
         if (nv != st_theme) { st_theme = nv; dirty |= D_FULL; }
@@ -507,6 +574,7 @@ static void set_row(int r)
     if (r != row) {
         dirty |= D_ROW(row) | D_ROW(r);                                /* selection colours change */
         if (reset_armed) { reset_armed = 0; msg_until = 1; }           /* left the row after the first SET: the question is gone (and its hint) */
+        if (roll_armed && r != roll_armed) { roll_armed = 0; msg_until = 1; dirty |= D_LISTALL; }
         row = r;
         {                                                              /* keep the row inside the window */
             int nt = top, p = lst_pos(r);
@@ -526,7 +594,7 @@ static int row_enabled(int r)
 {
     if (r == 0) return 1;
     if (r == 1) return 0;
-    if (r == 2) return st_film > 0 && !st_set;
+    if (r == 2) return st_film > 0 && !st_set && !st_rolltab;
     return lst_pos(r) >= 0;
 }
 
@@ -577,7 +645,11 @@ static unsigned int filmlook_keypress(unsigned int key)
         if (row == RROW) want_reset = 1;
         else if (row == AROW) {                                 /* the first SET asks, the second one (within 5 s) does it */
             if (reset_armed) want_reset_all = 1;
-            else { reset_armed = 1; arm_t = get_ms_clock(); arm_new = 1; dirty |= D_ROW(AROW); }
+            else { reset_armed = 1; arm_t = get_ms_clock(); arm_msg = S_MSG_ARM; arm_new = 1; dirty |= D_ROW(AROW); }
+        }
+        else if (row == XROW || row == CROW) {                  /* the rolls: the same, two SETs */
+            if (roll_armed == row) { if (row == XROW) want_roll_go = 1; else want_roll_clr = 1; }
+            else { roll_armed = row; arm_t = get_ms_clock(); arm_msg = S_MSG_ARM2; arm_new = 1; dirty |= D_LISTALL; }
         }
         else want_save = 1;
         break;
@@ -670,6 +742,7 @@ PROP_HANDLER(PROP_FILE_NUMBER_A)
 #define READ_CHUNK (1024 * 1024)
 typedef struct {
     int used, tries, film, mode, number, t_shot;
+    int rl_id;                                   /* the photo of a film roll that this job makes (roll.h), 0 = an ordinary photo */
     char dir[40], prefix[8];
     look_t look;
 } dev_job_t;
@@ -1197,6 +1270,122 @@ static int dev_run(const dev_job_t *j)
     return retry;
 }
 
+/* ------------------------------------------------------------------ film rolls (roll.h)
+ * The XMP of a photo is written at once, as always. With a roll size set (Ustawienia: Rolka filmu), the JPG is not: the photo is counted on the roll
+ * of its film (rl_add), and when the roll is full the whole roll goes to the lab (rl_release): its JPGs are made one after the other, a few at
+ * a time in the develop queue. The roll file (ML/SETTINGS/FILMLOOK.ROL) is written at every change, so nothing is lost when the camera is switched
+ * off: what was not developed yet goes on at the next start. Several tasks change the rolls (the seconds clock, the develop task, the panel), one at a time. */
+static void dev_task(void *arg);
+static struct semaphore *rl_sem = 0;
+static void rl_lock(void)   { if (rl_sem) take_semaphore(rl_sem, 5000); }
+static void rl_unlock(void) { if (rl_sem) give_semaphore(rl_sem); }
+
+static void rl_save(void)                        /* (with the lock held) */
+{
+    int n = rl_build();
+    FILE *f = FIO_CreateFile(ROLL_PATH);
+    if (f) { FIO_WriteFile(f, rl_buf, n); FIO_CloseFile(f); }
+    else flog("roll file: cannot create", 0);
+}
+
+static void rl_load(void)
+{
+    int n = read_text(ROLL_PATH, rl_buf, sizeof(rl_buf) - 1);
+    rl_parse(n);
+    rl_requeue();                                /* what was in the develop queue when the camera stopped has no job any more */
+    flog("rolls: photos on the rolls / to be developed", rl_count(0, RL_WAIT) * 1000 + rl_count(0, RL_LAB));
+}
+
+/* every roll goes to the lab now (also the ones that are not full); returns the number of photos */
+static int roll_send_all(void)
+{
+    int n;
+    rl_lock();
+    n = rl_release(0);
+    if (n) rl_save();
+    rl_unlock();
+    return n;
+}
+
+/* counters, waiting photos and the photos that were to be developed are forgotten (the JPG jobs that already run are finished); returns the films that had something */
+static int roll_forget_all(void)
+{
+    int n;
+    rl_lock();
+    n = rl_clear();
+    rl_save();
+    rl_unlock();
+    return n;
+}
+
+/* a photo of a roll is finished (its JPG is made, or it can not be made): it leaves the roll file */
+static void roll_finished(int id)
+{
+    if (id <= 0) return;
+    rl_lock();
+    if (rl_remove(id)) rl_save();
+    rl_unlock();
+}
+
+/* a photo with its XMP written: it joins the roll of its film, or (roll off, no room, a film that has no roll) its JPG is made at once */
+static void dev_enqueue(const qitem_t *q);
+static void roll_photo(const qitem_t *q)
+{
+    int sz = roll_size(), id = 0;
+    if (sz > 0) {
+        short lk[RL_NLK];
+        lk[0] = (short)q->look.strength; lk[1] = (short)q->look.grain; lk[2] = (short)q->look.contrast; lk[3] = (short)q->look.fade;
+        lk[4] = (short)q->look.warm; lk[5] = (short)q->look.shadow; lk[6] = (short)q->look.high; lk[7] = (short)q->look.sat; lk[8] = (short)q->look.vig;
+        rl_lock();
+        id = rl_add(q->film, q->number, q->jpg, q->dir, q->prefix, lk);
+        if (id) {
+            int on_roll = rl_count(q->film, RL_WAIT), sent = 0;
+            if (on_roll >= sz) sent = rl_release(q->film);          /* the roll is full: to the lab */
+            rl_save();
+            flog_s("roll: photo counted, film", films[q->film - 1].full);
+            flog("roll: photos on the roll", on_roll);
+            if (sent > 0) {
+                flog("roll full, sent to the lab, photos", sent);
+                if (ui_state == UI_CLOSED && !is_play_mode() && !QR_MODE) NotifyBox(4000, "Film Look: roll full, developing %d photos", sent);
+            }
+        }
+        rl_unlock();
+    }
+    if (!id) dev_enqueue(q);
+}
+
+/* every second: the photos that are to be developed go to the develop queue, two at a time (the queue has 4 places, a few stay free for the photos of other films) */
+static void roll_feed(void)
+{
+    int i, used = 0;
+    if (rl_n == 0 || !dev_alive()) return;
+    for (i = 0; i < DEV_Q; i++) if (dev_q[i].used) used++;
+    while (used < 2) {
+        rl_frame_t fr;
+        int got, slot = -1;
+        for (i = 0; i < DEV_Q; i++) if (!dev_q[i].used) { slot = i; break; }
+        if (slot < 0) break;
+        rl_lock();
+        got = rl_take(&fr);
+        if (got && fr.mode == 0) { rl_remove(fr.id); rl_save(); }     /* counted only: there is no JPG to make */
+        rl_unlock();
+        if (!got) break;
+        if (fr.mode == 0) continue;
+        {
+            dev_job_t *j = &dev_q[slot];
+            memset(j, 0, sizeof(*j));
+            snprintf(j->dir, sizeof(j->dir), "%s", fr.dir); snprintf(j->prefix, sizeof(j->prefix), "%s", fr.prefix);
+            j->film = fr.film; j->mode = fr.mode; j->number = fr.number; j->t_shot = get_ms_clock(); j->rl_id = fr.id;
+            j->look.strength = fr.lk[0]; j->look.grain = fr.lk[1]; j->look.contrast = fr.lk[2]; j->look.fade = fr.lk[3]; j->look.warm = fr.lk[4];
+            j->look.shadow = fr.lk[5]; j->look.high = fr.lk[6]; j->look.sat = fr.lk[7]; j->look.vig = fr.lk[8]; j->look.hal = 0;
+            j->used = 1;
+            if (!dev_task_started) { dev_task_started = 1; task_create("fl_dev", 0x1c, 0x6000, dev_task, 0); }
+            flog_s("JPG queued (roll)", films[fr.film - 1].full);
+            used++;
+        }
+    }
+}
+
 static void dev_task(void *arg)
 {
     (void)arg;
@@ -1216,8 +1405,8 @@ static void dev_task(void *arg)
             dev_busy = 0;
             dev_phase = 0;
             powersave_permit();
-            if (r == 0) j->used = 0;
-            else if (++j->tries >= 12) { flog("JPG: giving up, number", j->number); j->used = 0; }
+            if (r == 0) { roll_finished(j->rl_id); j->used = 0; }
+            else if (++j->tries >= 12) { flog("JPG: giving up, number", j->number); roll_finished(j->rl_id); j->used = 0; }
             else msleep(5000);
         }
     }
@@ -1246,8 +1435,9 @@ static void dev_enqueue(const qitem_t *q)
 static int dev_pending(void)
 {
     int i, n = 0;
-    for (i = 0; i < DEV_Q; i++) if (dev_q[i].used) n++;
-    for (i = 0; i < QMAX; i++) if (queue[i].used && queue[i].jpg > 0) n++;
+    for (i = 0; i < DEV_Q; i++) if (dev_q[i].used && !dev_q[i].rl_id) n++;       /* (the photos of the rolls are counted below, with those still to come) */
+    for (i = 0; i < QMAX; i++) if (queue[i].used && queue[i].jpg > 0 && roll_size() == 0) n++;
+    n += rl_count(0, RL_LAB);
     return n;
 }
 
@@ -1263,7 +1453,7 @@ static void write_sidecar(qitem_t *q)
         if (f) { FIO_WriteFile(f, xmp, n); FIO_CloseFile(f); flog_s("XMP written", path); }
         else flog_s("XMP cannot create", path);
     } else flog("XMP build error", n);
-    dev_enqueue(q);
+    roll_photo(q);                                       /* the JPG now, or the photo joins the roll of its film */
     q->used = 0;
 }
 
@@ -1275,6 +1465,7 @@ static unsigned int filmlook_seconds(unsigned int ctx)
     for (i = 0; i < QMAX; i++)
         if (queue[i].used && (t - queue[i].t) >= 3000)       /* let the camera finish writing the photo */
             write_sidecar(&queue[i]);
+    roll_feed();                                             /* the photos of the rolls that are in the lab go to the develop queue */
     return 0;
 }
 
@@ -1282,9 +1473,11 @@ static unsigned int filmlook_seconds(unsigned int ctx)
 static unsigned int filmlook_init(void)
 {
     log_sem = create_named_semaphore("filmlook_log", 1);
+    rl_sem = create_named_semaphore("filmlook_roll", 1);
     memo_init();
     sets_init();
     load_state();
+    rl_load();
     kill_ml_overlay();
     flog_s("FILMLOOK module loaded", VERSION);
     pal_build();

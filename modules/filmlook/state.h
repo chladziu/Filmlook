@@ -12,11 +12,15 @@ typedef char films_and_texts_have_the_same_languages[(FILM_LANGS == NLANG) ? 1 :
 #define NSL   10                             /* sliders: rows 4..13 */
 #define RROW  (4 + NSL)                      /* row 14: back to the default settings of THIS film (last row under the sliders) */
 #define JROW  (RROW + 1)                     /* row 15: tab "Ustawienia": JPG with the effect (off / half size / full size) */
-#define TROW  (JROW + 1)                     /* row 16: tab "Ustawienia": the look of the panel (cream / night) */
-#define LROW  (TROW + 1)                     /* row 17: tab "Ustawienia": the language of the panel */
-#define AROW  (LROW + 1)                     /* row 18: tab "Ustawienia": every film back to its default settings (SET twice) */
-#define NROWS (AROW + 1)                     /* 0 tabs, 1 maker (only shown), 2 film, 3 (not used any more), 4.. sliders (see sl_def), reset row of the film;
-                                              * the rows 15..18 belong to the tab "Ustawienia" */
+#define KROW  (JROW + 1)                     /* row 16: tab "Ustawienia": the film roll (off / 6 / 12 / 24 / 36 photos), see roll.h */
+#define TROW  (KROW + 1)                     /* row 17: tab "Ustawienia": the look of the panel (cream / night) */
+#define LROW  (TROW + 1)                     /* row 18: tab "Ustawienia": the language of the panel */
+#define AROW  (LROW + 1)                     /* row 19: tab "Ustawienia": every film back to its default settings (SET twice) */
+#define RROW0 (AROW + 1)                     /* rows 20..: the tab of the film rolls (the icon): one row per film that has a roll (at most BASE_COUNT) ... */
+#define XROW  (RROW0 + BASE_COUNT)           /* ... then "develop the rolls now" (SET twice) ... */
+#define CROW  (XROW + 1)                     /* ... and "clear the counters" (SET twice) */
+#define NROWS (CROW + 1)                     /* 0 tabs, 1 maker (only shown), 2 film, 3 (not used any more), 4.. sliders (see sl_def), reset row of the film;
+                                              * the rows 15..19 belong to the tab "Ustawienia", the rows from 20 to the tab of the rolls */
 #define VIS   3                              /* rows of the list in a window of 3 (it scrolls) */
 
 /* ------------------------------------------------------------------ state */
@@ -35,7 +39,9 @@ static int st_hal = 0;                    /* Halation 0..100: glow round bright 
 static int st_jpg = 0;                    /* JPG z efektem: 0 off, 1 = 5.2 Mpix (2784 px), 2 = 10 Mpix (3861 px), 3 = 21 Mpix (5616 px) */
 static int st_theme = 1;                  /* the look of the panel: 0 = cream paper, 1 = night (black) */
 static int st_set = 0;                    /* the tab "Ustawienia" (the last one) is shown: the settings that count for all films. Not saved: the panel opens on the film */
+static int st_rolltab = 0;                /* the tab of the film rolls (the icon, only there while the roll is on) is shown. Not saved. Never together with st_set */
 static int reset_armed = 0;               /* the row "all films back to the defaults" got its first SET and waits for the second one */
+static int roll_armed = 0;                /* the row (XROW or CROW) of the rolls that got its first SET and waits for the second one, 0 = none */
 
 /* the sliders of the panel: rows 4 .. 13 (their names are the texts S_SL_EFFECT + j of i18n.h) */
 static const struct { short lo, hi, step; unsigned char signed_; } sl_def[NSL] = {
@@ -68,6 +74,8 @@ static int last_input_ms = 0;
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+#include "roll.h"
+
 /* films[] is sorted by group (= brand inside one type: tools/preset2films.py), groups[] by type.
  * memo_group / memo_film remember the last brand of every type and the last film of every brand,
  * so that switching back and forth returns to where the user was */
@@ -88,10 +96,23 @@ static int type_films(int t) { const group_t *g = &groups[types[t].first_group +
 /* 0 = no effect, 1.. = type + 1 */
 static int cur_type(void) { return st_film > 0 ? groups[films[st_film - 1].group].type + 1 : 0; }
 
-/* the tab that is shown: the type of the film, or (the last one) "Ustawienia". The film stays chosen while the settings are open */
-#define TAB_SET (TYPE_COUNT + 1)
-#define NTABS   (TYPE_COUNT + 2)                     /* "Bez efektu", the types, "Ustawienia" */
-static int cur_tab(void) { return st_set ? TAB_SET : cur_type(); }
+/* the tab that is shown: the type of the film, the film rolls (the icon, only while there is a roll) or (the last one) "Ustawienia".
+ * The film stays chosen while the settings or the rolls are open. Tab numbers: 0 "Bez efektu", 1..TYPE_COUNT the types, TAB_SET, TAB_ROLL;
+ * on the screen the icon of the rolls stands before "Ustawienia" (tab_order) */
+#define TAB_SET  (TYPE_COUNT + 1)
+#define TAB_ROLL (TYPE_COUNT + 2)
+#define NTABS    (TYPE_COUNT + 3)
+static int cur_tab(void) { return st_set ? TAB_SET : (st_rolltab ? TAB_ROLL : cur_type()); }
+
+/* the tabs that are on the screen, left to right (ids[]); returns how many */
+static int tab_order(int *ids)
+{
+    int n = 0, i;
+    for (i = 0; i <= TYPE_COUNT; i++) ids[n++] = i;
+    if (rl_visible()) ids[n++] = TAB_ROLL;
+    ids[n++] = TAB_SET;
+    return n;
+}
 
 /* push / pull: a base film may have variants (Tri-X +1, Portra 400 -1 ...) that are not in the Film list.
  * popts[f->pfirst .. +f->np-1] are its options sorted by shift, the normal film among them */
@@ -254,6 +275,14 @@ static void list_build(void)
     if (st_set) {
         for (r = JROW; r <= AROW; r++) lst[lst_n++] = r;
         top = 0;
+        return;
+    }
+    if (st_rolltab) {                                    /* the rolls: a row for every film that has something, then the two actions */
+        rl_entries();
+        for (r = 0; r < rl_ent_n; r++) lst[lst_n++] = RROW0 + r;
+        lst[lst_n++] = XROW;
+        lst[lst_n++] = CROW;
+        top = clampi(top, 0, lst_n > VIS ? lst_n - VIS : 0);
         return;
     }
     if (st_film == 0) return;

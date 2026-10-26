@@ -144,28 +144,55 @@ static void draw_mark(int on, int y, int h)
  * the gap), so nothing moves when the choice changes, and the slots plus a blank at both ends cover the whole row:
  * every pixel is rewritten in one pass, no wiping before. The chosen tab is bold (and rust while the row is selected). */
 #define TAB_GAP 24
-static const char *tab_text(int i) { return TR(S_TAB_NONE + i); }     /* 0 no effect, 1..TYPE_COUNT the types, then "Zdjęcia" and "Ustawienia" (the texts follow each other in i18n.h) */
+#define RI_W 28                                   /* the icon of the film rolls: a wound film with its end, 28 x 21 px */
+#define RI_H 21
+static const char *tab_text(int i) { return i == TAB_ROLL ? " " : TR(S_TAB_NONE + i); }     /* 0 no effect, 1..TYPE_COUNT the types, TAB_SET "Ustawienia" (the texts follow each other in i18n.h); TAB_ROLL has an icon, no text */
 
-static void tab_layout(int *x, int *w)           /* x[i], w[i]: slot of tab i (x[n] = end of the last slot) */
+/* x, y = top left corner (RI_W x RI_H px). A roll of film seen from the side: the wound film is a ring with a hole in the middle and a thin gap
+ * between its turns, and the end of the film comes out of it to the right with a perforation along both edges. Whole numbers only */
+static void draw_roll_icon(int x, int y, int col)
 {
-    int i, n = NTABS, tot = 0, s0;
-    for (i = 0; i < n; i++) { w[i] = sf_width(&sf_xsb, tab_text(i)) + TAB_GAP; tot += w[i]; }
+    int cx = 10, cy = 10, py, px, k;
+    for (py = 0; py < 21; py++) {
+        for (px = 0; px < 21; px++) {
+            int dx = px - cx, dy = py - cy, d2 = dx * dx + dy * dy;
+            if (d2 > 97 || d2 < 9 || (d2 > 30 && d2 < 42)) continue;           /* outside, the hole, the gap between the turns */
+            ui_fill(col, x + px, y + py, 1, 1);
+        }
+    }
+    ui_fill(col, x + 12, y + 13, 16, 8);                                         /* the end of the film */
+    for (k = 0; k < 4; k++) {
+        ui_fill(PC_BG, x + 14 + 4 * k, y + 14, 2, 2);                             /* perforations, upper edge */
+        ui_fill(PC_BG, x + 14 + 4 * k, y + 18, 2, 2);                             /* lower edge */
+    }
+}
+
+static int tab_layout(int *ids, int *x, int *w)    /* ids[k]: the tab in place k; x[k], w[k]: its slot (x[n] = end of the last slot); returns n */
+{
+    int i, n = tab_order(ids), tot = 0, s0;
+    for (i = 0; i < n; i++) { w[i] = (ids[i] == TAB_ROLL ? RI_W : sf_width(&sf_xsb, tab_text(ids[i]))) + TAB_GAP; tot += w[i]; }
     s0 = (M_L + M_R) / 2 - tot / 2;
     for (i = 0; i < n; i++) { x[i] = s0; s0 += w[i]; }
     x[n] = s0;
+    return n;
 }
 
 static void draw_tabs(void)
 {
-    int on = (row == 0), ct = cur_tab(), i, n = NTABS;
-    int x[NTABS + 1], w[NTABS];
-    tab_layout(x, w);
+    int on = (row == 0), ct = cur_tab(), i, n;
+    int ids[NTABS], x[NTABS + 1], w[NTABS];
+    n = tab_layout(ids, x, w);
     draw_mark(on, Y_TABS - 22, 28);
     sf_line(&sf_xs, M_L, x[0], Y_TABS, 24, 7, " ", PC_BG, SF_LEFT);                  /* blank before and after the group */
     sf_line(&sf_xs, x[n], M_R3, Y_TABS, 24, 7, " ", PC_BG, SF_LEFT);
     for (i = 0; i < n; i++) {
-        int sel = (i == ct);
-        sf_line(sel ? &sf_xsb : &sf_xs, x[i], x[i] + w[i], Y_TABS, 24, 7, tab_text(i), sel ? (on ? PC_ACCENT : PC_TEXT) : PC_SOFT, SF_CENTER);
+        int sel = (ids[i] == ct);
+        int col = sel ? (on ? PC_ACCENT : PC_TEXT) : PC_SOFT;
+        if (ids[i] == TAB_ROLL) {
+            ui_fill(PC_BG, x[i], Y_TABS - 24, w[i], 31);
+            draw_roll_icon(x[i] + (w[i] - RI_W) / 2, Y_TABS - 21, col);
+        } else
+            sf_line(sel ? &sf_xsb : &sf_xs, x[i], x[i] + w[i], Y_TABS, 24, 7, tab_text(ids[i]), col, SF_CENTER);
     }
 }
 
@@ -174,16 +201,16 @@ static void draw_tabs(void)
  * row 2: the film name, large, the arrows right next to it */
 static void draw_sel(int r)
 {
-    int on = (row == r) && !st_set;
-    int off = (st_film == 0) || st_set;                  /* (the tab "Ustawienia": the name row is only a heading, without arrows) */
+    int on = (row == r) && !st_set && !st_rolltab;
+    int off = (st_film == 0) || st_set || st_rolltab;    /* (the tabs "Ustawienia" and the rolls: the name row is only a heading, without arrows) */
 
     if (r == 1) {
         sf_line(&sf_xs, M_L, M_R3, Y_BRAND, 24, 7, (off || is_own(st_film)) ? " " : groups[films[st_film - 1].group].brand, PC_SOFT, SF_CENTER);     /* no maker for the own presets */
     } else {
         sf_run run[3];
-        const char *name = st_set ? TR(S_TAB_SET) : (off ? TR(S_TAB_NONE) : films[st_film - 1].name);
+        const char *name = st_set ? TR(S_TAB_SET) : (st_rolltab ? TR(S_ROLL_TITLE) : (off ? TR(S_TAB_NONE) : films[st_film - 1].name));
         const sf_font *f = &sf_big;
-        int c = st_set ? PC_TEXT : (off ? PC_DIM : (on ? PC_ACCENT : PC_TEXT));
+        int c = (st_set || st_rolltab) ? PC_TEXT : (off ? PC_DIM : (on ? PC_ACCENT : PC_TEXT));
         int ca = off ? PC_BG : (on ? PC_ACCENT : PC_DIM);
         if (sf_width(f, name) > M_R - M_L - 100) f = &sf_mid;
         draw_mark(on, Y_NAME - 50, 62);
@@ -201,6 +228,14 @@ static void draw_info(void)
     if (st_set) {                                        /* (the settings need no description: the two lines are blank) */
         sf_line(&sf_xs, M_L, M_R3, Y_KIND, 24, 7, " ", PC_BG, SF_CENTER);
         sf_line(&sf_xs, M_L, M_R3, Y_DESC, 24, 7, " ", PC_BG, SF_CENTER);
+    } else if (st_rolltab) {                             /* the rolls: how big a roll is, and what is in the lab now */
+        int sz = roll_size(), lab = rl_count(0, RL_LAB);
+        if (sz > 0) snprintf(tmp, sizeof(tmp), TR(S_ROLL_KIND), sz); else snprintf(tmp, sizeof(tmp), "%s", TR(S_ROLL_OFFNOTE));
+        sf_line(&sf_xs, M_L, M_R3, Y_KIND, 24, 7, tmp, PC_ACCENT, SF_CENTER);
+        if (lab > 0) snprintf(tmp, sizeof(tmp), TR(S_ROLL_DEVNOTE), lab);
+        else if (rl_ent_n == 0) snprintf(tmp, sizeof(tmp), "%s", TR(S_ROLL_NONE));
+        else snprintf(tmp, sizeof(tmp), " ");
+        sf_line(&sf_xs, M_L, M_R3, Y_DESC, 24, 7, tmp, PC_TEXT, SF_CENTER);
     } else if (st_film > 0) {
         const film_t *f = &films[st_film - 1];
         const int ty = groups[f->group].type;
@@ -316,6 +351,14 @@ static void draw_jpg(void)
     draw_choice(JROW, TR(S_LBL_JPG), TR(S_JPG_OFF + st_jpg), PC_TEXT, st_jpg ? PC_TEXT : PC_SOFT);
 }
 
+/* the film roll: off / 6 / 12 / 24 / 36 photos (the number of photos of one film that make a roll; see roll.h) */
+static void draw_roll_choice(void)
+{
+    char v[24];
+    if (st_roll == 0) snprintf(v, sizeof(v), "%s", TR(S_ROLL_OFF)); else snprintf(v, sizeof(v), "%d", roll_size());
+    draw_choice(KROW, TR(S_LBL_ROLL), v, PC_TEXT, st_roll ? PC_TEXT : PC_SOFT);
+}
+
 /* the look of the panel: cream paper / night. The dial changes it at once (the whole panel is drawn again) */
 static void draw_theme(void)
 {
@@ -353,11 +396,47 @@ static void draw_reset_all(void)
     draw_reset_line(AROW, TR(S_RST_ALL), films_mod_n(), reset_armed);
 }
 
+/* tab of the rolls, one row per film: the name at the left, at the right how far the roll is (photos on it / size / to go) and how many rolls were developed;
+ * while its roll is in the lab: how many photos are left to develop */
+static void draw_roll_entry(int r)
+{
+    int k = r - RROW0, on = (row == r), yb = slot_y(r), sz = roll_size(), w;
+    char val[120], tmp[200];
+    const rl_ent_t *e;
+    const sf_font *fnt = &sf_sml;
+    draw_mark(on, yb - 22, 26);
+    if (k < 0 || k >= rl_ent_n) { sf_line(&sf_sml, M_L, M_R3, yb, 25, 7, " ", PC_BG, SF_LEFT); return; }
+    e = &rl_ent[k];
+    if (e->lab > 0)  snprintf(val, sizeof(val), TR(S_ROLL_LAB), e->lab, e->done);
+    else if (sz > 0) snprintf(val, sizeof(val), TR(S_ROLL_ROW), e->wait, sz, sz - e->wait > 0 ? sz - e->wait : 0, e->done);
+    else             snprintf(val, sizeof(val), TR(S_ROLL_ROW0), e->wait, e->done);
+    snprintf(tmp, sizeof(tmp), "%s\t%s", films[e->film - 1].name, val);
+    w = sf_width(fnt, tmp);
+    if (w > M_R3 - M_L - 24) fnt = &sf_xs;                                     /* a long line uses the smaller size */
+    sf_line(fnt, M_L, M_R3, yb, 25, 7, tmp, on ? PC_ACCENT : PC_TEXT, SF_JUST);
+}
+
+/* the two actions under the list of the rolls: develop what is on the rolls now / clear the counters (SET twice) */
+static void draw_roll_action(int r)
+{
+    int on = (row == r), yb = slot_y(r), n = (r == XROW) ? rl_count(0, RL_WAIT) : rl_ent_n, armed = (roll_armed == r);
+    const char *name = TR(r == XROW ? S_ROLL_GO : S_ROLL_CLR);
+    char tmp[200], num[100];
+    draw_mark(on, yb - 22, 26);
+    if (armed)       snprintf(tmp, sizeof(tmp), "%s\t%s", name, TR(S_RST_CONF));
+    else if (n > 0) { snprintf(num, sizeof(num), TR(r == XROW ? S_ROLL_GO_N : S_ROLL_CLR_N), n); snprintf(tmp, sizeof(tmp), "%s\t%s", name, num); }
+    else             snprintf(tmp, sizeof(tmp), "%s\t%s", name, TR(S_ROLL_NOTHING));
+    sf_line(&sf_sml, M_L, M_R3, yb, 25, 7, tmp, on ? PC_ACCENT : (n > 0 ? PC_TEXT : PC_SOFT), SF_JUST);
+}
+
 static void draw_slot(int r)
 {
     int p = lst_pos(r);
     if (p < top || p >= top + VIS) return;           /* (also when the row does not exist for this film: p = -1) */
-    if (r == 3) draw_push(); else if (r == JROW) draw_jpg(); else if (r == TROW) draw_theme(); else if (r == LROW) draw_lang(); else if (r == RROW) draw_reset(); else if (r == AROW) draw_reset_all(); else draw_slider(r);
+    if (r == 3) draw_push(); else if (r == JROW) draw_jpg(); else if (r == KROW) draw_roll_choice(); else if (r == TROW) draw_theme(); else if (r == LROW) draw_lang();
+    else if (r == RROW) draw_reset(); else if (r == AROW) draw_reset_all();
+    else if (r >= RROW0 && r < XROW) draw_roll_entry(r); else if (r == XROW || r == CROW) draw_roll_action(r);
+    else draw_slider(r);
 }
 
 /* a place of the list without a row: paper (and, without a film, a short note in the second place) */

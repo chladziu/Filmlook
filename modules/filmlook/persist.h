@@ -5,6 +5,7 @@
  *   film=<full name>        the chosen film ("Off" = no effect)
  *   push=<stops>            push / pull of the chosen film
  *   mpix=<0..3>             JPG with the effect: off / 5.2 / 10 / 21 Mpix (the 5D2's own S-RAW, M-RAW and full sizes)
+ *   roll=<0..4>             film roll: off / 6 / 12 / 24 / 36 photos (the rolls themselves are in FILMLOOK.ROL, see roll.h)
  *                           (v0.12 wrote jpg=<0..2>: off / half / full; still read: 1 -> 5.2 Mpix, 2 -> 21 Mpix)
  *   mod=<film>;<10 numbers> the sliders of a film the user changed (order of sl_def); a film without this line has the
  *                           defaults. The films themselves live in the module and are never rewritten.
@@ -20,7 +21,7 @@ static int cfg_build(void)
 {
     int i, j, n;
     if (cur_slot > 0) vals_get(&film_v[cur_slot - 1]);  /* the sliders in use go back to their film first */
-    n = snprintf(cfg_buf, sizeof(cfg_buf), "film=%s\npush=%d\nmpix=%d\ntheme=%d\nlang=%d\n", st_film > 0 ? films[st_film - 1].full : "Off", st_push, st_jpg, st_theme, st_lang);
+    n = snprintf(cfg_buf, sizeof(cfg_buf), "film=%s\npush=%d\nmpix=%d\nroll=%d\ntheme=%d\nlang=%d\n", st_film > 0 ? films[st_film - 1].full : "Off", st_push, st_jpg, st_roll, st_theme, st_lang);
     for (i = 0; i < BASE_COUNT && n < (int)sizeof(cfg_buf) - 200; i++) {
         const short *v = (const short *)&film_v[i];
         int differs = 0;
@@ -102,6 +103,7 @@ static void cfg_parse(int n)
         parse_after(cfg_buf, "push", &st_push);
         if (parse_after(cfg_buf, "jpg", &st_jpg)) st_jpg = st_jpg == 2 ? 3 : st_jpg;   /* v0.12: 0 off, 1 half, 2 full */
         parse_after(cfg_buf, "mpix", &st_jpg);
+        parse_after(cfg_buf, "roll", &st_roll);
         parse_after(cfg_buf, "theme", &st_theme);
         parse_after(cfg_buf, "lang", &st_lang);
         for (s = cfg_buf; *s; ) {                       /* "mod=<film>;<10 numbers>": the sliders of a film the user changed */
@@ -154,6 +156,7 @@ static void cfg_parse(int n)
     fix_push();
     remember();
     st_jpg = clampi(st_jpg, 0, 3);
+    st_roll = clampi(st_roll, 0, RL_SIZES - 1);
     st_theme = clampi(st_theme, 0, 1);
     st_lang = clampi(st_lang, 0, NLANG - 1);
     cur_slot = 0;

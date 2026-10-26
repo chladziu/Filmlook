@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define VERSION "v0.11"
+#define VERSION "v0.15"
 #include "../films.h"
 #include "../state.h"
 #include "../panel.h"
@@ -39,19 +39,28 @@ int main(void)
         /* the tabs: one row, all together */
         {
             int tot = 0;
-            for (i = 0; i < NTABS; i++) { check_glyphs(&sf_xsb, "xsb", tab_text(i), "tab (bold)"); check_glyphs(&sf_xs, "xs", tab_text(i), "tab"); tot += sf_width(&sf_xsb, tab_text(i)) + TAB_GAP; }
+            int ids[NTABS], nn;
+            st_roll = 3; nn = tab_order(ids);                                 /* (with the icon of the rolls: the widest row of tabs) */
+            for (i = 0; i < nn; i++) {
+                check_glyphs(&sf_xsb, "xsb", tab_text(ids[i]), "tab (bold)"); check_glyphs(&sf_xs, "xs", tab_text(ids[i]), "tab");
+                tot += (ids[i] == TAB_ROLL ? RI_W : sf_width(&sf_xsb, tab_text(ids[i]))) + TAB_GAP;
+            }
+            st_roll = 0;
             if (tot > W) { printf("FAIL [%s] tabs: %d px > %d px\n", lname[l], tot, W); fails++; }
         }
         /* the big heading (name of the tab Ustawienia / Bez efektu) */
         FIT(sf_big, "big", TR(S_TAB_SET), W - 100, "heading Ustawienia");
         FIT(sf_big, "big", TR(S_TAB_NONE), W - 100, "heading Bez efektu");
+        FIT(sf_big, "big", TR(S_ROLL_TITLE), W - 100, "heading the rolls");
         /* sliders: label left of the bar */
         for (j = 0; j < NSL; j++) if (j != 3) FIT(sf_sml, "sml", TR(S_SL_EFFECT + j), BAR_X - 12 - M_L - 6, "slider label");
         /* choices: label + value */
         {
-            const int lab[3] = { S_LBL_JPG, S_LBL_LOOK, S_LBL_LANG };
+            const int lab[4] = { S_LBL_JPG, S_LBL_LOOK, S_LBL_LANG, S_LBL_ROLL };
             int k;
-            for (k = 0; k < 3; k++) FIT(sf_sml, "sml", TR(lab[k]), CH_X - M_L - 6, "settings label");
+            for (k = 0; k < 4; k++) FIT(sf_sml, "sml", TR(lab[k]), CH_X - M_L - 6, "settings label");
+            snprintf(tmp, sizeof tmp, "\xE2\x80\xB9  %s  \xE2\x80\xBA", TR(S_ROLL_OFF)); FIT(sf_sml, "sml", tmp, M_R3 - CH_X - 4, "roll option off");
+            snprintf(tmp, sizeof tmp, "\xE2\x80\xB9  %d  \xE2\x80\xBA", 36); FIT(sf_sml, "sml", tmp, M_R3 - CH_X - 4, "roll option");
             for (k = 0; k < 4; k++) {
                 snprintf(tmp, sizeof tmp, "\xE2\x80\xB9  %s  \xE2\x80\xBA", TR(S_JPG_OFF + k)); FIT(sf_sml, "sml", tmp, M_R3 - CH_X - 4, "JPG option");
             }
@@ -75,7 +84,37 @@ int main(void)
         /* the hint line (justified: the tabs are the gaps) */
         FIT(sf_xxs, "xxs", TR(S_HINT_KEYS), W - 40, "key hint");
         /* messages in the hint line */
-        { const int ms[] = { S_MSG_SAVED, S_MSG_ALRDY, S_MSG_RSTF, S_MSG_RSTA, S_MSG_ARM }; for (i = 0; i < 5; i++) FIT(sf_xxs, "xxs", TR(ms[i]), W, "message"); }
+        { const int ms[] = { S_MSG_SAVED, S_MSG_ALRDY, S_MSG_RSTF, S_MSG_RSTA, S_MSG_ARM, S_MSG_ARM2, S_MSG_GO, S_MSG_CLR }; for (i = 0; i < 8; i++) FIT(sf_xxs, "xxs", TR(ms[i]), W, "message"); }
+        /* the rolls: the two lines under the heading, a row of the list (name at the left, numbers at the right; the smaller size is the fall-back), the two actions */
+        snprintf(tmp, sizeof tmp, TR(S_ROLL_KIND), 36); FIT(sf_xs, "xs", tmp, W, "roll size line");
+        FIT(sf_xs, "xs", TR(S_ROLL_OFFNOTE), W, "roll off note");
+        snprintf(tmp, sizeof tmp, TR(S_ROLL_DEVNOTE), 36); FIT(sf_xs, "xs", tmp, W, "roll lab line");
+        FIT(sf_xs, "xs", TR(S_ROLL_NONE), W, "roll none note");
+        for (i = 0; i < BASE_COUNT; i++) {
+            char row[200];
+            int w;
+            snprintf(tmp, sizeof tmp, TR(S_ROLL_ROW), 36, 36, 36, 99);  snprintf(row, sizeof row, "%s\t%s", films[i].name, tmp);
+            check_glyphs(&sf_xs, "xs", row, "roll row");
+            w = sf_width(&sf_sml, row); if (w > W - 24 && sf_width(&sf_xs, row) > W - 24) { printf("FAIL [%s] roll row of %s: %d / %d px\n", lname[l], films[i].name, w, sf_width(&sf_xs, row)); fails++; }
+            snprintf(tmp, sizeof tmp, TR(S_ROLL_LAB), 36, 99);  snprintf(row, sizeof row, "%s\t%s", films[i].name, tmp);
+            check_glyphs(&sf_xs, "xs", row, "roll row (lab)");
+            w = sf_width(&sf_sml, row); if (w > W - 24 && sf_width(&sf_xs, row) > W - 24) { printf("FAIL [%s] roll lab row of %s: %d / %d px\n", lname[l], films[i].name, w, sf_width(&sf_xs, row)); fails++; }
+            snprintf(tmp, sizeof tmp, TR(S_ROLL_ROW0), 36, 99); snprintf(row, sizeof row, "%s\t%s", films[i].name, tmp);
+            check_glyphs(&sf_xs, "xs", row, "roll row (no size)");
+            w = sf_width(&sf_sml, row); if (w > W - 24 && sf_width(&sf_xs, row) > W - 24) { printf("FAIL [%s] roll row (no size) of %s: %d / %d px\n", lname[l], films[i].name, w, sf_width(&sf_xs, row)); fails++; }
+        }
+        {
+            const int nm[2] = { S_ROLL_GO, S_ROLL_CLR }, tx[2] = { S_ROLL_GO_N, S_ROLL_CLR_N };
+            int k;
+            for (k = 0; k < 2; k++) {
+                int w1 = sf_width(&sf_sml, TR(nm[k]));
+                snprintf(tmp, sizeof tmp, TR(tx[k]), 36);
+                check_glyphs(&sf_sml, "sml", TR(nm[k]), "roll action"); check_glyphs(&sf_sml, "sml", tmp, "roll action text"); check_glyphs(&sf_sml, "sml", TR(S_ROLL_NOTHING), "roll action none");
+                if (w1 + 30 + sf_width(&sf_sml, tmp) > M_R3 - M_L) { printf("FAIL [%s] roll action %d: %d + %d px\n", lname[l], k, w1, sf_width(&sf_sml, tmp)); fails++; }
+                if (w1 + 30 + sf_width(&sf_sml, TR(S_ROLL_NOTHING)) > M_R3 - M_L) { printf("FAIL [%s] roll action (none) %d\n", lname[l], k); fails++; }
+                if (w1 + 30 + sf_width(&sf_sml, TR(S_RST_CONF)) > M_R3 - M_L) { printf("FAIL [%s] roll action when asking %d\n", lname[l], k); fails++; }
+            }
+        }
         /* the JPG status at the top left (the title starts right of it) */
         FIT(sf_xxs, "xxs", TR(S_ST_WAIT), 132, "status wait");
         FIT(sf_xxs, "xxs", TR(S_ST_WRITE), 132, "status write");

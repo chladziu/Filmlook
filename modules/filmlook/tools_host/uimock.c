@@ -1,10 +1,11 @@
 /* PC test of the panel screen: uimock <out.ppm> [film full name] [key=value ...]
- * keys: row top push strength grain contrast hal fade warm shadow high sat vig jpg prog=<0..1000> msg=<text> status=<text>
+ * keys: row top push strength grain contrast hal fade warm shadow high sat vig jpg roll=<0..4> rolltab=<0|1> demo=<0..3> (sample rolls) armed
+ *       prog=<0..1000> msg=<text> status=<text>
  * The picture is made by the very same panel.h / serif.h that the camera runs. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define VERSION "v0.12"
+#define VERSION "v0.15"
 #include "../films.h"
 #include "../state.h"
 #include "../panel.h"
@@ -13,7 +14,7 @@ static unsigned char fb[720 * 480];
 
 int main(int argc, char **argv)
 {
-    int i, r, c;
+    int i, r, c, demo = 0;
     FILE *f;
     if (argc < 2) return 1;
     memo_init();
@@ -45,7 +46,21 @@ int main(int argc, char **argv)
         else if (!strncmp(a, "theme=", 6)) st_theme = v;
         else if (!strncmp(a, "lang=", 5)) st_lang = v;
         else if (!strncmp(a, "set=", 4)) st_set = v;
-        else if (!strncmp(a, "armed=", 6)) reset_armed = v;
+        else if (!strncmp(a, "armed=", 6)) { reset_armed = v; roll_armed = v > 1 ? v : 0; }
+        else if (!strncmp(a, "roll=", 5)) st_roll = v;
+        else if (!strncmp(a, "rolltab=", 8)) st_rolltab = v;
+        else if (!strncmp(a, "demo=", 5)) demo = v;
+    }
+    if (demo > 0) {                                     /* sample rolls: some films with photos on the roll, one in the lab, rolls developed before */
+        static const short lk[RL_NLK] = { 100, 100, 0, 0, 0, 0, 0, 0, 0 };
+        int k, n;
+        rl_reset();
+        for (k = 0; k < 9; k++) rl_add(1, 100 + k, 2, "B:/DCIM/100EOS5D/", "IMG_", lk);
+        for (k = 0; k < 17; k++) rl_add(5, 200 + k, 2, "B:/DCIM/100EOS5D/", "IMG_", lk);
+        rl_done[0] = 2; rl_done[4] = 0; rl_done[7] = 5;
+        if (demo > 1) for (k = 0; k < 24; k++) rl_add(8, 300 + k, 2, "B:/DCIM/100EOS5D/", "IMG_", lk);
+        if (demo > 2) { for (k = 0; k < 9; k++) rl_add(11, 400 + k, 2, "B:/DCIM/100EOS5D/", "IMG_", lk); rl_add(13, 500, 2, "B:/DCIM/100EOS5D/", "IMG_", lk); rl_add(14, 501, 2, "B:/DCIM/100EOS5D/", "IMG_", lk); }
+        n = rl_release(8); (void)n;
     }
     fix_push();
     cur_slot = st_film;                                 /* the numbers given above are the sliders of this film */
