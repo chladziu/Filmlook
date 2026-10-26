@@ -1,0 +1,169 @@
+name: desktop
+
+# FILM LOOK DESKTOP: the film engine of the module on the computer (see desktop/). Runs ONLY when the branch "desktop" is pushed.
+# Result: Actions -> this run -> Artifacts -> FILMLOOK_DESKTOP (the page for the browser, the Windows program, the macOS program).
+# The camera module is built by build.yml, not here.
+
+on:
+  push:
+    branches: [desktop]
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------- the page (works on Windows and macOS), tests on Linux
+  web:
+    name: page + tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compilers (clang with the wasm32 target, lld)
+        run: sudo apt-get update && sudo apt-get install -y clang lld
+      - name: Build the page and the command line version
+        run: ./desktop/build.sh all
+      - name: Test tools
+        run: |
+          pip install pillow numpy playwright
+          python -m playwright install --with-deps chromium
+      - name: Test photos
+        run: python desktop/tests/make_samples.py "$RUNNER_TEMP/samples"
+      - name: Same pictures as the module's hostdev, same bytes in the page and the command line version
+        run: python desktop/tests/run_tests.py --cli desktop/out/filmlook_cli --samples "$RUNNER_TEMP/samples" --wasm desktop/out/fd_engine.wasm --hashes desktop/out/hashes-linux.txt
+      - name: The page in a real browser
+        run: python desktop/tests/test_page.py desktop/out/FILMLOOK_DESKTOP.html desktop/out/filmlook_cli "$RUNNER_TEMP/samples" desktop/out/screens
+      - uses: actions/upload-artifact@v4
+        with:
+          name: strona-html
+          path: desktop/out/FILMLOOK_DESKTOP.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hashes-linux
+          path: desktop/out/hashes-linux.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zrzuty-ekranu-testu
+          path: desktop/out/screens
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------- Windows x64
+  windows:
+    name: program (Windows x64)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: C compiler (MinGW gcc)
+        run: |
+          if ! command -v gcc >/dev/null; then choco install mingw -y --no-progress; fi
+          gcc --version
+      - name: Build
+        run: ./desktop/build.sh cli
+      - name: Test tools and photos
+        run: |
+          pip install pillow numpy
+          python desktop/tests/make_samples.py "$RUNNER_TEMP/samples"
+      - name: Same pictures as the module's hostdev (built here too)
+        run: python desktop/tests/run_tests.py --cli desktop/out/filmlook_cli.exe --samples "$RUNNER_TEMP/samples" --cc gcc --hashes desktop/out/hashes-windows.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: program-windows
+          path: desktop/out/filmlook_cli.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hashes-windows
+          path: desktop/out/hashes-windows.txt
+
+  # ---------------------------------------------------------------- macOS Intel (x86_64)
+  macos:
+    name: program (macOS Intel)
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build (x86_64, runs on macOS 10.13 and newer)
+        run: |
+          uname -m
+          CFLAGS_EXTRA="-arch x86_64 -mmacosx-version-min=10.13" ./desktop/build.sh cli
+          file desktop/out/filmlook_cli
+      - name: Test tools and photos
+        run: |
+          pip install pillow numpy
+          python desktop/tests/make_samples.py "$RUNNER_TEMP/samples"
+      - name: Same pictures as the module's hostdev (built here too)
+        run: python desktop/tests/run_tests.py --cli desktop/out/filmlook_cli --samples "$RUNNER_TEMP/samples" --cc cc --hashes desktop/out/hashes-macos.txt
+      - name: Pack (a zip would lose the "executable" mark)
+        run: tar -czf desktop/out/filmlook_cli_macos.tar.gz -C desktop/out filmlook_cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: program-macos
+          path: desktop/out/filmlook_cli_macos.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hashes-macos
+          path: desktop/out/hashes-macos.txt
+
+  # ---------------------------------------------------------------- the same bytes everywhere?
+  compare:
+    name: same result on Linux, Windows and macOS
+    needs: [web, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hashes-*
+          merge-multiple: true
+      - name: Compare
+        run: |
+          ls -la
+          wc -l hashes-*.txt
+          diff hashes-linux.txt hashes-windows.txt && echo "Linux == Windows"
+          diff hashes-linux.txt hashes-macos.txt && echo "Linux == macOS"
+
+  # ---------------------------------------------------------------- everything in one download
+  package:
+    name: FILMLOOK_DESKTOP (everything in one)
+    needs: [web, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: strona-html
+          path: in/html
+      - uses: actions/download-artifact@v4
+        with:
+          name: program-windows
+          path: in/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: program-macos
+          path: in/macos
+      - name: Put it together
+        run: |
+          P=FILMLOOK_DESKTOP
+          mkdir -p $P/Windows $P/macOS
+          cp in/html/FILMLOOK_DESKTOP.html $P/
+          cp in/windows/filmlook_cli.exe $P/Windows/
+          cp in/macos/filmlook_cli_macos.tar.gz $P/macOS/
+          cp desktop/CZYTAJ_MNIE.txt $P/
+          cp modules/filmlook/engine/LICENSE $P/LICENSE_GPL2_silnik.txt
+          cp THIRD_PARTY_LICENSES.txt $P/
+          find $P -type f | sort
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FILMLOOK_DESKTOP
+          path: FILMLOOK_DESKTOP

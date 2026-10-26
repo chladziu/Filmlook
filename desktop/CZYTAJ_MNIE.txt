@@ -1,0 +1,52 @@
+FILM LOOK DESKTOP - film z aparatu na komputerze
+================================================
+
+To jest ten sam silnik, który działa w module w aparacie (5D Mark II), tylko na komputerze,
+bez ograniczeń aparatu: wybierasz film i suwaki (te same, co w aparacie) oraz rozmiar,
+a program robi z Twoich zdjęć gotowe pliki JPG z wyglądem filmu.
+Oryginały zostają nietknięte. Źródłem może być JPG z aparatu albo plik CR2
+(program bierze z niego pełnowymiarowy podgląd JPG, który aparat zapisuje w CR2).
+
+
+NAJPROSTSZY SPOSÓB (Windows i Mac): plik FILMLOOK_DESKTOP.html
+--------------------------------------------------------------
+1. Kliknij dwa razy FILMLOOK_DESKTOP.html. Otworzy się w przeglądarce
+   (Chrome, Edge, Firefox, Safari). Nic nie trzeba instalować i nie trzeba internetu.
+   Zdjęcia nigdzie nie są wysyłane - wszystko dzieje się na Twoim komputerze.
+2. Krok 1: przeciągnij na stronę zdjęcia (JPG albo CR2) albo cały folder z karty
+   (np. DCIM). Można też użyć przycisków "Wybierz zdjęcia" / "Wybierz folder".
+   Gdy w folderze jest para RAW+JPG, domyślnie brany jest tylko plik CR2.
+3. Krok 2: wybierz film (zakładki: Kolor, Czarno-biały, Slajd) i ustaw suwaki.
+   Po prawej widać podgląd zdjęcia z filmem; przytrzymaj zdjęcie, żeby zobaczyć oryginał.
+   Przycisk "Pokaż wszystkie filmy na moim zdjęciu" pokazuje Twoje zdjęcie w każdym filmie.
+   Przycisk "Wczytaj ustawienia z karty" bierze suwaki zapisane przez moduł w aparacie
+   (plik ML/SETTINGS/FILMLOOK.TXT na karcie).
+4. Krok 3: rozmiar (5616x3744, 3861x2574 albo 2784x1856) i jakość JPG (domyślnie 95).
+   Zdjęcie nigdy nie jest powiększane.
+5. Krok 4: "Wywołaj". Kilka zdjęć naraz wywołuje się równolegle.
+   Potem "Pobierz wszystko jako ZIP" (albo "Pobierz" przy jednym zdjęciu).
+   W Chrome i Edge jest też "Zapisz w folderze" - zdjęcia lądują od razu w wybranym folderze.
+   Nazwa wyniku: nazwa zdjęcia + nazwa filmu (+ _M albo _S dla mniejszych rozmiarów).
+Strona pamięta ostatnio wybrany film, suwaki, rozmiar i jakość.
+
+
+DRUGI SPOSÓB: program w wierszu poleceń (foldery Windows i macOS)
+------------------------------------------------------------------
+Windows (filmlook_cli.exe): przeciągnij zdjęcia albo folder na filmlook_cli.exe,
+  program zapyta o film i rozmiar. Wyniki trafiają do folderu FILMLOOK obok zdjęć.
+  Jeśli Windows pokaże niebieskie okno "System Windows ochronił ten komputer",
+  kliknij "Więcej informacji", a potem "Uruchom mimo to" (program nie ma płatnego podpisu).
+Mac (filmlook_cli_macos.tar.gz): rozpakuj, otwórz Terminal i wpisz (raz):
+    xattr -d com.apple.quarantine filmlook_cli
+  potem np.:
+    ./filmlook_cli --film "Kodak Portra 400" --size M --ziarno 80 ~/Zdjecia/folder
+  Lista filmów: ./filmlook_cli --list    Wszystkie opcje: ./filmlook_cli --help
+  Na Macu łatwiej jest użyć strony HTML (nie ma ostrzeżeń systemu).
+
+
+LICENCJE
+--------
+Silnik obróbki zdjęć pochodzi z Soup Engine (licencja GPL v2, plik LICENSE_GPL2_silnik.txt),
+rozszerzonego o film look. Program jako całość jest więc na licencji GPL v2.
+Wyglądy filmów: własne presety oraz EmulsionPresets (licencja MIT, plik THIRD_PARTY_LICENSES.txt).
+Kod źródłowy: https://github.com/chladziu/filmlook (katalog desktop/ i modules/filmlook/).
