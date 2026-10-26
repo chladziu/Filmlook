@@ -18,6 +18,12 @@ import zipfile
 
 from playwright.sync_api import sync_playwright
 
+for _s in (sys.stdout, sys.stderr):                 # utf-8 even when the system's code page cannot print Polish letters
+    try:
+        _s.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 argv = [a for a in sys.argv[1:]]
 only = None
 if "--only" in argv:
@@ -178,15 +184,44 @@ def scenario_portrait(browser):
     page.context.close()
 
 
-SCENARIOS = [("main", scenario_main), ("parallel", scenario_parallel), ("inline", scenario_inline), ("portrait", scenario_portrait)]
+def scenario_folder(browser):
+    """"Zapisz w folderze" (the File System Access API of Chrome / Edge) with a made-up folder object: every finished photo is
+    written at once and equals what the command line version makes"""
+    import zlib
+    mock = ("window.__written = {}; window.showDirectoryPicker = async () => ({ name: 'MOCK', getFileHandle: async (n) => ({"
+            " createWritable: async () => { const parts = []; return { write: async (b) => { parts.push(b); },"
+            " close: async () => { window.__written[n] = new Blob(parts); } }; } }) });")
+    page = open_page(browser, mock)
+    check(page.is_visible("#btnFolder"), "the folder button is there when the browser can write to folders")
+    page.set_input_files("#inFiles", [os.path.join(photos, "synth_small.jpg"), os.path.join(photos, "synth_landscape.cr2")])
+    page.wait_for_selector("#list li")
+    page.click("#btnFolder")
+    page.wait_for_function("document.querySelector('#folderInfo').textContent.indexOf('MOCK') >= 0", timeout=10000)
+    page.click("#btnRun")
+    page.wait_for_function("document.querySelector('#runInfo').textContent.indexOf('Gotowe') === 0", timeout=300000)
+    got = page.evaluate("(async () => { const o = {}; for (const [k, b] of Object.entries(window.__written)) o[k] = [b.size, fdCrc32(new Uint8Array(await b.arrayBuffer()))]; return o; })()")
+    check(sorted(got) == ["synth_landscape_Kodak_Portra_400.jpg", "synth_small_Kodak_Portra_400.jpg"], "both photos written to the folder: %s" % sorted(got))
+    work = tempfile.mkdtemp()
+    for src in ("synth_small.jpg", "synth_landscape.cr2"):
+        subprocess.run([cli, "--quiet", "--film", "1", "--quality", "95", "--out", work, os.path.join(photos, src)], check=True, capture_output=True)
+    for name, (size, crc) in got.items():
+        want = open(os.path.join(work, name), "rb").read()
+        check(size == len(want) and crc == zlib.crc32(want), "%s in the folder == command line" % name)
+    shutil.rmtree(work, ignore_errors=True)
+    check(not page.errors, "no errors in the browser console: %s" % page.errors[:3])
+    page.context.close()
+
+
+SCENARIOS = [("main", scenario_main), ("parallel", scenario_parallel), ("inline", scenario_inline), ("portrait", scenario_portrait),
+             ("folder", scenario_folder)]
 with sync_playwright() as p:
     browser = p.chromium.launch()
     for name, fn in SCENARIOS:
         if only and only != name:
             continue
         print("\n== " + name, flush=True)
-        if name == "portrait" and not os.path.exists(os.path.join(photos, "synth_portrait.cr2")):
-            print("(skipped: no synth_portrait.cr2 in the folder)")
+        if name in ("portrait", "folder") and not os.path.exists(os.path.join(photos, "synth_portrait.cr2")):
+            print("(skipped: no synth_portrait.cr2 etc. in the folder: use tests/make_samples.py)")
             continue
         fn(browser)
     browser.close()

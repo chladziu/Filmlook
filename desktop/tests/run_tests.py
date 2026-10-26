@@ -17,6 +17,12 @@ import subprocess
 import sys
 import tempfile
 
+for _s in (sys.stdout, sys.stderr):                 # utf-8 even when the system's code page cannot print Polish letters
+    try:
+        _s.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 MODULE = os.path.join(ROOT, "modules", "filmlook")
@@ -30,16 +36,52 @@ ap.add_argument("--hashes")
 ap.add_argument("--cc", default=os.environ.get("CC", "cc"))
 ap.add_argument("--no-hostdev", action="store_true", help="do not compare with hostdev")
 args = ap.parse_args()
+args.cli = os.path.abspath(args.cli)
+INFO = "%s, python %s, stdout %s, cc %s" % (sys.platform, sys.version.split()[0], sys.stdout.encoding, args.cc)
 
 fails = []
 hashes = []
+notes = []                                                 # details of failures (stderr of programs, first differing byte ...)
 work = tempfile.mkdtemp(prefix="fdtest_")
+
+
+def annotate(title, text):
+    """on GitHub Actions: a red annotation with the text (the job's log can not always be read, the annotations can)"""
+    if os.environ.get("GITHUB_ACTIONS"):
+        t = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print("::error title=%s::%s" % (title, t[:6000]), flush=True)
+
+
+def note(text):
+    print(text, flush=True)
+    notes.append(text)
 
 
 def check(ok, msg):
     print(("ok    " if ok else "FAIL  ") + msg, flush=True)
     if not ok:
         fails.append(msg)
+
+
+def same_file(a, b, msg):
+    """check that two files are byte for byte the same; if not, say where they start to differ"""
+    da, db = open(a, "rb").read(), open(b, "rb").read()
+    ok = da == db
+    if not ok:
+        k = next((i for i in range(min(len(da), len(db))) if da[i] != db[i]), min(len(da), len(db)))
+        note("   %s: sizes %d and %d, first difference at byte %d" % (msg, len(da), len(db), k))
+    check(ok, msg)
+
+
+def crash(kind, value, tb):
+    import traceback
+    text = "".join(traceback.format_exception(kind, value, tb))
+    print(text, flush=True)
+    annotate("run_tests crashed", INFO + "\n" + text + "\n".join(fails[-10:]))
+    sys.__excepthook__(kind, value, tb)
+
+
+sys.excepthook = crash
 
 
 def sha(path):
@@ -96,7 +138,7 @@ if not args.no_hostdev:
     r = run([args.cc, "-O2", "-std=gnu99", "-DSE_HOSTED=1", "-I", MODULE, "-o", exe,
              os.path.join(MODULE, "tools_host", "hostdev.c"), os.path.join(MODULE, "engine_unit.c")])
     if r.returncode != 0:
-        print(r.stderr.decode(errors="replace"))
+        note(r.stderr.decode(errors="replace") + r.stdout.decode(errors="replace"))
         check(False, "hostdev builds")
     else:
         hostdev = exe
@@ -132,7 +174,7 @@ def cli_make(photo, film, sl, extra, outname):
     r = run([args.cli, "--quiet", "--quality", "95"] + cli_args(film, sl) + extra + ["--out", d, photo])
     out = os.listdir(d)
     if r.returncode != 0 or len(out) != 1:
-        print(r.stderr.decode(errors="replace"))
+        note("command line version: exit %d, files %s\n%s%s" % (r.returncode, out, r.stderr.decode(errors="replace"), r.stdout.decode(errors="replace")))
         return None
     return os.path.join(d, out[0])
 
@@ -144,7 +186,7 @@ def wasm_make(photo, film, size, sl, outpath):
     a += [str(s.get(k, 0)) for k in ORDER]
     r = run(a)
     if r.returncode != 0:
-        print(r.stderr.decode(errors="replace"))
+        note(r.stderr.decode(errors="replace"))
         return None
     return outpath
 
@@ -164,10 +206,10 @@ for photo in photos:
                 hd = [hostdev, path, ref, str(film), str(eng_scale), "quality=95"] + ["%s=%d" % kv for kv in sl.items()]
                 r = run(hd)
                 if r.returncode != 0:
-                    print(r.stderr.decode(errors="replace"))
+                    note("hostdev: exit %d\n%s" % (r.returncode, r.stderr.decode(errors="replace")))
                     check(False, tag + ": hostdev ran")
                 else:
-                    check(sha(ref) == sha(got), tag + ": command line == hostdev")
+                    same_file(ref, got, tag + ": command line == hostdev")
             if args.wasm:
                 w = wasm_make(path, film, 100 + eng_scale, sl, os.path.join(work, "w.jpg"))
                 check(bool(w) and sha(w) == sha(got), tag + ": browser version == command line")
@@ -194,7 +236,7 @@ for photo in photos:
         if size_name == "L" and hostdev:
             ref = os.path.join(work, "ref.jpg")
             run([hostdev, path, ref, str(film), "1", "quality=95"] + ["%s=%d" % kv for kv in sl.items()])
-            check(sha(ref) == sha(got), tag + ": size L == hostdev")
+            same_file(ref, got, tag + ": size L == hostdev")
 
 # a folder and a file with Polish letters in the name (the command line version must open and write them on every system)
 uni_dir = os.path.join(work, "zażółć gęślą jaźń")
@@ -204,7 +246,9 @@ with open(os.path.join(args.samples, photos[0]), "rb") as fi, open(uni_src, "wb"
     fo.write(fi.read())
 r = run([args.cli, "--quiet", "--film", "1", "--size", "S", uni_dir])
 made = os.path.join(uni_dir, "FILMLOOK")
-check(r.returncode == 0 and os.path.isdir(made) and len(os.listdir(made)) >= 1, "folder and file names with Polish letters: " + str(os.listdir(made) if os.path.isdir(made) else r.stderr.decode(errors="replace")[:200]))
+if not (r.returncode == 0 and os.path.isdir(made)):
+    note("exit %d\n%s%s" % (r.returncode, r.stderr.decode(errors="replace"), r.stdout.decode(errors="replace")))
+check(r.returncode == 0 and os.path.isdir(made) and len(os.listdir(made)) >= 1, "folder and file names with Polish letters")
 
 # the resizer against an independent exact area average (needs numpy and pillow; skipped when they are not there)
 try:
@@ -250,4 +294,6 @@ if args.hashes:
     print("wrote", args.hashes, "(%d lines)" % len(hashes))
 
 print("\n%d problem(s)" % len(fails))
+if fails:
+    annotate("%d problem(s) in run_tests" % len(fails), INFO + "\n" + "\n".join(fails[:40]) + "\n---\n" + "\n".join(notes)[:4000])
 sys.exit(1 if fails else 0)

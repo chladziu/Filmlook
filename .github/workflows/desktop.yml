@@ -11,6 +11,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHONUTF8: '1'      # Polish letters in the test output on every system
+
 jobs:
   # ---------------------------------------------------------------- the page (works on Windows and macOS), tests on Linux
   web:
