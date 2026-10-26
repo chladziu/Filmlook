@@ -57,7 +57,7 @@ static int st_lang = 0;                   /* 0 Polski, 1 English, 2 Deutsch, 3 E
     X(S_ST_BUSY, "obróbka: %d,%d s", "took: %d.%d s", "Dauer: %d,%d s", "tardó: %d,%d s", "trvalo: %d,%d s", "durata: %d,%d s", "durée : %d,%d s", "idő: %d,%d s", "süre: %d,%d s") \
     X(S_LBL_ROLL, "Rolka filmu (zdjęć)", "Film roll (shots)", "Filmrolle (Bilder)", "Carrete (fotos)", "Role filmu (snímků)", "Rullino (scatti)", "Pellicule (vues)", "Filmtekercs (kép)", "Film rulosu (kare)") \
     X(S_ROLL_OFF, "wyłączona", "off", "aus", "desactivado", "vypnuto", "disattivato", "désactivée", "kikapcsolva", "kapalı") \
-    X(S_ROLL_TITLE, "Rolki filmu", "Film rolls", "Filmrollen", "Carretes", "Role filmu", "Rullini", "Pellicules", "Filmtekercsek", "Film ruloları") \
+    X(S_ROLL_TITLE, "Rolki filmu", "Film rolls", "Filmrollen", "Carretes", "Role filmu", "Rullini", "Pellicules", "Filmtekercsek", "Film rulosu") \
     X(S_ROLL_KIND, "Zdjęć na rolkę: %d", "Shots per roll: %d", "Bilder pro Rolle: %d", "Fotos por carrete: %d", "Snímků na roli: %d", "Scatti per rullino: %d", "Vues par pellicule : %d", "Képek tekercsenként: %d", "Rulodaki kare sayısı: %d") \
     X(S_ROLL_OFFNOTE, "Rolka wyłączona w Ustawieniach", "Roll is off in Settings", "Rolle in den Einstellungen aus", "Carrete desactivado en Ajustes", "Role je vypnutá v Nastavení", "Rullino disattivato nelle Impostazioni", "Pellicule désactivée dans Réglages", "A tekercs ki van kapcsolva a Beállításokban", "Rulo Ayarlar'da kapalı") \
     X(S_ROLL_DEVNOTE, "Wywoływanie: zostało %d", "Developing: %d left", "Entwicklung: noch %d", "Revelando: faltan %d", "Vyvolávání: zbývá %d", "Sviluppo: ne mancano %d", "Développement : encore %d", "Előhívás: még %d", "Banyo: %d kaldı") \

@@ -144,26 +144,25 @@ static void draw_mark(int on, int y, int h)
  * the gap), so nothing moves when the choice changes, and the slots plus a blank at both ends cover the whole row:
  * every pixel is rewritten in one pass, no wiping before. The chosen tab is bold (and rust while the row is selected). */
 #define TAB_GAP 24
-#define RI_W 28                                   /* the icon of the film rolls: a wound film with its end, 28 x 21 px */
-#define RI_H 21
+#define RI_W 28                                   /* the icon of the film rolls: a film cartridge with the end of the film, 28 x 22 px */
+#define RI_H 22
 static const char *tab_text(int i) { return i == TAB_ROLL ? " " : TR(S_TAB_NONE + i); }     /* 0 no effect, 1..TYPE_COUNT the types, TAB_SET "Ustawienia" (the texts follow each other in i18n.h); TAB_ROLL has an icon, no text */
 
-/* x, y = top left corner (RI_W x RI_H px). A roll of film seen from the side: the wound film is a ring with a hole in the middle and a thin gap
- * between its turns, and the end of the film comes out of it to the right with a perforation along both edges. Whole numbers only */
+/* x, y = top left corner (RI_W x RI_H px). A film cartridge with the end of the film coming out of it. Drawn from rectangles: the body of the
+ * cartridge with its two flanges and spindles, a ridge, and the film with two perforations on each edge */
 static void draw_roll_icon(int x, int y, int col)
 {
-    int cx = 10, cy = 10, py, px, k;
-    for (py = 0; py < 21; py++) {
-        for (px = 0; px < 21; px++) {
-            int dx = px - cx, dy = py - cy, d2 = dx * dx + dy * dy;
-            if (d2 > 97 || d2 < 9 || (d2 > 30 && d2 < 42)) continue;           /* outside, the hole, the gap between the turns */
-            ui_fill(col, x + px, y + py, 1, 1);
-        }
-    }
-    ui_fill(col, x + 12, y + 13, 16, 8);                                         /* the end of the film */
-    for (k = 0; k < 4; k++) {
-        ui_fill(PC_BG, x + 14 + 4 * k, y + 14, 2, 2);                             /* perforations, upper edge */
-        ui_fill(PC_BG, x + 14 + 4 * k, y + 18, 2, 2);                             /* lower edge */
+    int k;
+    ui_fill(col, x + 6, y, 6, 3);                 /* spindle, top */
+    ui_fill(col, x + 1, y + 3, 16, 2);            /* flange, top */
+    ui_fill(col, x + 2, y + 5, 14, 12);           /* body */
+    ui_fill(PC_BG, x + 5, y + 7, 1, 8);           /* ridge */
+    ui_fill(col, x + 1, y + 17, 16, 2);           /* flange, bottom */
+    ui_fill(col, x + 6, y + 19, 6, 3);            /* spindle, bottom */
+    ui_fill(col, x + 16, y + 7, 12, 10);          /* the film */
+    for (k = 0; k < 2; k++) {
+        ui_fill(PC_BG, x + 18 + 4 * k, y + 8, 2, 2);
+        ui_fill(PC_BG, x + 18 + 4 * k, y + 14, 2, 2);
     }
 }
 
