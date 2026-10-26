@@ -268,11 +268,11 @@ try:
         return np.moveaxis((S(b) - S(a)) / (n_in / n_out), 0, axis)
 
     big = [f for f in photos if f.lower().endswith((".jpg", ".jpeg", ".cr2"))]
-    for photo in big[:2]:
+    for pi, photo in enumerate(big[:2]):
         path = os.path.join(args.samples, photo)
         outs = {}
         for size_name in ("L", "M", "S"):
-            d = os.path.join(work, "rs_" + size_name)
+            d = os.path.join(work, "rs_%d_%s" % (pi, size_name))          # a new folder for every photo and size: listdir() finds the one file
             os.makedirs(d, exist_ok=True)
             run([args.cli, "--quiet", "--film", "1", "--efekt", "0", "--ziarno", "0", "--quality", "100", "--size", size_name, "--out", d, path])
             outs[size_name] = np.asarray(Image.open(os.path.join(d, os.listdir(d)[0])).convert("RGB"))
