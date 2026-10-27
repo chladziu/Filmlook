@@ -27,7 +27,7 @@ function setVal(key, v, quiet) {
 }
 function afterChange(key) {
   if (key && /^(cg_|ton_mode)/.test(key)) paintWheels();
-  if (key && /^(ton_mode|cg_|filter)/.test(key)) refreshChips();
+  if (!key || /^(ton_mode|cg_|filter|wb_)/.test(key)) refreshChips();
   updateMods();
   save(); schedulePreview(); staleResults();
 }
@@ -69,8 +69,10 @@ function mixerKeys(mono) {
 }
 function sectionList() {
   var mono = isMono(), L = [];
-  L.push({ id: 'film', title: 'Film i ziarno', keys: ['strength', 'grain', 'gsize', 'grough', 'vig', 'fade'], body: bodyRows(['strength', 'grain', 'gsize', 'grough', 'vig', 'fade']) });
+  var fk = mono ? ['strength', 'grain', 'gsize', 'grough', 'vig', 'fade'] : ['strength', 'grain', 'gsize', 'grough', 'gcolor', 'vig', 'fade'];
+  L.push({ id: 'film', title: 'Film i ziarno', keys: fk, body: bodyRows(fk) });
   L.push({ id: 'light', title: 'Światło', keys: ['expo', 'contrast', 'hi_t', 'sh_t', 'wh_t', 'bl_t'], body: bodyRows(['expo', 'contrast', 'hi_t', 'sh_t', 'wh_t', 'bl_t']) });
+  L.push({ id: 'curves', title: 'Krzywe', keys: [], body: bodyCurves, reset: crvReset, mod: crvAnyMod });
   if (mono) {
     L.push({ id: 'filter', title: 'Filtr barwny', keys: ['filter', 'filter_amt'], body: bodyFilter });
     L.push({ id: 'tone', title: 'Tonowanie', keys: toneKeys(), body: bodyTone });
@@ -95,10 +97,21 @@ function bodyWB(box) {
   box.appendChild(h);
   h.querySelector('#btnPip').onclick = startPipette;
   h.querySelector('#btnAutoWB').onclick = autoWB;
+  var lg = document.createElement('p'), ch = document.createElement('div');
+  lg.className = 'hint'; lg.textContent = 'Rodzaj światła, w którym zrobiono zdjęcie — jak w menu aparatu:';
+  ch.className = 'chips'; ch.id = 'wbChips';
+  WB_PRESETS.forEach(function (w) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'pill'; b.setAttribute('data-id', w.id); b.title = w.tip;
+    b.textContent = w.name;
+    b.onclick = function () { setVal('wb_temp', w.t, true); setVal('wb_tint', w.i, true); afterChange('wb_temp'); };
+    ch.appendChild(b);
+  });
+  box.appendChild(lg); box.appendChild(ch);
   box.appendChild(makeRow('wb_temp', { trk: 'linear-gradient(90deg,#4f8dff,#d8d8d8,#ffb347)' }));
   box.appendChild(makeRow('wb_tint', { trk: 'linear-gradient(90deg,#3fbf5c,#d8d8d8,#d65fd0)' }));
   var n = document.createElement('p'); n.className = 'hint'; n.textContent = 'Poprawia kolor całego zdjęcia przed nałożeniem filmu. Program pracuje na podglądzie JPG, więc zakres jest łagodniejszy niż w prawdziwym RAW.';
   box.appendChild(n);
+  refreshChips();
 }
 
 function bodySkin(box) {
@@ -195,7 +208,14 @@ function paintWheels() {
   });
 }
 function refreshChips() {
-  var tc = $('#toneChips'), fc = $('#filterChips');
+  var tc = $('#toneChips'), fc = $('#filterChips'), wc = $('#wbChips');
+  if (wc) {
+    var t = val('wb_temp'), ti = val('wb_tint');
+    Array.prototype.forEach.call(wc.children, function (b) {
+      var w = WB_PRESETS.filter(function (x) { return x.id === b.getAttribute('data-id'); })[0];
+      b.setAttribute('aria-pressed', String(w.t === t && w.i === ti));
+    });
+  }
   if (tc) {
     var cur = null;
     if (val('ton_mode') === 0) cur = 'film';
@@ -218,7 +238,7 @@ function renderAdjust() {
   ROWS = {};
   box.innerHTML = '';
   tb = document.createElement('div'); tb.className = 'adjbar';
-  tb.innerHTML = '<span class="muted small">Korekta</span><span class="grow"></span><button type="button" class="btn sm" id="rsFilm" title="Przywraca suwaki tego filmu do wartości domyślnych">Resetuj film</button><button type="button" class="btn sm" id="rsScene" title="Zeruje światło, balans bieli, tony skóry i mikser kolorów">Resetuj korekty</button>';
+  tb.innerHTML = '<span class="muted small">Korekta</span><span class="grow"></span><button type="button" class="btn sm" id="rsFilm" title="Przywraca suwaki tego filmu do wartości domyślnych">Resetuj film</button><button type="button" class="btn sm" id="rsScene" title="Zeruje światło, krzywe, balans bieli, tony skóry i mikser kolorów">Resetuj korekty</button>';
   box.appendChild(tb);
   tb.querySelector('#rsFilm').onclick = function () { delete S.looks[S.film]; afterReset(); };
   tb.querySelector('#rsScene').onclick = function () { S.scene = {}; afterReset(); };
@@ -237,6 +257,7 @@ function renderAdjust() {
     sh.querySelector('.rs').onclick = function (ev) {
       ev.stopPropagation();
       s.keys.forEach(function (k) { var c = CTRL[k]; store(c)[k] = c.def; });
+      if (s.reset) s.reset();
       if (s.id === 'tone') { setVal('ton_mode', 0, true); }
       if (s.id === 'hsl' && isMono()) mixerKeys(false).forEach(function (k) { if (/^lum_/.test(k)) store(CTRL[k])[k] = 0; });
       afterReset();
@@ -244,7 +265,7 @@ function renderAdjust() {
     el.appendChild(sh); el.appendChild(body);
     box.appendChild(el);
     s.body(body);
-    el.__keys = s.keys;
+    el.__keys = s.keys; el.__mod = s.mod;
   });
   updateMods();
 }
@@ -252,13 +273,13 @@ function afterReset() { renderAdjust(); save(); schedulePreview(); staleResults(
 
 function updateMods() {
   Array.prototype.forEach.call(document.querySelectorAll('#adj .sec'), function (el) {
-    el.classList.toggle('mod', anyMod(el.__keys || []));
+    el.classList.toggle('mod', anyMod(el.__keys || []) || !!(el.__mod && el.__mod()));
   });
   var rf = $('#rsFilm'), rs = $('#rsScene');
   if (rf) rf.disabled = !CTRL_LIST.some(function (c) { return c.scope === 'film' && modKey(c.key); });
-  if (rs) rs.disabled = !CTRL_LIST.some(function (c) { return c.scope === 'scene' && modKey(c.key); });
+  if (rs) rs.disabled = !CTRL_LIST.some(function (c) { return c.scope === 'scene' && modKey(c.key); }) && !crvAnyMod();
   if (S.ui.hsl !== undefined) {
-    var tabs = document.querySelectorAll('#adj .tabs2 button'), kinds = ['hue', 'sat', 'lum'];
+    var tabs = document.querySelectorAll('#adj .sec[data-id="hsl"] .tabs2 button'), kinds = ['hue', 'sat', 'lum'];
     Array.prototype.forEach.call(tabs, function (b, i) { b.classList.toggle('mod', BANDS.some(function (bd) { return modKey(kinds[i] + '_' + bd[0]); })); });
   }
 }

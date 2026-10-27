@@ -9,7 +9,7 @@ same picture on every computer?
   4. a file with the SHA-256 of every result: the same file must come out on Windows, macOS and Linux (compared by the workflow)
 
 usage: run_tests.py --cli filmlook_cli --samples DIR [--wasm fd_engine.wasm --node node] [--hashes hashes.txt] [--cc cc]
-The samples folder holds *.jpg / *.jpeg / *.cr2 (tests/make_samples.py makes some, real camera files are better)."""
+The samples folder holds *.jpg / *.jpeg / *.cr2 / *.cr3 / *.dng (tests/make_samples.py makes some, real camera files are better)."""
 import argparse
 import hashlib
 import os
@@ -109,8 +109,25 @@ def jpeg_size(data):
     return None
 
 
+def is_container(path):
+    """CR3 and DNG: the program develops the full size JPEG inside; the module's hostdev can not open those files"""
+    return path.lower().endswith((".cr3", ".dng"))
+
+
 def source_size(path):
-    """size of the picture in a JPG, or of the preview in a CR2 (IFD0 holds its width and height)"""
+    """size of the picture in a JPG, or of the preview in a CR2 (IFD0 holds its width and height); for a CR3 / DNG the size of the
+    biggest JPEG inside (the fake CR3 'prvw_only' has a JPEG track without a 'JPEG' box: only its 1620 x 1080 preview counts)"""
+    if is_container(path):
+        data = open(path, "rb").read()
+        if "prvw_only" in os.path.basename(path).lower():
+            return 1620, 1080
+        best, pos = None, data.find(b"\xff\xd8\xff")
+        while pos >= 0:
+            sz = jpeg_size(data[pos:pos + 70000])
+            if sz and (best is None or sz[0] * sz[1] > best[0] * best[1]):
+                best = sz
+            pos = data.find(b"\xff\xd8\xff", pos + 2)
+        return best
     data = open(path, "rb").read(70000)
     if data[:2] == b"\xff\xd8":
         return jpeg_size(data)
@@ -143,7 +160,7 @@ if not args.no_hostdev:
     else:
         hostdev = exe
 
-photos = sorted(f for f in os.listdir(args.samples) if f.lower().endswith((".jpg", ".jpeg", ".cr2")))
+photos = sorted(f for f in os.listdir(args.samples) if f.lower().endswith((".jpg", ".jpeg", ".cr2", ".cr3", ".dng")))
 if not photos:
     sys.exit("no photos in " + args.samples)
 
@@ -153,9 +170,10 @@ CASES = [
     (6, dict(grain=150, contrast=10, fade=20, warm=-30, shadow=20, high=-15, sat=15, vig=40)),
     (10, dict(strength=60, grain=0)),
     (13, dict(vig=70, sat=-20)),
+    (0, dict(grain=120, gcolor=0)),                  # a colour film with the grey grain of the camera
 ]
 KEYMAP = {"strength": "--efekt", "grain": "--ziarno", "contrast": "--kontrast", "fade": "--matowosc", "warm": "--cieplo",
-          "shadow": "--cienie", "high": "--swiatla", "sat": "--nasycenie", "vig": "--winieta"}
+          "shadow": "--cienie", "high": "--swiatla", "sat": "--nasycenie", "vig": "--winieta", "gcolor": "--gcolor"}
 ORDER = ["strength", "grain", "contrast", "fade", "warm", "shadow", "high", "sat", "vig"]
 
 
@@ -184,7 +202,9 @@ def wasm_make(photo, film, size, sl, outpath, extra=None):
     s.update(sl)
     a = [args.node, os.path.join(HERE, "test_wasm.js"), args.wasm, photo, outpath, str(film), str(size), "95"]
     a += [str(s.get(k, 0)) for k in ORDER]
-    a += ["%s=%d" % kv for kv in (extra or {}).items()]
+    ex = dict(extra or {})
+    ex.update({k: v for k, v in sl.items() if k not in ORDER})          # the case's extras (gcolor ...)
+    a += ["%s=%d" % kv for kv in ex.items()]
     r = run(a)
     if r.returncode != 0:
         note(r.stderr.decode(errors="replace"))
@@ -202,9 +222,9 @@ for photo in photos:
                 check(False, tag + ": command line version ran")
                 continue
             hashes.append("%s  %s" % (sha(got), tag.replace(" ", "_")))
-            if hostdev:
+            if hostdev and not is_container(path):
                 ref = os.path.join(work, "ref.jpg")
-                hd = [hostdev, path, ref, str(film), str(eng_scale), "quality=95"] + ["%s=%d" % kv for kv in sl.items()]
+                hd = [hostdev, path, ref, str(film), str(eng_scale), "quality=95"] + ["%s=%d" % kv for kv in dict({"gcolor": 100}, **sl).items()]
                 r = run(hd)
                 if r.returncode != 0:
                     note("hostdev: exit %d\n%s" % (r.returncode, r.stderr.decode(errors="replace")))
@@ -225,6 +245,11 @@ EXTRA_CASES = [
     (6, "bw filter red", dict(filter=3)), (6, "bw filter blue half", dict(filter=5, filter_amt=50)),
     (6, "bw sepia", dict(ton_mode=1, cg_sh_h=30, cg_sh_s=25, cg_hi_h=45, cg_hi_s=20)),
     (6, "bw mixer", dict(lum_green=-60, lum_blue=50)),
+    (0, "colour grain off", dict(gcolor=0)), (0, "colour grain half", dict(gcolor=50)),
+    (0, "curve master", dict(crv0_n=3, crv0_x0=0, crv0_y0=0, crv0_x1=128, crv0_y1=90, crv0_x2=255, crv0_y2=255)),
+    (0, "curve red", dict(crv1_n=2, crv1_x0=0, crv1_y0=40, crv1_x1=255, crv1_y1=255)),
+    (0, "curve blue", dict(crv3_n=3, crv3_x0=0, crv3_y0=0, crv3_x1=100, crv3_y1=140, crv3_x2=255, crv3_y2=240)),
+    (6, "bw curve", dict(crv0_n=4, crv0_x0=0, crv0_y0=10, crv0_x1=64, crv0_y1=40, crv0_x2=192, crv0_y2=220, crv0_x3=255, crv0_y3=250)),
 ]
 if photos:
     path = os.path.join(args.samples, photos[0])
@@ -261,9 +286,95 @@ if photos:
         if m is not None and b is not None:
             want = {"expo": m.mean() > b.mean() + 5, "hi_t": m.mean() < b.mean(), "sh_t": m.mean() > b.mean(),
                     "wb warm": m[0] - m[2] > b[0] - b[2] + 3, "wb tint": m[1] < b[1] - 1,
-                    "bw filter red": True, "bw sepia": m[0] - m[2] > 8}.get(name)
+                    "bw filter red": True, "bw sepia": m[0] - m[2] > 8,
+                    "curve master": m.mean() < b.mean() - 5, "curve red": m[0] > b[0] + 5, "curve blue": m[2] > b[2] + 3}.get(name)
             if want is not None:
                 check(bool(want), tag + ": goes the right way (mean RGB %s -> %s)" % (b.round(1), m.round(1)))
+
+# CR3 and DNG: the program develops the JPEG inside the file. Where the samples folder has a CR2 with the same name (the fake ones
+# of make_samples.py are made from the same JPEG), the picture must be exactly the same; the camera data and the orientation must
+# reach the output; a file with no big preview must be refused with a message (not crash), and so must a damaged one.
+def exif_of(path):
+    try:
+        from PIL import Image
+        return Image.open(path).getexif()
+    except ImportError:
+        return None
+
+for photo in photos:
+    stem, ext = os.path.splitext(photo)
+    if ext.lower() not in (".cr3", ".dng"):
+        continue
+    path = os.path.join(args.samples, photo)
+    twin = os.path.join(args.samples, stem + ".cr2")
+    got = cli_make(path, 0, {}, ["--scale", "2"], "c")
+    tag = photo + " container"
+    if not got:
+        check(False, tag + ": command line version ran")
+        continue
+    if args.wasm:
+        w = wasm_make(path, 0, 102, {}, os.path.join(work, "w.jpg"))
+        check(bool(w) and sha(w) == sha(got), tag + ": browser version == command line")
+    if os.path.exists(twin):
+        ref = cli_make(twin, 0, {}, ["--scale", "2"], "c2")
+        try:
+            import numpy as np
+            from PIL import Image
+            a, b = np.asarray(Image.open(got).convert("RGB")), np.asarray(Image.open(ref).convert("RGB"))
+            check(a.shape == b.shape and bool((a == b).all()), tag + ": same pixels as the CR2 made from the same JPEG")
+        except ImportError:
+            pass
+    ex = exif_of(got)
+    if ex is not None:
+        want_or = 6 if "portrait" in stem else 1
+        check(ex.get(0x112) == want_or, tag + ": orientation %s (wanted %d)" % (ex.get(0x112), want_or))
+        check(str(ex.get(0x10F, "")).startswith("Canon"), tag + ": camera make in the output (%r)" % (ex.get(0x10F),))
+
+# a DNG with no big preview (the common "raw only" case) and damaged files must give an error message and exit code, never a crash
+try:
+    sys.path.insert(0, HERE)
+    import make_samples as ms
+    tmpj = os.path.join(work, "t.jpg")
+    ms.save_jpeg(ms.picture(600, 400, 9), tmpj, 90)
+    bad = {}
+    bad["dng_no_preview.dng"] = os.path.join(work, "dng_no_preview.dng")
+    ms.fake_dng(bad["dng_no_preview.dng"], tmpj, 600, 400, 1, tmpj, be=True, with_preview=False)
+    good = {n: os.path.join(args.samples, n) for n in photos if n.lower().endswith((".cr3", ".dng"))}
+    import random
+    rnd = random.Random(7)
+    for name, src in sorted(good.items()):
+        data = open(src, "rb").read()
+        for k, cut in enumerate((40, 200, 1500, len(data) // 3, len(data) // 2, len(data) - 5000)):
+            f = os.path.join(work, "cut%d_%s" % (k, name))
+            open(f, "wb").write(data[:cut])
+            bad["cut%d_%s" % (k, name)] = f
+        for k in range(6):                                 # random damage of the first 6 KB (the boxes / IFDs) and of the whole file
+            d = bytearray(data)
+            for _ in range(12):
+                d[rnd.randrange(0, min(len(d), 6000 if k < 3 else len(d)))] = rnd.randrange(256)
+            f = os.path.join(work, "dmg%d_%s" % (k, name))
+            open(f, "wb").write(bytes(d))
+            bad["dmg%d_%s" % (k, name)] = f
+    for name, f in sorted(bad.items()):
+        d = os.path.join(work, "cli_bad")
+        os.makedirs(d, exist_ok=True)
+        for old in os.listdir(d):
+            os.remove(os.path.join(d, old))
+        r = run([args.cli, "--quiet", "--film", "1", "--size", "S", "--out", d, f])
+        crashed = r.returncode < 0 or r.returncode > 100
+        if name == "dng_no_preview.dng":
+            check(r.returncode != 0 and not os.listdir(d) and b"" != r.stdout + r.stderr, "DNG without a preview: refused with a message (exit %d)" % r.returncode)
+        else:
+            check(not crashed, "damaged %s: no crash (exit %d)" % (name, r.returncode))
+        if args.wasm:
+            w = run([args.node, os.path.join(HERE, "test_wasm.js"), args.wasm, f, os.path.join(work, "wb.jpg"), "0", "102", "95"])
+            err = w.stderr.decode(errors="replace")
+            trapped = "RuntimeError" in err or "unreachable" in err or "out of bounds" in err or "memory access" in err
+            check(not trapped, "damaged %s: browser version does not trap" % name)
+            if name == "dng_no_preview.dng":
+                check(w.returncode != 0 and "ERROR" in err, "DNG without a preview: browser version refuses with a message")
+except ImportError:
+    print("(numpy / pillow not installed: CR3 / DNG damage tests skipped)")
 
 # sizes M and S (and the full size with the size option)
 for photo in photos:
@@ -284,9 +395,9 @@ for photo in photos:
         if args.wasm:
             w = wasm_make(path, film, size_code, sl, os.path.join(work, "w.jpg"))
             check(bool(w) and sha(w) == sha(got), tag + ": browser version == command line")
-        if size_name == "L" and hostdev:
+        if size_name == "L" and hostdev and not is_container(path):
             ref = os.path.join(work, "ref.jpg")
-            run([hostdev, path, ref, str(film), "1", "quality=95"] + ["%s=%d" % kv for kv in sl.items()])
+            run([hostdev, path, ref, str(film), "1", "quality=95"] + ["%s=%d" % kv for kv in dict({"gcolor": 100}, **sl).items()])
             same_file(ref, got, tag + ": size L == hostdev")
 
 # a folder and a file with Polish letters in the name (the command line version must open and write them on every system)
@@ -318,7 +429,7 @@ try:
             return cs[i] + (t - i)[:, None, None] * img[i]
         return np.moveaxis((S(b) - S(a)) / (n_in / n_out), 0, axis)
 
-    big = [f for f in photos if f.lower().endswith((".jpg", ".jpeg", ".cr2"))]
+    big = [f for f in photos if f.lower().endswith((".jpg", ".jpeg", ".cr2"))]    # (CR3 / DNG: same code after the preview is cut out)
     for pi, photo in enumerate(big[:2]):
         path = os.path.join(args.samples, photo)
         outs = {}

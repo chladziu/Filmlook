@@ -26,6 +26,7 @@ ctl('strength', 'film', true, 'Efekt', 0, 100, 100, { hint: 'ile filmu jest w zd
 ctl('grain', 'film', true, 'Ziarno', 0, 200, 100, { hint: 'ilość ziarna: 100 = tak jak w filmie' });
 ctl('gsize', 'film', false, 'Wielkość ziarna', -50, 50, 0, { hint: 'drobniejsze — grubsze ziarno niż w filmie' });
 ctl('grough', 'film', false, 'Szorstkość ziarna', -50, 50, 0, { hint: 'gładsze — bardziej nierówne ziarno niż w filmie' });
+ctl('gcolor', 'film', false, 'Kolor ziarna', 0, 100, 100, { hint: 'ziarno kolorowe, jak w filmie barwnym: 100 = pełne, 0 = szare ziarno (czarno-białe filmy mają zawsze szare)' });
 ctl('vig', 'film', true, 'Winieta', 0, 100, 0, { hint: 'ciemniejsze rogi zdjęcia' });
 ctl('fade', 'film', true, 'Matowość', 0, 100, 0, { hint: 'podniesione czernie, „wyblakły” wygląd' });
 /* light */
@@ -83,6 +84,18 @@ var FILTERS = [
   { n: 3, name: 'Czerwony', dot: '#d33a2c' }, { n: 4, name: 'Zielony', dot: '#4fa64a' }, { n: 5, name: 'Niebieski', dot: '#3f6fd0' }
 ];
 
+/* white balance as in a camera: the kind of light the photo was taken in. t = temperature, i = tint of the sliders (what is needed to
+ * make the colours neutral again: under a bulb the photo is orange, so "Żarówka" cools it). The values come from the colour
+ * temperatures (daylight 5500 K = no change) and from the range of the sliders (±100 = ±0.8 EV of red and blue). */
+var WB_PRESETS = [
+  { id: 'asis', name: 'Jak w aparacie', t: 0, i: 0, tip: 'bez korekty (światło dzienne, ok. 5500 K)' },
+  { id: 'cloud', name: 'Pochmurno', t: 14, i: 0, tip: 'pochmurne niebo, ok. 6500 K: zdjęcie robi się cieplejsze' },
+  { id: 'shade', name: 'Cień', t: 25, i: 2, tip: 'cień w słoneczny dzień, ok. 7500 K: zdjęcie robi się cieplejsze' },
+  { id: 'tung', name: 'Żarówka', t: -85, i: 0, tip: 'żarówka, ok. 2800 K: zdjęcie robi się chłodniejsze (mniej pomarańczowe)' },
+  { id: 'fluo', name: 'Jarzeniówka', t: -35, i: 25, tip: 'świetlówka, ok. 4000 K: chłodniej i mniej zielono' },
+  { id: 'flash', name: 'Lampa błyskowa', t: 5, i: 0, tip: 'lampa błyskowa, ok. 5600 K: odrobinę cieplej' }
+];
+
 var SIZE_SUFFIX = ['', '_M', '_S'];
 
 /* ---------------------------------------------------------------- state */
@@ -124,6 +137,7 @@ function paramsFor(film, size, quality, looks, scene) {
     var src = c.scope === 'scene' ? scene : lv, v = typeof src[c.key] === 'number' ? src[c.key] : c.def;
     if (c.top) p[c.key] = v; else p.x[c.key] = v;
   });
+  crvParams(scene, !!(S.films[film] && S.films[film].mono), p.x);
   return p;
 }
 function params(extra) {

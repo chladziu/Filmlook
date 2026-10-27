@@ -199,7 +199,10 @@ def main(user_dir, repo_dir, out, mode=""):
         a, curves = parse(os.path.join(user_dir, fname))
         mono = a.get("ConvertToGrayscale") == "True"
         if mono != (typ == 1): raise SystemExit("%s: B&W flag disagrees with META" % fname)
-        films.append(build_entry(a, curves, brand, name, brand + " " + name, iso, typ, desc, KIND[typ], fname))
+        e = build_entry(a, curves, brand, name, brand + " " + name, iso, typ, desc, KIND[typ], fname)
+        if e["full"] in M.NEUTRAL_BW:                    # no toning of a grey: shadow / highlight colour-grade saturation (ids 52, 58) = 0
+            e["vals"] = [(i, 0 if i in (52, 58) else v) for i, v in e["vals"]]
+        films.append(e)
     taken = {(f["type"], f["brand"], f["name"]) for f in films}
     # 2. EmulsionPresets
     cat = json.load(open(os.path.join(repo_dir, "presets.json"), encoding="utf-8"))["presets"]

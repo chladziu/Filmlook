@@ -53,7 +53,7 @@ __APP_CSS__
           <button class="btn sm" id="btnDir" type="button">+ Folder</button>
         </div>
       </div>
-      <input id="inFiles" type="file" multiple accept=".jpg,.jpeg,.JPG,.JPEG,.cr2,.CR2" class="hidden">
+      <input id="inFiles" type="file" multiple accept=".jpg,.jpeg,.JPG,.JPEG,.cr2,.CR2,.cr3,.CR3,.dng,.DNG" class="hidden">
       <input id="inDir" type="file" webkitdirectory class="hidden">
       <ul class="list" id="list" aria-label="Lista zdjęć"></ul>
       <div class="empty" id="listEmpty">Tu pojawią się Twoje zdjęcia.<br><span class="muted small">Przeciągnij je na okno albo użyj przycisków powyżej.</span></div>
@@ -66,7 +66,7 @@ __APP_CSS__
         <button class="btn link sm danger" id="delSel" type="button" title="Usuwa z listy zaznaczone zdjęcia (pliki na dysku zostają)">usuń zaznaczone</button>
         <button class="btn link sm danger" id="btnClear" type="button" title="Usuwa wszystkie zdjęcia z listy (pliki na dysku zostają)">wyczyść</button>
       </div>
-      <label class="chk small pair"><input type="checkbox" id="chkPair" checked> RAW+JPG: z pary biorę tylko CR2</label>
+      <label class="chk small pair"><input type="checkbox" id="chkPair" checked> RAW+JPG: z pary biorę tylko plik RAW</label>
     </section>
 
     <section class="box grow" id="boxFilm">
@@ -92,7 +92,7 @@ __APP_CSS__
       <div id="world"><img id="pvImg" alt="Podgląd zdjęcia" draggable="false"></div>
       <div class="msg" id="pvMsg">
         <div>
-          <p class="big">Przeciągnij tu zdjęcia <span class="muted">(JPG lub CR2)</span> albo cały folder</p>
+          <p class="big">Przeciągnij tu zdjęcia <span class="muted">(JPG, CR2, CR3 lub DNG)</span> albo cały folder</p>
           <p class="btns"><button class="btn primary" id="btnFiles2" type="button">Wybierz zdjęcia…</button> <button class="btn" id="btnDir2" type="button">Wybierz folder…</button></p>
           <p class="muted small">Wszystko dzieje się na Twoim komputerze — zdjęcia nigdzie nie są wysyłane.</p>
         </div>
@@ -147,7 +147,7 @@ __APP_CSS__
   <form method="dialog" class="aboutbox">
     <div class="abouthead"><h2 id="aboutTitle">Film Look Simulation</h2><button class="btn sm" value="close">Zamknij</button></div>
     <p class="small"><b>Skróty:</b> <kbd>[</kbd> <kbd>]</kbd> chowają panele · <kbd>F</kbd> całe zdjęcie · <kbd>1</kbd> 100 % · <kbd>+</kbd> <kbd>−</kbd> powiększenie · kółko myszy powiększa, przeciąganie przesuwa, podwójne kliknięcie przełącza całe/100 % · przytrzymaj <kbd>\</kbd> żeby zobaczyć oryginał · <kbd>←</kbd> <kbd>→</kbd> poprzednie / następne zdjęcie · <kbd>Delete</kbd> usuwa zdjęcie z listy · podwójne kliknięcie na nazwie suwaka przywraca jego wartość.</p>
-    <p class="small muted">FILM LOOK DESKTOP <span id="verTxt"></span> — ten sam silnik, który działa w module aparatu (Soup Engine, GPL v2, rozszerzony o film look), skompilowany do WebAssembly. Program jest na licencji GPL v2; kod źródłowy: https://github.com/chladziu/filmlook. Wyglądy filmów: własne presety oraz EmulsionPresets (MIT). Program używa podglądu JPG zapisanego w pliku CR2 (nie pełnego surowego zapisu matrycy).</p>
+    <p class="small muted">FILM LOOK DESKTOP <span id="verTxt"></span> — ten sam silnik, który działa w module aparatu (Soup Engine, GPL v2, rozszerzony o film look), skompilowany do WebAssembly. Program jest na licencji GPL v2; kod źródłowy: https://github.com/chladziu/filmlook. Wyglądy filmów: własne presety oraz EmulsionPresets (MIT). Program używa podglądu JPG zapisanego w pliku CR2, CR3 lub DNG (nie pełnego surowego zapisu matrycy).</p>
     <pre id="licTxt">__LICENSE__</pre>
     <p class="small muted">FILM LOOK DESKTOP · <span id="buildTxt">__BUILD__</span></p>
   </form>

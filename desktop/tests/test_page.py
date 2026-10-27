@@ -12,9 +12,13 @@
   portrait  a CR2 marked "rotated" is shown upright in the preview; RAW+JPG pairs; the settings file of the camera (FILMLOOK.TXT)
   folder    "Zapisz w folderze" with a made-up folder object
   layout    the panels hide and show, the edge can be dragged; on a phone the panels slide over the picture
+  curves    the white balance buttons (bulb, fluorescent ...), the colour of the grain, the tone curves (RGB, R, G, B): add, drag,
+            delete and move points, buttons, a black and white film has the master curve only; developed == command line
+  raw       CR3 and DNG files (the fake ones of make_samples.py): list, thumbnails, upright portraits, the same pictures as the command
+            line version, a DNG without a preview is refused with a message
 
 usage: test_page.py <FILMLOOK_DESKTOP.html> <filmlook_cli> <folder with photos> [screenshot folder] [--only name]
-The folder holds *.jpg / *.cr2 (tests/make_samples.py makes them: it must contain synth_portrait.cr2 for "portrait").
+The folder holds *.jpg / *.cr2 / *.cr3 / *.dng (tests/make_samples.py makes them: it must contain synth_portrait.cr2 for "portrait").
 needs: pip install playwright; playwright install chromium"""
 import os
 import shutil
@@ -37,7 +41,11 @@ if "--only" in argv:
     i = argv.index("--only")
     only = argv[i + 1]
     del argv[i:i + 2]
-html, cli, photos = [os.path.abspath(a) for a in argv[:3]]
+html, cli, all_photos = [os.path.abspath(a) for a in argv[:3]]
+photos = tempfile.mkdtemp(prefix="fdpages_")            # the scenarios other than "raw" work on the JPGs and CR2 files only
+for _f in os.listdir(all_photos):
+    if _f.lower().endswith((".jpg", ".jpeg", ".cr2")):
+        shutil.copy(os.path.join(all_photos, _f), photos)
 shots = os.path.abspath(argv[3]) if len(argv) > 3 else None
 if shots:
     os.makedirs(shots, exist_ok=True)
@@ -531,14 +539,164 @@ def scenario_layout(browser):
     page.context.close()
 
 
+def scenario_curves(browser):
+    page = open_page(browser)
+    page.set_input_files("#inFiles", os.path.join(photos, "synth_small.jpg"))
+    page.wait_for_selector("#list li")
+    wait_idle(page)
+
+    # white balance as in a camera
+    open_section(page, "wb")
+    page.click("#wbChips .pill[data-id='tung']")
+    check(page.evaluate("[FD.val('wb_temp'), FD.val('wb_tint')]") == [-85, 0] and page.get_attribute("#wbChips .pill[data-id='tung']", "aria-pressed") == "true", "bulb: cooler, the button is lit")
+    page.click("#wbChips .pill[data-id='fluo']")
+    check(page.evaluate("[FD.val('wb_temp'), FD.val('wb_tint')]") == [-35, 25], "fluorescent: cooler and less green")
+    set_number(page, "wb_temp", 10)
+    check(all(page.get_attribute("#wbChips .pill[data-id='%s']" % i, "aria-pressed") == "false" for i in ("asis", "cloud", "shade", "tung", "fluo", "flash")), "a hand-set value lights no button")
+    page.click("#wbChips .pill[data-id='asis']")
+    check(page.evaluate("[FD.val('wb_temp'), FD.val('wb_tint')]") == [0, 0] and page.get_attribute("#wbChips .pill[data-id='asis']", "aria-pressed") == "true", "\"Jak w aparacie\" brings it back")
+    page.click("#wbChips .pill[data-id='tung']")                       # stays on for the development below (== command line)
+
+    # the colour of the grain: a slider for colour films, none for black and white ones
+    check(page.locator("#sl-gcolor").count() == 1 and page.input_value("#sl-gcolor") == "100", "colour film: the slider \"Kolor ziarna\" is there, at 100")
+    set_number(page, "gcolor", 60)
+
+    # the curves
+    open_section(page, "curves")
+    cv = page.locator("canvas.crvcv")
+    check(cv.count() == 1 and page.locator('.sec[data-id="curves"] .tabs2 button').count() == 4, "curves: the graph and the tabs RGB R G B")
+    def at(x, y):
+        page.locator("canvas.crvcv").scroll_into_view_if_needed()       # the panel is long: the graph can be below the visible part
+        b = page.locator("canvas.crvcv").bounding_box()
+        return b["x"] + 6 + x / 255 * (b["width"] - 12), b["y"] + b["height"] - 6 - y / 255 * (b["height"] - 12)
+    def crv():
+        return page.evaluate("FD.S.scene.crv || null")
+    x0, y0 = at(128, 128)
+    page.mouse.move(x0, y0); page.mouse.down()
+    x1, y1 = at(128, 92)
+    page.mouse.move(x1, y1, steps=4); page.mouse.up()
+    c = crv()
+    check(c and len(c["m"]) == 3 and abs(c["m"][1][0] - 128) <= 2 and abs(c["m"][1][1] - 92) <= 2, "click + drag adds a point and moves it: %s" % (c and c["m"]))
+    check("mod" in page.get_attribute('.sec[data-id="curves"]', "class"), "the section is marked as changed")
+    shot(page, "curves_1")
+    # the red curve: the end point at the top lowered
+    page.click('.sec[data-id="curves"] .tabs2 button:nth-child(2)')
+    cv = page.locator("canvas.crvcv")
+    xa, ya = at(255, 255); xb, yb = at(255, 225)
+    page.mouse.move(xa, ya); page.mouse.down(); page.mouse.move(xb, yb, steps=3); page.mouse.up()
+    c = crv()
+    check(c and "r" in c and c["r"][-1][0] == 255 and 220 <= c["r"][-1][1] <= 230, "red: the end point is moved: %s" % (c and c.get("r")))
+    check(page.get_attribute('.sec[data-id="curves"] .tabs2 button:nth-child(2)', "class") == "mod" or "mod" in page.get_attribute('.sec[data-id="curves"] .tabs2 button:nth-child(2)', "class"), "the tab of a changed channel is marked")
+    # develop with these curves: page == command line
+    page.click("#sizes button[data-size='2']")
+    run_and_wait(page)
+    z = zip_of(page)
+    c = crv()
+    flags = ["--wb_temp", "-85", "--gcolor", "60"]
+    for k, key in enumerate("mrgb"):
+        if key in c:
+            pts = c[key]
+            flags += ["--crv%d_n" % k, str(len(pts))]
+            for j, (px_, py_) in enumerate(pts):
+                flags += ["--crv%d_x%d" % (k, j), str(px_), "--crv%d_y%d" % (k, j), str(py_)]
+    compare_zip(z, "_Kodak_Portra_400_S", 1, "S", flags)
+    # the picture really got darker in the middle: compare with the same without the master curve
+    # keys and the double click
+    page.click('.sec[data-id="curves"] .tabs2 button:nth-child(1)')
+    cv = page.locator("canvas.crvcv")
+    xm, ym = at(128, 92)
+    page.mouse.click(xm, ym)                                                 # selects the point
+    page.keyboard.press("ArrowUp")
+    page.keyboard.press("Shift+ArrowRight")
+    c = crv()
+    check(c["m"][1][1] == 93 and c["m"][1][0] == 138, "arrow keys move the selected point: %s" % c["m"])
+    check(page.evaluate("document.activeElement.className") == "crvcv" and page.locator("#list li").count() == 1, "the keys do not leave the graph (the photo is still there)")
+    xm, ym = at(138, 93)
+    page.mouse.dblclick(xm, ym)
+    c = crv()
+    check(not c or "m" not in c, "double click on a point removes it (back to the straight line): %s" % (c and c.get("m")))
+    # buttons
+    page.click("#crvChips .pill[data-id='hard']")
+    check(crv()["m"] == [[0, 0], [64, 40], [192, 220], [255, 255]] and page.get_attribute("#crvChips .pill[data-id='hard']", "aria-pressed") == "true", "the button \"Mocny kontrast\" draws an S curve")
+    page.click('.sec[data-id="curves"] .rs')
+    check(crv() is None, "the reset of the section clears every curve")
+    page.click("#crvReset")
+    # a black and white film has the master curve only
+    page.click("#tabs .tab:nth-child(2)")
+    page.click("#films .fcard:has-text('Tri-X')")
+    open_section(page, "curves")
+    check(page.locator('.sec[data-id="curves"] .tabs2').count() == 0 and page.locator("#sl-gcolor").count() == 0, "black and white film: no channel tabs, no colour grain")
+    check(not page.errors, "no errors in the browser console: %s" % page.errors[:3])
+    page.context.close()
+
+
+def scenario_raw(browser):
+    """CR3 and DNG: the JPEG inside is found by the page (thumbnails, preview, upright portraits) and by the engine (the same
+    pictures as the command line version); a DNG with no big preview gives a clear message and no picture"""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import make_samples as ms
+    tmp = tempfile.mkdtemp()
+    names = {"synth_landscape.cr3": "synth_landscape.cr3", "synth_portrait.cr3": "synth_portrait.cr3", "synth_prvw_only.cr3": "synth_prvw_only.cr3",
+             "synth_landscape.dng": "dng_landscape.dng", "synth_portrait.dng": "dng_portrait.dng"}      # (other stems: the output names stay apart)
+    for n, to in names.items():
+        shutil.copy(os.path.join(all_photos, n), os.path.join(tmp, to))
+    tj = os.path.join(tmp, "_t.jpg")
+    ms.save_jpeg(ms.picture(800, 600, 3), tj, 90)
+    ms.fake_dng(os.path.join(tmp, "dng_nopreview.dng"), tj, 800, 600, 1, tj, be=True, with_preview=False)
+    os.remove(tj)
+    page = open_page(browser)
+    page.set_input_files("#inDir", tmp)
+    page.wait_for_selector("#list li")
+    page.wait_for_function("document.querySelectorAll('#list li').length === 6", timeout=20000)
+    metas = page.eval_on_selector_all("#list li .meta", "els => els.map(e => e.textContent)")
+    check(sum(1 for m in metas if m.endswith("CR3")) == 3 and sum(1 for m in metas if m.endswith("DNG")) == 3, "CR3 and DNG are listed with their kind: %s" % metas)
+    # thumbnails of the five that have a preview
+    page.wait_for_function("document.querySelectorAll('#list li .th img').length === 5", timeout=60000)
+    check(True, "thumbnails of the five photos with a preview")
+    for nm, upright in (("synth_portrait.cr3", True), ("dng_portrait.dng", True), ("synth_landscape.cr3", False), ("dng_landscape.dng", False), ("synth_prvw_only.cr3", False)):
+        page.click("#list li:has-text('%s')" % nm)
+        page.wait_for_timeout(400)
+        page.wait_for_function(IDLE + " && document.querySelector('#pvImg').naturalWidth > 0", timeout=60000)
+        wait_idle(page)
+        dims = page.evaluate("[document.querySelector('#pvImg').naturalWidth, document.querySelector('#pvImg').naturalHeight]")
+        check((dims[1] > dims[0]) == upright, "%s is %s in the preview: %s" % (nm, "upright" if upright else "landscape", dims))
+    fw, fh = page.evaluate("[FD.V.fw, FD.V.fh]")
+    check(fw == 1620 and fh == 1080, "the CR3 without a JPEG track shows its 1620 x 1080 preview: %s x %s" % (fw, fh))
+    page.click("#list li:has-text('dng_nopreview.dng')")
+    page.wait_for_function("document.querySelector('#pvMsg') && !document.querySelector('#pvMsg').classList.contains('hidden') && document.querySelector('#pvMsg').textContent.indexOf('podgl') >= 0", timeout=20000)
+    check(True, "a DNG with no preview: the page says so: " + page.inner_text("#pvMsg")[:90])
+    shot(page, "raw_1")
+    # develop all of them (size S): the five good ones == the command line version, the sixth is reported as an error
+    page.click("#sizes button[data-size='2']")
+    run_and_wait(page)
+    statuses = page.eval_on_selector_all("#list li .meta", "els => els.map(e => e.textContent)")
+    ndone = sum(1 for m in statuses if m.startswith("✓ gotowe"))
+    nerr = sum(1 for m in statuses if m.startswith("błąd"))
+    check(ndone == 5 and nerr == 1 and any("podglądu" in m for m in statuses if m.startswith("błąd")), "5 developed, 1 refused with an error about the missing preview: %s" % statuses)
+    z = zip_of(page)
+    check(z.testzip() is None and len(z.namelist()) == 5, "ZIP holds the 5 pictures: %s" % z.namelist())
+    work = tempfile.mkdtemp()
+    for name in z.namelist():
+        src = os.path.join(tmp, [f for f in os.listdir(tmp) if f.rsplit(".", 1)[0] == name.rsplit("_Kodak_Portra_400_S", 1)[0]][0])
+        cli_make(work, 1, "S", [], src)
+        check(z.read(name) == open(os.path.join(work, name), "rb").read(), "%s: page == command line" % name)
+    shutil.rmtree(work, ignore_errors=True)
+    check(not page.errors, "no errors in the browser console: %s" % page.errors[:3])
+    shutil.rmtree(tmp, ignore_errors=True)
+    page.context.close()
+
+
 SCENARIOS = [("main", scenario_main), ("zoom", scenario_zoom), ("wb", scenario_wb), ("bw", scenario_bw), ("parallel", scenario_parallel),
-             ("inline", scenario_inline), ("portrait", scenario_portrait), ("folder", scenario_folder), ("layout", scenario_layout)]
+             ("inline", scenario_inline), ("portrait", scenario_portrait), ("folder", scenario_folder), ("layout", scenario_layout), ("curves", scenario_curves), ("raw", scenario_raw)]
 with sync_playwright() as p:
     browser = p.chromium.launch()
     for name, fn in SCENARIOS:
         if only and only != name:
             continue
         print("\n== " + name, flush=True)
+        if name == "raw" and not os.path.exists(os.path.join(all_photos, "synth_portrait.dng")):
+            print("(skipped: no synth_portrait.dng etc. in the folder: use tests/make_samples.py)")
+            continue
         if name in ("portrait", "folder", "layout") and not os.path.exists(os.path.join(photos, "synth_portrait.cr2")):
             print("(skipped: no synth_portrait.cr2 etc. in the folder: use tests/make_samples.py)")
             continue

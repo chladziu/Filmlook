@@ -4,8 +4,9 @@ FILM LOOK DESKTOP - film z aparatu na komputerze
 To jest ten sam silnik, który działa w module w aparacie (5D Mark II), tylko na komputerze,
 bez ograniczeń aparatu: wybierasz film i suwaki (te same, co w aparacie) oraz rozmiar,
 a program robi z Twoich zdjęć gotowe pliki JPG z wyglądem filmu.
-Oryginały zostają nietknięte. Źródłem może być JPG z aparatu albo plik CR2
-(program bierze z niego pełnowymiarowy podgląd JPG, który aparat zapisuje w CR2).
+Oryginały zostają nietknięte. Źródłem może być JPG z aparatu albo plik RAW: CR2 (Canon),
+CR3 (Canon EOS R...) albo DNG (program bierze z nich pełnowymiarowy podgląd JPG, który aparat
+albo Lightroom zapisuje w pliku RAW obok surowych danych).
 
 
 NAJPROSTSZY SPOSÓB (Windows i Mac): plik FILMLOOK_DESKTOP.html
@@ -17,9 +18,9 @@ NAJPROSTSZY SPOSÓB (Windows i Mac): plik FILMLOOK_DESKTOP.html
    ustawienia. Oba panele chowają się jednym kliknięciem w strzałkę na ich krawędzi
    (albo klawiszami [ i ]), a ich szerokość zmieniasz przeciągając krawędź.
    Na małym ekranie (telefon, wąskie okno) panele wsuwają się nad zdjęcie.
-3. Zdjęcia: przeciągnij je (JPG albo CR2) albo cały folder z karty (np. DCIM) na okno
+3. Zdjęcia: przeciągnij je (JPG, CR2, CR3 albo DNG) albo cały folder z karty (np. DCIM) na okno
    albo użyj przycisków "+ Zdjęcia" / "+ Folder". Gdy w folderze jest para RAW+JPG,
-   domyślnie brany jest tylko plik CR2.
+   domyślnie brany jest tylko plik RAW.
    Każde zdjęcie ma okienko do zaznaczania i krzyżyk (usuwa je z listy; plik na dysku
    zostaje). Wywoływane są tylko zaznaczone zdjęcia, a po wywołaniu zdejmują się z
    zaznaczenia - nowe zdjęcia dodane później wywołają się osobno.
@@ -28,12 +29,20 @@ NAJPROSTSZY SPOSÓB (Windows i Mac): plik FILMLOOK_DESKTOP.html
    Twoje zdjęcie w każdym filmie. "Ustawienia z karty..." bierze suwaki zapisane przez
    moduł w aparacie (plik ML/SETTINGS/FILMLOOK.TXT na karcie).
 5. Ustawienia (prawy panel), działy rozwijane kliknięciem:
-   - Film i ziarno: siła efektu, ilość, wielkość i szorstkość ziarna, winieta, matowość
+   - Film i ziarno: siła efektu, ilość, wielkość i szorstkość ziarna, kolor ziarna
+     (w filmach kolorowych ziarno jest domyślnie kolorowe, jak w prawdziwym filmie barwnym;
+     0 = szare ziarno, jak w aparacie), winieta, matowość
    - Światło: ekspozycja, kontrast, światła, cienie, biel, czerń
+   - Krzywe: krzywa jasności RGB oraz osobne krzywe czerwonego, zielonego i niebieskiego
+     kanału. Kliknij na wykresie, żeby dodać punkt, i przeciągnij go; dwukrotne kliknięcie
+     punktu (albo Delete) usuwa go, strzałki przesuwają zaznaczony punkt. Są też gotowe
+     krzywe (łagodny/mocny kontrast, matowe czernie, jaśniej, ciemniej). Filmy czarno-białe
+     mają tylko krzywą RGB.
    - Filtr barwny i tonowanie (filmy czarno-białe): filtr żółty/pomarańczowy/czerwony/
      zielony/niebieski oraz tonowanie: sepia, selen, cyjanotypia... osobno dla cieni,
      półtonów i świateł (w filmach kolorowych: dział "Kolorystyka")
-   - Balans bieli: temperatura, odcień, kroplomierz (kliknij w zdjęciu coś szarego)
+   - Balans bieli: rodzaj światła jak w aparacie (pochmurno, cień, żarówka, jarzeniówka,
+     lampa błyskowa), temperatura, odcień, kroplomierz (kliknij w zdjęciu coś szarego)
      i "Automatycznie"
    - Kolor: nasycenie, ciepło, kolor cieni i świateł
    - Tony skóry: odcień, nasycenie i jasność tylko barw skóry
@@ -54,9 +63,10 @@ NAJPROSTSZY SPOSÓB (Windows i Mac): plik FILMLOOK_DESKTOP.html
    W Chrome i Edge jest też "Zapisz w folderze..." - zdjęcia lądują od razu w wybranym folderze.
    Nazwa wyniku: nazwa zdjęcia + nazwa filmu (+ _M albo _S dla mniejszych rozmiarów).
 Strona pamięta ostatnio wybrany film, suwaki, rozmiar, jakość i układ okna.
-Uwaga: program pracuje na pełnowymiarowym podglądzie JPG zapisanym w pliku CR2, a nie na
-surowych danych z matrycy, więc balans bieli i światła mają łagodniejszy zakres niż w
-prawdziwym RAW.
+Uwaga: program pracuje na pełnowymiarowym podglądzie JPG zapisanym w pliku CR2, CR3 albo DNG,
+a nie na surowych danych z matrycy, więc balans bieli i światła mają łagodniejszy zakres niż
+w prawdziwym RAW. DNG musi mieć taki podgląd w środku (w Lightroomie: przy zapisie DNG
+wybierz "Pełnowymiarowy podgląd JPEG"); bez niego program napisze, że nie ma czego wywołać.
 
 
 DRUGI SPOSÓB: program w wierszu poleceń (foldery Windows i macOS)
@@ -64,7 +74,9 @@ DRUGI SPOSÓB: program w wierszu poleceń (foldery Windows i macOS)
 Windows (filmlook_cli.exe): przeciągnij zdjęcia albo folder na filmlook_cli.exe,
   program zapyta o film i rozmiar. Wyniki trafiają do folderu FILMLOOK obok zdjęć.
   (Dodatkowe suwaki z całej reszty ustawień: --expo --hi_t --sh_t --wh_t --bl_t --wb_temp --wb_tint
-  --skin_hue --skin_sat --skin_lum --filter --ton_mode --hue_red ... - pełna lista: --help)
+  --skin_hue --skin_sat --skin_lum --gcolor --filter --ton_mode --hue_red ... oraz krzywe
+  --crv0_n 3 --crv0_x0 0 --crv0_y0 0 --crv0_x1 128 --crv0_y1 90 --crv0_x2 255 --crv0_y2 255
+  (0 = RGB, 1 = R, 2 = G, 3 = B) - pełna lista: --help)
   Jeśli Windows pokaże niebieskie okno "System Windows ochronił ten komputer",
   kliknij "Więcej informacji", a potem "Uruchom mimo to" (program nie ma płatnego podpisu).
 Mac (filmlook_cli_macos.tar.gz): rozpakuj, otwórz Terminal i wpisz (raz):

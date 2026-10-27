@@ -87,7 +87,7 @@ static int ext_is_photo(const char *name)
     if (!d || strlen(d) > 5) return 0;
     for (i = 0; d[i + 1] && i < 6; i++) e[i] = (char)tolower((unsigned char)d[i + 1]);
     e[i] = 0;
-    return !strcmp(e, "jpg") || !strcmp(e, "jpeg") || !strcmp(e, "cr2");
+    return !strcmp(e, "jpg") || !strcmp(e, "jpeg") || !strcmp(e, "cr2") || !strcmp(e, "cr3") || !strcmp(e, "dng");
 }
 
 /* the photos of a folder (not the sub folders), sorted */
@@ -250,9 +250,10 @@ static void usage(void)
         "  --quality N          jakość JPG, domyślnie 95\n"
         "  --out FOLDER         dokąd zapisać (domyślnie folder FILMLOOK obok zdjęcia)\n"
         "  --efekt --ziarno --kontrast --matowosc --cieplo --cienie --swiatla --nasycenie --winieta  WARTOŚĆ\n"
-        "  --expo --hi_t --sh_t --wh_t --bl_t --gsize --grough --wb_temp --wb_tint --skin_hue --skin_sat --skin_lum\n"
+        "  --expo --hi_t --sh_t --wh_t --bl_t --gsize --grough --gcolor --wb_temp --wb_tint --skin_hue --skin_sat --skin_lum\n"
         "  --ton_mode --cg_sh_h --cg_sh_s --cg_mid_h --cg_mid_s --cg_hi_h --cg_hi_s --filter --filter_amt\n"
         "  --hue_KOLOR --sat_KOLOR --lum_KOLOR  (KOLOR: red orange yellow green aqua blue purple magenta)  WARTOŚĆ\n"
+        "  --crvK_n N --crvK_xJ X --crvK_yJ Y   krzywe (K: 0 RGB, 1 R, 2 G, 3 B; N punktów 2..12; J = 0..N-1; X, Y: 0..255)\n"
         "  --list               pokaż filmy\n", FD_VERSION);
 }
 

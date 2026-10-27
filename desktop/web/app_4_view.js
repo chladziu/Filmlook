@@ -3,10 +3,157 @@
 function u32(b, o) { return (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0; }
 function u16(b, o) { return b[o] | (b[o + 1] << 8); }
 
-/* a CR2 carries its full size JPEG; the preview only needs that part of the file (a few MB instead of 25 - 30 MB).
- * It is given the orientation of the CR2 so that portraits stand upright. */
+/* ---------------------------------------------------------------- the JPEG inside a raw file
+ * A CR2, a CR3 and a DNG all carry a full size JPEG preview next to the raw data. The picture on the page (and the small ones of
+ * the list) need only that part of the file (a few MB instead of 25 - 80 MB). It is given an Exif block with the orientation, so
+ * that portraits stand upright. The rules are the same as in the engine (src/fd_containers.h): the engine does the real work when
+ * the photos are developed; this part only finds the JPEG for the screen. */
+function be32(b, o) { return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0; }
+function withOrientation(jpg, ori) {
+  var exif = new Uint8Array([0xFF, 0xE1, 0, 0x22, 0x45, 0x78, 0x69, 0x66, 0, 0,
+    0x49, 0x49, 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, ori & 255, ori >> 8, 0, 0, 0, 0, 0, 0]);
+  var out = new Uint8Array(2 + exif.length + jpg.length - 2);
+  out.set(jpg.subarray(0, 2), 0); out.set(exif, 2); out.set(jpg.subarray(2), 2 + exif.length);
+  return out.buffer;
+}
+async function readBytes(file, off, len) { return new Uint8Array(await file.slice(off, off + len).arrayBuffer()); }
+async function isJpegAt(file, off, len) {
+  if (len < 5 || off + len > file.size) return false;
+  var h = await readBytes(file, off, 3);
+  return h[0] === 0xFF && h[1] === 0xD8 && h[2] === 0xFF;
+}
+function noPreview() { var e = new Error('W tym pliku nie ma dużego podglądu JPG. Zapisz go z podglądem (w Lightroomie: DNG z „Pełnowymiarowy podgląd JPEG”).'); e.noPreview = true; return e; }
+
+/* a DNG is a TIFF whose IFDs can be anywhere: the parser reads a window of the file and asks for a bigger one when it needs more */
+function Need(upto) { this.upto = upto; }
+function dngFind(buf, total) {
+  function u8(o) { if (o < 0 || o >= total) throw new RangeError('bad'); if (o >= buf.length) throw new Need(o + 1); return buf[o]; }
+  var be;
+  if (u8(0) === 0x49 && u8(1) === 0x49 && u8(2) === 42 && u8(3) === 0) be = false;
+  else if (u8(0) === 0x4D && u8(1) === 0x4D && u8(2) === 0 && u8(3) === 42) be = true;
+  else return null;
+  function r16(o) { var a = u8(o), c = u8(o + 1); return be ? (a << 8) | c : a | (c << 8); }
+  function r32(o) { var a = r16(o), c = r16(o + 2); return (be ? (a * 65536) + c : (c * 65536) + a) >>> 0; }
+  function num(e) { return r16(e + 2) === 3 ? r16(e + 8) : r32(e + 8); }
+  var queue = [r32(4)], qi, cands = [], ori0 = 1;
+  for (qi = 0; qi < queue.length; qi++) {
+    var ifd = queue[qi], cnt, i, w = 0, h = 0, comp = 0, photo = 0, ori = 0, nstrips = 0, so = 0, sc = 0, jif = 0, jil = 0;
+    if (ifd === 0 || ifd + 2 > total) continue;
+    cnt = r16(ifd);
+    if (cnt === 0 || cnt > 300 || ifd + 2 + 12 * cnt + 4 > total) continue;
+    for (i = 0; i < cnt; i++) {
+      var e = ifd + 2 + 12 * i, tag = r16(e), ty = r16(e + 2);
+      if (ty !== 3 && ty !== 4 && ty !== 13) continue;
+      if (tag === 0x100) w = num(e); else if (tag === 0x101) h = num(e); else if (tag === 0x103) comp = num(e);
+      else if (tag === 0x106) photo = num(e); else if (tag === 0x112) ori = num(e);
+      else if (tag === 0x111) { nstrips = r32(e + 4); so = num(e); } else if (tag === 0x117) sc = num(e);
+      else if (tag === 0x201) jif = num(e); else if (tag === 0x202) jil = num(e);
+      else if (tag === 0x14A) {
+        var c = r32(e + 4), bytes = c * 4, v = bytes <= 4 ? e + 8 : r32(e + 8), k;
+        if (c > 0x100000 || v + bytes > total) continue;
+        for (k = 0; k < c && k < 16 && queue.length < 40; k++) queue.push(r32(v + 4 * k));
+      }
+    }
+    if (qi === 0) ori0 = ori;
+    var co = 0, cl = 0;
+    if ((comp === 7 || comp === 6) && (photo === 6 || photo === 2) && nstrips === 1 && so && sc) { co = so; cl = sc; }
+    else if (jif && jil) { co = jif; cl = jil; }
+    if (cl && co + cl <= total) cands.push({ off: co, len: cl, ori: ori, score: (w || 1) * (h || 1) });
+    if (qi === 0) { var nx = ifd + 2 + 12 * cnt; if (nx + 4 <= total && r32(nx)) queue.push(r32(nx)); }
+  }
+  cands.sort(function (a, b) { return b.score - a.score; });                  /* the biggest picture first (checked for the JPEG mark later) */
+  cands.forEach(function (c) { c.ori = c.ori >= 1 && c.ori <= 8 ? c.ori : (ori0 >= 1 && ori0 <= 8 ? ori0 : 1); });
+  return cands;
+}
+async function dngSource(file) {
+  var size = Math.min(file.size, 1 << 20), r;
+  for (;;) {
+    var buf = await readBytes(file, 0, size);
+    try { r = dngFind(buf, file.size); break; }
+    catch (e) {
+      if (e instanceof Need && size < file.size) { size = Math.min(file.size, Math.max(e.upto + 65536, size * 4)); continue; }
+      throw new Error('Nie można odczytać tego pliku DNG.');
+    }
+  }
+  if (!r) throw new Error('Nie można odczytać tego pliku DNG.');
+  for (var c = 0; c < r.length; c++) if (await isJpegAt(file, r[c].off, r[c].len)) return withOrientation(await readBytes(file, r[c].off, r[c].len), r[c].ori);
+  throw noPreview();
+}
+
+/* a CR3 is a file of boxes (ISO base media): the JPEG is the sample of the track that has a JPEG box in its description */
+function boxes(b, s, e) {
+  var out = [], p = s;
+  while (p + 8 <= e) {
+    var size = be32(b, p), type = String.fromCharCode(b[p + 4], b[p + 5], b[p + 6], b[p + 7]), hl = 8;
+    if (size === 1) { if (p + 16 > e || be32(b, p + 8) !== 0) break; size = be32(b, p + 12); hl = 16; }
+    else if (size === 0) size = e - p;
+    if (size < hl || size > e - p) break;
+    out.push({ type: type, s: p + hl, e: p + size });
+    p += size;
+  }
+  return out;
+}
+function boxKid(b, x, type) { var l = boxes(b, x.s, x.e); for (var i = 0; i < l.length; i++) if (l[i].type === type) return l[i]; return null; }
+function tiffOrientation(b, s, e) {
+  if (e - s < 16) return 0;
+  var be = b[s] === 0x4D;
+  function r16(o) { return be ? (b[o] << 8) | b[o + 1] : b[o] | (b[o + 1] << 8); }
+  function r32(o) { return be ? be32(b, o) : (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0; }
+  var ifd = s + r32(s + 4), n, i;
+  if (ifd + 2 > e) return 0;
+  n = r16(ifd);
+  for (i = 0; i < n && ifd + 2 + 12 * i + 12 <= e; i++) if (r16(ifd + 2 + 12 * i) === 0x112) return r16(ifd + 2 + 12 * i + 8);
+  return 0;
+}
+var CR3_UUID_CANON = [0x85, 0xc0, 0xb6, 0x87, 0x82, 0x0f, 0x11, 0xe0, 0x81, 0x11, 0xf4, 0xce, 0x46, 0x2b, 0x6a, 0x48];
+var CR3_UUID_PRVW = [0xea, 0xf4, 0x2b, 0x5e, 0x1c, 0x98, 0x4b, 0x88, 0xb9, 0xfb, 0xb7, 0xdc, 0x40, 0x6e, 0x4d, 0x16];
+function sameBytes(b, o, a) { for (var i = 0; i < a.length; i++) if (b[o + i] !== a[i]) return false; return true; }
+async function cr3Source(file) {
+  var total = file.size, pos = 0, moov = null, prvw = null, guard = 0;
+  while (pos + 8 <= total && guard++ < 64) {
+    var h = await readBytes(file, pos, 16), size = be32(h, 0), type = String.fromCharCode(h[4], h[5], h[6], h[7]), hl = 8;
+    if (size === 1) { if (be32(h, 8) !== 0) break; size = be32(h, 12); hl = 16; } else if (size === 0) size = total - pos;
+    if (size < hl || size > total - pos) break;
+    if (type === 'moov' && !moov && size < (16 << 20)) moov = { base: pos + hl, bytes: await readBytes(file, pos + hl, size - hl) };
+    else if (type === 'uuid' && !prvw && size - hl >= 0x30) {
+      var u = await readBytes(file, pos + hl, 0x30);
+      if (sameBytes(u, 0, CR3_UUID_PRVW)) { var l = be32(u, 0x2c); if (hl + 0x30 + l <= size) prvw = { off: pos + hl + 0x30, len: l }; }
+    }
+    pos += size;
+  }
+  if (!moov) throw new Error('Nie można odczytać tego pliku CR3.');
+  var b = moov.bytes, ori = 1, jpg = null, kids = boxes(b, 0, b.length), i, k;
+  for (i = 0; i < kids.length; i++) {
+    var x = kids[i];
+    if (x.type === 'uuid' && x.e - x.s > 16 && sameBytes(b, x.s, CR3_UUID_CANON)) {
+      var inner = boxes(b, x.s + 16, x.e);
+      for (k = 0; k < inner.length; k++) if (inner[k].type === 'CMT1') { var o = tiffOrientation(b, inner[k].s, inner[k].e); if (o >= 1 && o <= 8) ori = o; }
+    } else if (x.type === 'uuid' && !prvw && x.e - x.s >= 0x30 && sameBytes(b, x.s, CR3_UUID_PRVW)) {
+      var pl = be32(b, x.s + 0x2c);
+      if (x.s + 0x30 + pl <= x.e) prvw = { off: moov.base + x.s + 0x30, len: pl };
+    } else if (x.type === 'trak' && !jpg) {
+      var mdia = boxKid(b, x, 'mdia'), minf = mdia && boxKid(b, mdia, 'minf'), stbl = minf && boxKid(b, minf, 'stbl');
+      var stsd = stbl && boxKid(b, stbl, 'stsd'), stsz = stbl && boxKid(b, stbl, 'stsz'), stco = stbl && boxKid(b, stbl, 'stco'), co64 = stbl && boxKid(b, stbl, 'co64');
+      if (!stsd || !stsz) continue;
+      var has = false;
+      for (k = stsd.s; k + 4 <= stsd.e && k < stsd.s + 1024; k++) if (b[k] === 0x4A && b[k + 1] === 0x50 && b[k + 2] === 0x45 && b[k + 3] === 0x47) { has = true; break; }
+      if (!has || stsz.e - stsz.s < 12 || be32(b, stsz.s + 8) === 0) continue;
+      var ssz = be32(b, stsz.s + 4), off = -1;
+      if (ssz === 0) { if (stsz.e - stsz.s < 16) continue; ssz = be32(b, stsz.s + 12); }
+      if (stco && stco.e - stco.s >= 12 && be32(b, stco.s + 4) >= 1) off = be32(b, stco.s + 8);
+      else if (co64 && co64.e - co64.s >= 16 && be32(b, co64.s + 4) >= 1 && be32(b, co64.s + 8) === 0) off = be32(b, co64.s + 12);
+      if (off >= 0 && await isJpegAt(file, off, ssz)) jpg = { off: off, len: ssz };
+    }
+  }
+  var pick = jpg || prvw;
+  if (!pick || !(await isJpegAt(file, pick.off, pick.len))) throw noPreview();
+  return withOrientation(await readBytes(file, pick.off, pick.len), ori);
+}
+
 async function previewSource(file) {
   var head = new Uint8Array(await file.slice(0, 65536).arrayBuffer());
+  if (head.length > 16 && head[0] === 0xFF && head[1] === 0xD8) return await file.arrayBuffer();
+  if (head.length > 16 && head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) return await cr3Source(file);      /* 'ftyp' */
   if (head.length > 16 && head[0] === 0x49 && head[1] === 0x49 && head[2] === 42 && head[8] === 0x43 && head[9] === 0x52) {
     var ifd = u32(head, 4), n = u16(head, ifd), i, comp = 0, so = 0, sb = 0, ori = 1;
     for (i = 0; i < n && ifd + 2 + 12 * i + 12 <= head.length; i++) {
@@ -16,16 +163,11 @@ async function previewSource(file) {
     }
     if (comp === 6 && so && sb && so + sb <= file.size) {
       var jpg = new Uint8Array(await file.slice(so, so + sb).arrayBuffer());
-      if (jpg[0] === 0xFF && jpg[1] === 0xD8) {
-        /* SOI + an Exif block with the orientation only + the rest of the JPEG */
-        var exif = new Uint8Array([0xFF, 0xE1, 0, 0x22, 0x45, 0x78, 0x69, 0x66, 0, 0,
-          0x49, 0x49, 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, ori & 255, ori >> 8, 0, 0, 0, 0, 0, 0]);
-        var out = new Uint8Array(2 + exif.length + jpg.length - 2);
-        out.set(jpg.subarray(0, 2), 0); out.set(exif, 2); out.set(jpg.subarray(2), 2 + exif.length);
-        return out.buffer;
-      }
+      if (jpg[0] === 0xFF && jpg[1] === 0xD8) return withOrientation(jpg, ori);
     }
+    return await file.arrayBuffer();
   }
+  if (head.length > 16 && ((head[0] === 0x49 && head[1] === 0x49 && head[2] === 42 && head[3] === 0) || (head[0] === 0x4D && head[1] === 0x4D && head[2] === 0 && head[3] === 42))) return await dngSource(file);
   return await file.arrayBuffer();
 }
 
@@ -140,7 +282,7 @@ async function selectFile(f) {
   S.pv = null; S.thumbs = {}; S.sheetSeq = (S.sheetSeq || 0) + 1; detailSeq++;
   pvMessage('Wczytuję zdjęcie…'); pvBusy(true);
   $('#btnSheet').disabled = true;
-  try { buf = await previewSource(f.file); } catch (e) { pvMessage('Nie można odczytać tego pliku.'); pvBusy(false); return; }
+  try { buf = await previewSource(f.file); } catch (e) { pvMessage(e && e.message ? e.message : 'Nie można odczytać tego pliku.'); pvBusy(false); return; }
   if (seq !== S.pvSeq) return;
   copy = buf.slice(0);
   if (!(await S.preview.request({ type: 'source', buffer: buf }, [buf]))) { pvMessage('Za mało pamięci na podgląd tego zdjęcia.'); pvBusy(false); return; }

@@ -29,6 +29,7 @@ void free(void *p);
 
 #include "../../modules/filmlook/develop.h"
 #include "fd_resize.h"
+#include "fd_containers.h"
 
 #define FD_VERSION "0.1"
 
@@ -93,8 +94,8 @@ static const char *fd_error_text(int rc)
 {
     switch (rc) {
     case 0:                return "gotowe";
-    case SE_E_BADFILE:     return "to nie jest zdjęcie JPG ani CR2 z aparatu";
-    case SE_E_UNSUPPORTED: return "nieobsługiwany rodzaj pliku (np. JPG progresywny albo CR2 bez podglądu JPG)";
+    case SE_E_BADFILE:     return "to nie jest zdjęcie JPG, CR2, CR3 ani DNG z aparatu";
+    case SE_E_UNSUPPORTED: return "nieobsługiwany plik: progresywny JPG albo RAW (CR2, CR3, DNG) bez dużego podglądu JPG w środku (DNG zapisz z „pełnowymiarowym podglądem JPEG”)";
     case SE_E_TRUNCATED:   return "plik jest ucięty";
     case SE_E_NOMEM:       return "za mało pamięci na to zdjęcie";
     case SE_E_CORRUPT:     return "uszkodzone dane w pliku";
@@ -119,6 +120,7 @@ static void fd_job_defaults(fd_job *j)          /* the defaults of every film in
     j->size = FD_SIZE_FULL; j->quality = 95;
     j->look.strength = 100; j->look.grain = 100;
     j->look.filter_amt = 100;                   /* a colour filter, once chosen, works at full strength */
+    j->look.gcolor = 100;                       /* the grain of a colour film is coloured (a black and white film ignores it) */
 }
 
 /* ---------------------------------------------------------------- the sliders of the desktop program
@@ -127,7 +129,7 @@ static void fd_job_defaults(fd_job *j)          /* the defaults of every film in
 #define FDP(n, field) { n, (int)offsetof(look_t, field) }
 static const struct { const char *name; int off; } fd_params[] = {
     FDP("expo", expo), FDP("hi_t", hi_t), FDP("sh_t", sh_t), FDP("wh_t", wh_t), FDP("bl_t", bl_t),
-    FDP("gsize", gsize), FDP("grough", grough),
+    FDP("gsize", gsize), FDP("grough", grough), FDP("gcolor", gcolor),
     FDP("wb_temp", wb_temp), FDP("wb_tint", wb_tint),
     FDP("skin_hue", skin_hue), FDP("skin_sat", skin_sat), FDP("skin_lum", skin_lum),
     FDP("ton_mode", ton_mode),
@@ -139,7 +141,12 @@ static const struct { const char *name; int off; } fd_params[] = {
     FDP("sat_red", hsl[8]), FDP("sat_orange", hsl[9]), FDP("sat_yellow", hsl[10]), FDP("sat_green", hsl[11]),
     FDP("sat_aqua", hsl[12]), FDP("sat_blue", hsl[13]), FDP("sat_purple", hsl[14]), FDP("sat_magenta", hsl[15]),
     FDP("lum_red", hsl[16]), FDP("lum_orange", hsl[17]), FDP("lum_yellow", hsl[18]), FDP("lum_green", hsl[19]),
-    FDP("lum_aqua", hsl[20]), FDP("lum_blue", hsl[21]), FDP("lum_purple", hsl[22]), FDP("lum_magenta", hsl[23])
+    FDP("lum_aqua", hsl[20]), FDP("lum_blue", hsl[21]), FDP("lum_purple", hsl[22]), FDP("lum_magenta", hsl[23]),
+    /* the curves the user draws: crvK_n points of channel K (0 master, 1 red, 2 green, 3 blue), crvK_xJ / crvK_yJ the points (0..255) */
+    FDP("crv0_n", uc_n[0]), FDP("crv0_x0", uc_x[0][0]), FDP("crv0_y0", uc_y[0][0]), FDP("crv0_x1", uc_x[0][1]), FDP("crv0_y1", uc_y[0][1]), FDP("crv0_x2", uc_x[0][2]), FDP("crv0_y2", uc_y[0][2]), FDP("crv0_x3", uc_x[0][3]), FDP("crv0_y3", uc_y[0][3]), FDP("crv0_x4", uc_x[0][4]), FDP("crv0_y4", uc_y[0][4]), FDP("crv0_x5", uc_x[0][5]), FDP("crv0_y5", uc_y[0][5]), FDP("crv0_x6", uc_x[0][6]), FDP("crv0_y6", uc_y[0][6]), FDP("crv0_x7", uc_x[0][7]), FDP("crv0_y7", uc_y[0][7]), FDP("crv0_x8", uc_x[0][8]), FDP("crv0_y8", uc_y[0][8]), FDP("crv0_x9", uc_x[0][9]), FDP("crv0_y9", uc_y[0][9]), FDP("crv0_x10", uc_x[0][10]), FDP("crv0_y10", uc_y[0][10]), FDP("crv0_x11", uc_x[0][11]), FDP("crv0_y11", uc_y[0][11]),
+    FDP("crv1_n", uc_n[1]), FDP("crv1_x0", uc_x[1][0]), FDP("crv1_y0", uc_y[1][0]), FDP("crv1_x1", uc_x[1][1]), FDP("crv1_y1", uc_y[1][1]), FDP("crv1_x2", uc_x[1][2]), FDP("crv1_y2", uc_y[1][2]), FDP("crv1_x3", uc_x[1][3]), FDP("crv1_y3", uc_y[1][3]), FDP("crv1_x4", uc_x[1][4]), FDP("crv1_y4", uc_y[1][4]), FDP("crv1_x5", uc_x[1][5]), FDP("crv1_y5", uc_y[1][5]), FDP("crv1_x6", uc_x[1][6]), FDP("crv1_y6", uc_y[1][6]), FDP("crv1_x7", uc_x[1][7]), FDP("crv1_y7", uc_y[1][7]), FDP("crv1_x8", uc_x[1][8]), FDP("crv1_y8", uc_y[1][8]), FDP("crv1_x9", uc_x[1][9]), FDP("crv1_y9", uc_y[1][9]), FDP("crv1_x10", uc_x[1][10]), FDP("crv1_y10", uc_y[1][10]), FDP("crv1_x11", uc_x[1][11]), FDP("crv1_y11", uc_y[1][11]),
+    FDP("crv2_n", uc_n[2]), FDP("crv2_x0", uc_x[2][0]), FDP("crv2_y0", uc_y[2][0]), FDP("crv2_x1", uc_x[2][1]), FDP("crv2_y1", uc_y[2][1]), FDP("crv2_x2", uc_x[2][2]), FDP("crv2_y2", uc_y[2][2]), FDP("crv2_x3", uc_x[2][3]), FDP("crv2_y3", uc_y[2][3]), FDP("crv2_x4", uc_x[2][4]), FDP("crv2_y4", uc_y[2][4]), FDP("crv2_x5", uc_x[2][5]), FDP("crv2_y5", uc_y[2][5]), FDP("crv2_x6", uc_x[2][6]), FDP("crv2_y6", uc_y[2][6]), FDP("crv2_x7", uc_x[2][7]), FDP("crv2_y7", uc_y[2][7]), FDP("crv2_x8", uc_x[2][8]), FDP("crv2_y8", uc_y[2][8]), FDP("crv2_x9", uc_x[2][9]), FDP("crv2_y9", uc_y[2][9]), FDP("crv2_x10", uc_x[2][10]), FDP("crv2_y10", uc_y[2][10]), FDP("crv2_x11", uc_x[2][11]), FDP("crv2_y11", uc_y[2][11]),
+    FDP("crv3_n", uc_n[3]), FDP("crv3_x0", uc_x[3][0]), FDP("crv3_y0", uc_y[3][0]), FDP("crv3_x1", uc_x[3][1]), FDP("crv3_y1", uc_y[3][1]), FDP("crv3_x2", uc_x[3][2]), FDP("crv3_y2", uc_y[3][2]), FDP("crv3_x3", uc_x[3][3]), FDP("crv3_y3", uc_y[3][3]), FDP("crv3_x4", uc_x[3][4]), FDP("crv3_y4", uc_y[3][4]), FDP("crv3_x5", uc_x[3][5]), FDP("crv3_y5", uc_y[3][5]), FDP("crv3_x6", uc_x[3][6]), FDP("crv3_y6", uc_y[3][6]), FDP("crv3_x7", uc_x[3][7]), FDP("crv3_y7", uc_y[3][7]), FDP("crv3_x8", uc_x[3][8]), FDP("crv3_y8", uc_y[3][8]), FDP("crv3_x9", uc_x[3][9]), FDP("crv3_y9", uc_y[3][9]), FDP("crv3_x10", uc_x[3][10]), FDP("crv3_y10", uc_y[3][10]), FDP("crv3_x11", uc_x[3][11]), FDP("crv3_y11", uc_y[3][11])
 };
 #define FD_PARAM_COUNT ((int)(sizeof fd_params / sizeof fd_params[0]))
 
@@ -232,7 +239,7 @@ static void fd_develop_sized(const fl_io *io, const film_t *f, const look_t *L, 
 
     {
         size_t tabs = 3 * 1536 * sizeof(int16_t) + 64;
-        size_t budget = SE_LOOK_BUDGET + (size_t)ow * 4 + 4096;
+        size_t budget = SE_LOOK_BUDGET + (size_t)ow * 4 + 4096 + fl_look_extra(ow, L);
         uint8_t *mem = (uint8_t *)se_arena_alloc(&ar, tabs + budget, 8);
         if (!mem) { res->rc = SE_E_NOMEM; return; }
         se_arena_init(&lookar, mem, tabs + budget);
@@ -270,16 +277,19 @@ static void fd_develop_sized(const fl_io *io, const film_t *f, const look_t *L, 
 }
 
 /* ---------------------------------------------------------------- run
- * Develops one photo (src = the whole file: a camera JPG or a CR2) into out. out->data is allocated here (free() it);
+ * Develops one photo (src = the whole file: a camera JPG, a CR2, a CR3 or a DNG) into out. out->data is allocated here (free() it);
  * out->len is the size of the finished JPEG. Returns r->rc. progress (may be NULL) gets 0..1000. */
-static int fd_run(const uint8_t *src, size_t srclen, const fd_job *job, fd_buf *out, fd_result *r,
+static int fd_run(const uint8_t *src0, size_t srclen0, const fd_job *job, fd_buf *out, fd_result *r,
                   void (*progress)(void *ctx, int permille), void *pctx)
 {
     fd_src s;
     fl_io io;
     fl_result res;
     film_t f;
-    int sz = job->size, quality = job->quality;
+    const uint8_t *src = src0;
+    size_t srclen = srclen0;
+    uint8_t *owned = 0;
+    int sz = job->size, quality = job->quality, prc = 0;
     int tw = 0, th = 0, sw = 0, sh = 0, resize = 0;
 
     memset(r, 0, sizeof *r);
@@ -288,6 +298,8 @@ static int fd_run(const uint8_t *src, size_t srclen, const fd_job *job, fd_buf *
     if (quality < 10) quality = 10;
     if (quality > 100) quality = 100;
     if (srclen > 0xFFFFFFF0u) { r->rc = SE_E_UNSUPPORTED; return r->rc; }
+    fd_prepare(src0, srclen0, &src, &srclen, &owned, &prc);          /* a CR3 or a DNG becomes a plain JPEG with the metadata in it */
+    if (prc) { r->rc = prc; return r->rc; }
 
     /* how big is the picture, to know whether a smaller size really means resizing it */
     {
@@ -312,9 +324,9 @@ static int fd_run(const uint8_t *src, size_t srclen, const fd_job *job, fd_buf *
     io.read = fd_rd; io.rctx = &s;
     io.write = fd_wr; io.wctx = out;
     io.progress = progress; io.pctx = pctx;
-    io.mem_size = fl_mem_needed(sw > 6000 ? sw : 6000, 1);
+    io.mem_size = fl_mem_needed(sw > 6000 ? sw : 6000, 1) + fl_look_extra(sw > 6000 ? sw : 6000, &job->look);
     io.mem = (uint8_t *)malloc(io.mem_size);
-    if (!io.mem) { r->rc = SE_E_NOMEM; return r->rc; }
+    if (!io.mem) { free(owned); r->rc = SE_E_NOMEM; return r->rc; }
     f = films[job->film];
 
     if (resize)
@@ -323,6 +335,7 @@ static int fd_run(const uint8_t *src, size_t srclen, const fd_job *job, fd_buf *
         fl_develop(&io, &f, &job->look, sz > FD_SIZE_ENGINE ? sz - FD_SIZE_ENGINE : 1, quality, &res);
 
     free(io.mem);
+    free(owned);
     r->rc = res.rc;
     r->src_w = res.src_w; r->src_h = res.src_h; r->out_w = res.out_w; r->out_h = res.out_h; r->mem_peak = res.mem_peak;
     if (r->rc == 0 && out->fail) r->rc = SE_E_NOMEM;

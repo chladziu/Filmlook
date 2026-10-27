@@ -73,6 +73,8 @@ static int curve_is_straight(const film_t *f, int c)
     return 1;
 }
 
+#define UC_MAX 12   /* points of one user curve (look_t.uc_*) */
+
 /* ---- the "own look" layer: sliders that sit on top of any film (or on the empty "Własny look") ---- */
 typedef struct {
     int strength;   /* Efekt     0..100   how much of the film preset is used */
@@ -106,6 +108,10 @@ typedef struct {
     int skin_hue;   /* Tony skóry: odcień     -100..100  redder .. yellower (the orange band, with a little of red and yellow) */
     int skin_sat;   /* Tony skóry: nasycenie  -100..100 */
     int skin_lum;   /* Tony skóry: jasność    -100..100  (on black and white films: how bright skin comes out in grey) */
+    int uc_n[4];    /* Krzywe: points of the curve the user draws (master, red, green, blue); 0 or 1 = no curve. Applied after the film's own curves */
+    int uc_x[4][UC_MAX], uc_y[4][UC_MAX];    /* the points: input 0..255, output 0..255, input growing */
+    int gcolor;     /* Kolor ziarna   0..100  colour films only: how much of the grain is coloured (every channel grains on its own,
+                     * like the dye clouds of the three layers of a colour film). 0 = the grain is grey, as it always was in the camera */
 } look_t;
 
 static int xa_id(const char *name)

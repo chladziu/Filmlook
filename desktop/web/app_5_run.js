@@ -213,7 +213,7 @@ function wire() {
     var t = e.target, typing = t && (t.tagName === 'INPUT' && t.type !== 'range' && t.type !== 'checkbox' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === 'Escape') { if (S.pipette) stopPipette(); return; }
-    if (typing || (t && t.closest && t.closest('dialog'))) return;
+    if (typing || (t && t.closest && (t.closest('dialog') || t.closest('.crvcv')))) return;
     var k = e.key;
     if (k === '[') togglePanel('l');
     else if (k === ']') togglePanel('r');

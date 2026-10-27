@@ -284,3 +284,10 @@ dialog pre { white-space: pre-wrap; font: 11.5px/1.45 var(--mono); background: v
   .tools .zoom { display: none; }
   .brand h1 { font-size: 16px; }
 }
+
+/* the curve editor */
+.crvwrap { margin: 2px 0 8px; }
+.crvcv { display: block; width: 100%; max-width: 320px; aspect-ratio: 1 / 1; border: 1px solid var(--line2); border-radius: 8px; background: var(--panel2); touch-action: none; cursor: crosshair; outline: none; margin: 0 auto; }
+.crvcv:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.crvinfo { text-align: center; min-height: 1.4em; margin-top: 3px; }
+.tabs2 button[style*="--tc"][aria-selected="true"] { background: var(--tc); color: #fff; }

@@ -128,13 +128,28 @@ static int lb_tone(int i, const lb_adj *p)
     return lb_clamp(y, 0, 4096);
 }
 
-/* a tone curve of the preset (points 0..255), monotone cubic Hermite, blended with the straight line by Efekt */
-typedef struct { int n; int x[CURVE_MAX], y[CURVE_MAX], d[CURVE_MAX]; } lb_crv;
+/* a tone curve (points 0..255), monotone cubic Hermite. The film's curves are blended with the straight line by Efekt; the curves
+ * the user draws (look_t.uc_*) come after them. Room for the points of both. */
+#define LB_CRV_MAX (CURVE_MAX > UC_MAX ? CURVE_MAX : UC_MAX)
+typedef struct { int n; int x[LB_CRV_MAX], y[LB_CRV_MAX], d[LB_CRV_MAX]; } lb_crv;
+
+/* the slopes of the n points already in c->x / c->y (n >= 2): Fritsch-Carlson, so the curve never overshoots */
+static void lb_crv_slopes(lb_crv *c, int n)
+{
+    int j, m[LB_CRV_MAX] = { 0 };
+    for (j = 0; j + 1 < n; j++) {
+        int dx = c->x[j + 1] - c->x[j];
+        m[j] = dx > 0 ? lb_clamp(((c->y[j + 1] - c->y[j]) * 4096) / dx, -16384, 16384) : 0;
+    }
+    c->d[0] = m[0]; c->d[n - 1] = m[n - 2];
+    for (j = 1; j + 1 < n; j++)
+        c->d[j] = (m[j - 1] * m[j] <= 0) ? 0 : (2 * m[j - 1] * m[j]) / (m[j - 1] + m[j]);
+    c->n = n;
+}
 
 static void lb_crv_init(lb_crv *c, const film_t *f, int k, int strength)
 {
     int n = f->nc[k], j, straight = 1;
-    int m[CURVE_MAX];
     c->n = 0;
     if (n < 2) return;
     for (j = 0; j < n; j++) {
@@ -144,14 +159,25 @@ static void lb_crv_init(lb_crv *c, const film_t *f, int k, int strength)
         if (c->y[j] != x) straight = 0;
     }
     if (straight) return;
-    for (j = 0; j + 1 < n; j++) {
-        int dx = c->x[j + 1] - c->x[j];
-        m[j] = dx > 0 ? lb_clamp(((c->y[j + 1] - c->y[j]) * 4096) / dx, -16384, 16384) : 0;
+    lb_crv_slopes(c, n);
+}
+
+/* the curve the user drew for channel k (0 master, 1 red, 2 green, 3 blue); n = 0 when there is none or it is the straight line.
+ * Whatever comes in is made safe: points are clamped to 0..255 and the inputs must grow (a point that does not is dropped). */
+static void lb_ucrv_init(lb_crv *c, const look_t *L, int k)
+{
+    int n = L->uc_n[k], j, m = 0, straight = 1;
+    c->n = 0;
+    if (n > UC_MAX) n = UC_MAX;
+    for (j = 0; j < n; j++) {
+        int x = lb_clamp(L->uc_x[k][j], 0, 255), y = lb_clamp(L->uc_y[k][j], 0, 255);
+        if (m > 0 && x <= c->x[m - 1]) continue;
+        c->x[m] = x; c->y[m] = y;
+        if (y != x) straight = 0;
+        m++;
     }
-    c->d[0] = m[0]; c->d[n - 1] = m[n - 2];
-    for (j = 1; j + 1 < n; j++)
-        c->d[j] = (m[j - 1] * m[j] <= 0) ? 0 : (2 * m[j - 1] * m[j]) / (m[j - 1] + m[j]);
-    c->n = n;
+    if (m < 2 || straight) return;
+    lb_crv_slopes(c, m);
 }
 
 /* v: 0..4096, result 0..4096 */
@@ -243,7 +269,7 @@ static int fl_build_look(se_look *lk, se_arena *ar, const film_t *f, const look_
     int strength = lb_clamp(L->strength, 0, 100);
     int mono = f->mono && strength > 0;
     lb_adj ad;
-    lb_crv cv[4];
+    lb_crv cv[4], uv[4];
     int i, c, lift, liftq, sat, vib, hal;
 
     memset(lk, 0, sizeof *lk);
@@ -253,7 +279,7 @@ static int fl_build_look(se_look *lk, se_arena *ar, const film_t *f, const look_
     ad.exp = lb_val(val, "Exposure2012", ""); ad.con = lb_val(val, "Contrast2012", "");
     ad.hi = lb_val(val, "Highlights2012", ""); ad.sh = lb_val(val, "Shadows2012", "");
     ad.wh = lb_val(val, "Whites2012", ""); ad.bl = lb_val(val, "Blacks2012", "");
-    for (c = 0; c < 4; c++) lb_crv_init(&cv[c], f, c, strength);
+    for (c = 0; c < 4; c++) { lb_crv_init(&cv[c], f, c, strength); lb_ucrv_init(&uv[c], L, c); }
     lift = lb_clamp(L->fade, 0, 100) * 60 / 100;                  /* Matowość: lifted blacks, 0..60 of 255 */
     liftq = (lift * 4096) / 255;
     {
@@ -270,6 +296,7 @@ static int fl_build_look(se_look *lk, se_arena *ar, const film_t *f, const look_
         for (i = 0; i < 256; i++) {
             int y = lb_tone(i, &ad);
             if (cv[0].n) y = lb_crv_eval(&cv[0], y);
+            if (uv[0].n) y = lb_crv_eval(&uv[0], y);                  /* the user's master curve (desktop) */
             if (lift) y = liftq + (y * (255 - lift)) / 255;
             yt[i] = y;
         }
@@ -282,6 +309,7 @@ static int fl_build_look(se_look *lk, se_arena *ar, const film_t *f, const look_
                     yc = yt[ci];
                 } else yc = yt[i];
                 if (cv[c + 1].n) yc = lb_crv_eval(&cv[c + 1], yc);
+                if (uv[c + 1].n) yc = lb_crv_eval(&uv[c + 1], yc);       /* the user's channel curve (desktop) */
                 lk->map[c][i] = (uint8_t)lb_clamp((yc * 255 + 2048) >> 12, 0, 255);
             }
         }
@@ -355,6 +383,14 @@ static int fl_build_look(se_look *lk, se_arena *ar, const film_t *f, const look_
         wb = 51 + (rough * 179) / 100;                           /* the fine layer: 0.2 .. 0.9 of the coarse one */
         lk->grain_w_a = GRAIN_K;
         lk->grain_w_b = (GRAIN_K * wb) / 256;
+    }
+    /* colour grain (the desktop program; 0 in the camera): colour films only. The weights keep the strength of the grain about
+     * what it was: the shared noise gets weaker as the noise of each channel gets stronger */
+    lk->grain_cA = 0; lk->grain_cB = 0;
+    if (L && L->gcolor > 0 && !f->mono) {
+        int k = lb_clamp(L->gcolor, 0, 100);
+        lk->grain_cB = (230 * k) / 100;
+        lk->grain_cA = 256 - ((256 - 179) * k) / 100;
     }
 
     /* vignette: Lightroom's PostCropVignetteAmount is negative for dark corners */

@@ -174,6 +174,13 @@ static int fl_look_rows(void *ctx, const uint8_t *rgb, int nrows, int width)
     return 0;
 }
 
+/* extra memory of the colour grain (look_t.gcolor, the desktop program): the grain layers three times more. In the worst case
+ * (the finest grain) a layer pair takes 28 bytes a pixel of the row. Zero in the camera. */
+static size_t fl_look_extra(int out_w, const look_t *L)
+{
+    return (L && L->gcolor > 0) ? (size_t)out_w * 84 + 1024 : 0;
+}
+
 /* memory the develop needs for a frame of src_w pixels at 1/dscale size */
 static size_t fl_mem_needed(int src_w, int dscale)
 {
@@ -217,7 +224,7 @@ static void fl_develop(const fl_io *io, const film_t *f, const look_t *L, int ds
     /* the look: its tables and the halation delay line live in their own arena */
     {
         size_t tabs = 3 * 1536 * sizeof(int16_t) + 64;
-        size_t budget = SE_LOOK_BUDGET + (size_t)ow * 4 + 4096;
+        size_t budget = SE_LOOK_BUDGET + (size_t)ow * 4 + 4096 + fl_look_extra(ow, L);
         uint8_t *mem = (uint8_t *)se_arena_alloc(&ar, tabs + budget, 8);
         if (!mem) { res->rc = SE_E_NOMEM; return; }
         se_arena_init(&lookar, mem, tabs + budget);

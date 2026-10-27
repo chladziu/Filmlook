@@ -1,6 +1,6 @@
 
 /* ====================================================================== part 2: the photos and the films */
-var PHOTO_RE = /\.(jpe?g|cr2)$/i;
+var PHOTO_RE = /\.(jpe?g|cr2|cr3|dng)$/i;
 function isPhoto(name) { return PHOTO_RE.test(name); }
 
 function entryFiles(entry, out, path) {                /* drag and drop of a folder: walk through it */
@@ -49,14 +49,14 @@ function addFiles(files) {
   if (added && !S.sel) selectFile(firstUsable());
   renderList();
   queueThumbs();
-  if (!added && !files.length) toast('Nie znalazłem tu zdjęć JPG ani CR2.');
+  if (!added && !files.length) toast('Nie znalazłem tu zdjęć JPG, CR2, CR3 ani DNG.');
   else if (!added && files.length) toast('Te zdjęcia są już na liście.');
 }
 
 function baseKey(f) { return f.path.replace(/\.[^.\/]+$/, '').toLowerCase(); }
-function applyPairs() {                                /* RAW+JPG: when a CR2 of the same name is there, the JPG waits out */
+function applyPairs() {                                /* RAW+JPG: when a CR2 / CR3 / DNG of the same name is there, the JPG waits out */
   var cr2 = {};
-  S.files.forEach(function (f) { if (/\.cr2$/i.test(f.name)) cr2[baseKey(f)] = 1; });
+  S.files.forEach(function (f) { if (/\.(cr2|cr3|dng)$/i.test(f.name)) cr2[baseKey(f)] = 1; });
   S.files.forEach(function (f) {
     var skip = S.pair && /\.jpe?g$/i.test(f.name) && cr2[baseKey(f)];
     if (skip) { f.status = 'skipped'; f.checked = false; }
@@ -88,11 +88,11 @@ function removeFiles(list) {
 
 /* ---------------------------------------------------------------- the list on the page */
 function itemMeta(f) {
-  if (f.status === 'skipped') return { t: 'pominięte — jest CR2 o tej samej nazwie', c: '' };
+  if (f.status === 'skipped') return { t: 'pominięte — jest plik RAW o tej samej nazwie', c: '' };
   if (f.status === 'running') return { t: 'wywołuję… ' + Math.round(f.pct) + ' %', c: '' };
   if (f.status === 'error') return { t: 'błąd: ' + f.err, c: 'err' };
   if (f.status === 'done') return { t: '✓ gotowe · ' + f.outW + ' × ' + f.outH + ' · ' + fmtMB(f.blob.size), c: 'ok' };
-  return { t: fmtMB(f.size) + (/\.cr2$/i.test(f.name) ? ' · CR2' : ' · JPG'), c: '' };
+  return { t: fmtMB(f.size) + (/\.(cr2|cr3|dng)$/i.test(f.name) ? ' · ' + f.name.slice(-3).toUpperCase() : ' · JPG'), c: '' };
 }
 
 function renderItem(f, li) {

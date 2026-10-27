@@ -105,6 +105,9 @@ typedef struct {
      * step per pixel), w = how much of each layer (256 = 1.0). */
     int      grain_inc_a, grain_inc_b;
     int      grain_w_a, grain_w_b;
+    /* Colour grain (optional): every channel gets noise of its own (the same two layers, other seeds), mixed with the shared
+     * noise above: d = (shared * grain_cA + own * grain_cB) / 256. grain_cB = 0 means grey grain (nothing extra is made). */
+    int      grain_cA, grain_cB;
 
     /* Vignette: vig_tab[i] is the brightness (256 = unchanged) at i / 255 of the squared distance to the corner. */
     int      vig_amount;     /* 0 = none                                  */

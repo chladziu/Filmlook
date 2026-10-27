@@ -214,6 +214,10 @@ KIND_OVERRIDE = {
  "Ricoh High-Contrast Monochrome": "Efekt czarno-biały",
 }
 
+# black and white films that must stay neutral: the colour-grade (toning) saturations of the user's preset are set to 0, so a grey
+# stays grey (the preset of HP5 had cool shadows and warm highlights: a grey ramp came out up to 6 levels too blue in the shadows)
+NEUTRAL_BW = {"Ilford HP5 Plus"}
+
 # brands that go to "Tonowanie" / "Inne" instead of a real manufacturer
 BRAND_OVERRIDE = {
  "Copper Tone": "Tonowanie", "Gold Tone": "Tonowanie", "Selenium Tone": "Tonowanie", "Sepia Tone": "Tonowanie",

@@ -1,5 +1,5 @@
 /* PC test of the JPG engine: hostdev <source.CR2|.JPG> <out.jpg> <film name or index> [scale] [key=value ...]
- * keys: strength grain contrast fade warm shadow high sat vig hal quality */
+ * keys: strength grain contrast fade warm shadow high sat vig hal gcolor quality */
 #define SE_HOSTED 1
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,6 +48,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "warm")) L.warm = v; else if (!strcmp(argv[i], "shadow")) L.shadow = v;
         else if (!strcmp(argv[i], "high")) L.high = v; else if (!strcmp(argv[i], "sat")) L.sat = v;
         else if (!strcmp(argv[i], "vig")) L.vig = v; else if (!strcmp(argv[i], "hal")) L.hal = v;
+        else if (!strcmp(argv[i], "gcolor")) L.gcolor = v;
         else if (!strcmp(argv[i], "quality")) quality = v;
     }
     g_in = fopen(argv[1], "rb"); g_out = fopen(argv[2], "wb");
@@ -55,7 +56,7 @@ int main(int argc, char **argv)
     memset(&io, 0, sizeof io);
     fseek(g_in, 0, SEEK_END); io.src_size = (uint32_t)ftell(g_in);
     io.read = rd; io.rctx = 0; io.write = wr; io.wctx = 0;
-    io.mem_size = fl_mem_needed(6000, scale);
+    io.mem_size = fl_mem_needed(6000, scale) + fl_look_extra(6000, &L);
     io.mem = (uint8_t *)malloc(io.mem_size);
     t0 = clock();
     fcopy.v = ov; fcopy.nv = (unsigned char)nov;

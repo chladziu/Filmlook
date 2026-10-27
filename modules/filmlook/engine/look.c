@@ -241,6 +241,8 @@ struct se_look_run {
     int     *gn;              /* grain: the noise of one row              */
     gl_t     gl[2];           /* grain: the coarse and the fine layer     */
     int      ngl;
+    gl_t     gc[6];           /* colour grain: the same two layers for each of R, G and B (gc[2c], gc[2c + 1]) */
+    int      gcol;            /* 1 = colour grain is on                    */
 
     int     *vx2;             /* vignette: squared horizontal distance of every column, pre-shifted */
     int      vshift;          /* right shift that brings the squared distance below 65536 */
@@ -261,6 +263,8 @@ size_t se_look_bytes(const se_look *lk, int width)
     size_t vig = lk->vig_amount > 0 ? (size_t)width * sizeof(int) + 16 : 0;
     if (lk->grain > 0) vig += (size_t)width * sizeof(int) + 16 + grain_layer_bytes(lk->grain_inc_a, width) +
                               (lk->grain_w_b > 0 ? grain_layer_bytes(lk->grain_inc_b, width) : 0);
+    if (lk->grain > 0 && lk->grain_cB > 0)                           /* colour grain: the same layers three times more */
+        vig += 3 * (grain_layer_bytes(lk->grain_inc_a, width) + (lk->grain_w_b > 0 ? grain_layer_bytes(lk->grain_inc_b, width) : 0));
     vig += LUT_BYTES + 16;                                           /* the colour table */
     if (lk->hal_amount <= 0)
         return sizeof(struct se_look_run) + (size_t)width * 3 + 32 + vig;
@@ -353,6 +357,14 @@ se_err se_look_begin(se_look_run **out, const se_look *lk,
         r->ngl = lk->grain_w_b > 0 ? 2 : 1;
         if (grain_layer_begin(&r->gl[0], ar, width, (unsigned)lk->grain_inc_a, 0x5EEDu, lk->grain_w_a)) return SE_E_NOMEM;
         if (r->ngl > 1 && grain_layer_begin(&r->gl[1], ar, width, (unsigned)lk->grain_inc_b, 0xB10Cu, lk->grain_w_b)) return SE_E_NOMEM;
+        if (lk->grain_cB > 0) {                                   /* colour grain: each channel its own noise (other seeds) */
+            int c;
+            r->gcol = 1;
+            for (c = 0; c < 3; c++) {
+                if (grain_layer_begin(&r->gc[2 * c], ar, width, (unsigned)lk->grain_inc_a, 0xC010u + 0x100u * (unsigned)c, lk->grain_w_a)) return SE_E_NOMEM;
+                if (r->ngl > 1 && grain_layer_begin(&r->gc[2 * c + 1], ar, width, (unsigned)lk->grain_inc_b, 0xC011u + 0x100u * (unsigned)c, lk->grain_w_b)) return SE_E_NOMEM;
+            }
+        }
     }
     if (lk->vig_amount > 0 && lk->vig_h > 1 && width > 1) {
         int x, h = lk->vig_h;
@@ -701,6 +713,17 @@ static void grain_layer_row(gl_t *g, int y)
     for (i = 0; i < nl; i++) { int a = g->n0[i]; g->vv[i] = a + (((g->n1[i] - a) * ty) >> 8); }
 }
 
+/* the noise of one pixel from a coarse layer and (nb) a fine one */
+static int grain_px(const gl_t *A, const gl_t *B, int nb, int x)
+{
+    int g = A->gi[x], a = A->vv[g], n = ((a + (((A->vv[g + 1] - a) * A->tx[x]) >> 8)) * A->weight) >> 8;
+    if (nb) {
+        g = B->gi[x]; a = B->vv[g];
+        n += ((a + (((B->vv[g + 1] - a) * B->tx[x]) >> 8)) * B->weight) >> 8;
+    }
+    return n;
+}
+
 static void grain_row(const se_look *lk, se_look_run *r, uint8_t *row, int w, int y)
 {
     int x;
@@ -710,13 +733,23 @@ static void grain_row(const se_look *lk, se_look_run *r, uint8_t *row, int w, in
     if (amp <= 0 || !r->gn) return;
     grain_layer_row(A, y);
     if (r->ngl > 1) grain_layer_row(B, y);
-    for (x = 0; x < w; x++) {
-        int g = A->gi[x], a = A->vv[g], n = ((a + (((A->vv[g + 1] - a) * A->tx[x]) >> 8)) * A->weight) >> 8;
-        int d, v, wgt;
-        if (r->ngl > 1) {
-            g = B->gi[x]; a = B->vv[g];
-            n += ((a + (((B->vv[g + 1] - a) * B->tx[x]) >> 8)) * B->weight) >> 8;
+    if (r->gcol) {
+        /* colour grain: the shared noise and the noise of the channel itself, in the proportion of grain_cA : grain_cB */
+        int c, nb = r->ngl > 1;
+        for (c = 0; c < 3; c++) { grain_layer_row(&r->gc[2 * c], y); if (nb) grain_layer_row(&r->gc[2 * c + 1], y); }
+        for (x = 0; x < w; x++) {
+            int n = grain_px(A, B, nb, x);
+            for (c = 0; c < 3; c++) {
+                int nc = grain_px(&r->gc[2 * c], &r->gc[2 * c + 1], nb, x);
+                int d = ((((n * lk->grain_cA) + (nc * lk->grain_cB)) >> 8) * amp) >> 15, v, wgt;
+                if (!d) continue;
+                v = row[x * 3 + c]; wgt = (v * (255 - v)) >> 6; row[x * 3 + c] = (uint8_t)clamp8(v + ((d * wgt) >> 8));
+            }
         }
+        return;
+    }
+    for (x = 0; x < w; x++) {
+        int d, v, wgt, n = grain_px(A, B, r->ngl > 1, x);
         d = (n * amp) >> 15;
         if (!d) continue;
         /* 4v(1-v), in eighths, so grain fades out at both ends */
