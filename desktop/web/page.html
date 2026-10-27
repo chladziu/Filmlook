@@ -22,6 +22,9 @@ __APP_CSS__
     <div class="seg" role="group" aria-label="Przed i po">
       <button type="button" id="pvBefore" aria-pressed="false" title="Oryginał z aparatu  ( przytrzymaj \ )">Przed</button><button type="button" id="pvAfter" aria-pressed="true" title="Ze wzorem filmu">Po</button>
     </div>
+    <div class="seg" role="group" aria-label="Kadr">
+      <button type="button" id="btnCrop" aria-pressed="false" disabled title="Kadruj zdjęcie: ramka z uchwytami i proporcjami, jak w Lightroomie  ( C )"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" style="vertical-align:-2px;margin-right:4px"><path d="M7 2v15h15M2 7h15v15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Kadr</button>
+    </div>
     <div class="zoom" role="group" aria-label="Powiększenie">
       <button type="button" id="zFit" title="Całe zdjęcie  ( F )">Całe</button>
       <button type="button" id="z100" title="Jeden piksel zdjęcia = jeden piksel ekranu  ( 1 )">100 %</button>
@@ -100,6 +103,26 @@ __APP_CSS__
       <div class="spin" id="spin"></div>
       <div class="hud" id="hud"></div>
       <canvas id="hist" width="256" height="72" aria-label="Histogram"></canvas>
+      <div class="cropui hidden" id="cropUi">
+        <div class="croprect" id="cropRect" title="Przeciągnij ramkę, żeby ją przesunąć; uchwyty zmieniają rozmiar. Dwukrotne kliknięcie = gotowe.">
+          <i class="gl gh1"></i><i class="gl gh2"></i><i class="gl gv1"></i><i class="gl gv2"></i>
+          <b class="ch" data-h="nw"></b><b class="ch" data-h="n"></b><b class="ch" data-h="ne"></b><b class="ch" data-h="e"></b>
+          <b class="ch" data-h="se"></b><b class="ch" data-h="s"></b><b class="ch" data-h="sw"></b><b class="ch" data-h="w"></b>
+          <span class="cropsize" id="cropSize"></span>
+        </div>
+      </div>
+      <div class="cropbar hidden" id="cropBar" role="toolbar" aria-label="Kadrowanie">
+        <label class="small" for="cropAr">Proporcje</label>
+        <select id="cropAr" title="Blokada proporcji: ramka zawsze ma wybrany kształt. „Dowolne” zdejmuje blokadę."></select>
+        <span id="cropCustom" class="hidden"><input type="number" id="cropCa" min="1" max="99" value="4" aria-label="Własne proporcje: szerokość"> : <input type="number" id="cropCb" min="1" max="99" value="5" aria-label="Własne proporcje: wysokość"></span>
+        <button type="button" class="btn sm" id="cropFlip" title="Obraca proporcje: poziomo ↔ pionowo  ( X )">Obróć ⟲</button>
+        <button type="button" class="btn sm" id="cropAll" title="Ustawia te same proporcje (wyśrodkowane) wszystkim zdjęciom na liście, które nie mają jeszcze własnego kadru. Pionowe zdjęcia dostają proporcje pionowe.">Dla wszystkich</button>
+        <button type="button" class="btn sm" id="cropReset" title="Cała klatka w wybranych proporcjach">Wyzeruj</button>
+        <span class="muted small" id="cropInfo"></span>
+        <span class="grow"></span>
+        <button type="button" class="btn sm" id="cropCancel" title="Zostawia kadr taki, jaki był  ( Esc )">Anuluj</button>
+        <button type="button" class="btn sm primary" id="cropDone" title="Zapisuje kadr dla tego zdjęcia  ( Enter )">Gotowe</button>
+      </div>
       <div class="pipnote hidden" id="pipNote">Kliknij w zdjęciu coś, co ma być neutralnie szare lub białe. <button class="btn link sm" id="pipCancel" type="button">Anuluj (Esc)</button></div>
     </div>
     <div class="status" id="pvCap">Wybierz zdjęcie, a tutaj zobaczysz, jak będzie wyglądało.</div>
@@ -114,15 +137,25 @@ __APP_CSS__
     <div class="scroll" id="adj"></div>
     <div class="export" id="exp">
       <div class="erow">
-        <span class="elabel">Rozmiar</span>
-        <div class="seg wide" id="sizes" role="radiogroup" aria-label="Rozmiar gotowych zdjęć">
-          <button type="button" role="radio" data-size="0" title="Pełny 5616 × 3744, tak jak z aparatu (L), 21 Mpix">L 21 Mpix</button><button type="button" role="radio" data-size="1" title="Średni 3861 × 2574, jak rozmiar M aparatu, 10 Mpix">M 10 Mpix</button><button type="button" role="radio" data-size="2" title="Mały 2784 × 1856, jak rozmiar S aparatu, 5 Mpix">S 5 Mpix</button>
-        </div>
+        <label class="elabel" for="outMode">Rozmiar</label>
+        <select id="outMode" title="Rozmiar gotowych zdjęć: pełny (jak zdjęcie, a po kadrowaniu — jak kadr) albo dowolny, także większy niż zdjęcie (wtedy jest powiększane)">
+          <option value="full">Pełny</option>
+          <option value="long">Dłuższy bok</option>
+          <option value="w">Szerokość</option>
+          <option value="h">Wysokość</option>
+        </select>
+        <input type="number" id="outPx" min="16" max="16384" step="1" value="3000" list="outPresets" aria-label="Rozmiar w pikselach">
+        <span class="muted small">px</span>
+        <datalist id="outPresets"><option value="1080"><option value="1600"><option value="2048"><option value="2560"><option value="3000"><option value="3840"><option value="4096"><option value="5616"><option value="8000"></datalist>
       </div>
+      <p class="muted small note" id="outInfo"></p>
       <div class="erow">
         <label class="elabel" for="qr">Jakość JPG</label>
-        <input type="range" id="qr" min="70" max="100" step="1" value="95">
-        <input type="number" id="qn" min="70" max="100" value="95" aria-label="Jakość JPG, wartość">
+        <input type="range" id="qr" min="70" max="100" step="1" value="98">
+        <input type="number" id="qn" min="70" max="100" value="98" aria-label="Jakość JPG, wartość">
+      </div>
+      <div class="erow">
+        <label class="chk small" title="Gotowy JPG ma kolory w pełnej rozdzielczości (4:4:4, a nie połowie jak w aparacie) i każdy piksel jest liczony dokładnie. Pliki są większe, a wywoływanie trochę dłuższe."><input type="checkbox" id="chkHq" checked> <span>Najwyższa jakość (kolory 4:4:4, dokładne liczenie)</span></label>
       </div>
       <button class="btn primary big full" id="btnRun" type="button" disabled>Wywołaj zaznaczone</button>
       <div class="overall" id="overall"><i id="overallBar"></i></div>
@@ -135,7 +168,7 @@ __APP_CSS__
         <button class="btn sm hidden" id="btnFolder" type="button">Zapisz w folderze…</button>
         <span class="muted small grow" id="folderInfo"></span>
       </div>
-      <p class="muted small note" id="runNote">Wynik: nowe pliki JPG, oryginały zostają nietknięte. Zdjęcie nie jest powiększane ponad swój rozmiar.</p>
+      <p class="muted small note" id="runNote">Wynik: nowe pliki JPG, oryginały zostają nietknięte.</p>
     </div>
   </aside>
 </div>
@@ -146,8 +179,8 @@ __APP_CSS__
 <dialog id="about" aria-labelledby="aboutTitle">
   <form method="dialog" class="aboutbox">
     <div class="abouthead"><h2 id="aboutTitle">Film Look Simulation</h2><button class="btn sm" value="close">Zamknij</button></div>
-    <p class="small"><b>Skróty:</b> <kbd>[</kbd> <kbd>]</kbd> chowają panele · <kbd>F</kbd> całe zdjęcie · <kbd>1</kbd> 100 % · <kbd>+</kbd> <kbd>−</kbd> powiększenie · kółko myszy powiększa, przeciąganie przesuwa, podwójne kliknięcie przełącza całe/100 % · przytrzymaj <kbd>\</kbd> żeby zobaczyć oryginał · <kbd>←</kbd> <kbd>→</kbd> poprzednie / następne zdjęcie · <kbd>Delete</kbd> usuwa zdjęcie z listy · podwójne kliknięcie na nazwie suwaka przywraca jego wartość.</p>
-    <p class="small muted">FILM LOOK DESKTOP <span id="verTxt"></span> — ten sam silnik, który działa w module aparatu (Soup Engine, GPL v2, rozszerzony o film look), skompilowany do WebAssembly. Program jest na licencji GPL v2; kod źródłowy: https://github.com/chladziu/filmlook. Wyglądy filmów: własne presety oraz EmulsionPresets (MIT). Program używa podglądu JPG zapisanego w pliku CR2, CR3 lub DNG (nie pełnego surowego zapisu matrycy).</p>
+    <p class="small"><b>Skróty:</b> <kbd>[</kbd> <kbd>]</kbd> chowają panele · <kbd>C</kbd> kadrowanie (<kbd>Enter</kbd> gotowe, <kbd>Esc</kbd> anuluj, <kbd>X</kbd> obróć proporcje) · <kbd>F</kbd> całe zdjęcie · <kbd>1</kbd> 100 % · <kbd>+</kbd> <kbd>−</kbd> powiększenie · kółko myszy powiększa, przeciąganie przesuwa, podwójne kliknięcie przełącza całe/100 % · przytrzymaj <kbd>\</kbd> żeby zobaczyć oryginał · <kbd>←</kbd> <kbd>→</kbd> poprzednie / następne zdjęcie · <kbd>Delete</kbd> usuwa zdjęcie z listy · podwójne kliknięcie na nazwie suwaka przywraca jego wartość.</p>
+    <p class="small muted">FILM LOOK DESKTOP <span id="verTxt"></span> — ten sam silnik, który działa w module aparatu (Soup Engine, GPL v2, rozszerzony o film look), skompilowany do WebAssembly. Program jest na licencji GPL v2; kod źródłowy: https://github.com/chladziu/filmlook. Wyglądy filmów: własne presety oraz EmulsionPresets (MIT). Zdjęcia z plików CR2 (Canon 5D Mark II) i DNG są wywoływane z surowych danych matrycy (RAW); plik CR3 — z podglądu JPG zapisanego w pliku (żeby użyć RAW, zamień go na DNG).</p>
     <pre id="licTxt">__LICENSE__</pre>
     <p class="small muted">FILM LOOK DESKTOP · <span id="buildTxt">__BUILD__</span></p>
   </form>

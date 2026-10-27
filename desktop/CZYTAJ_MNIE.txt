@@ -2,11 +2,16 @@ FILM LOOK DESKTOP - film z aparatu na komputerze
 ================================================
 
 To jest ten sam silnik, który działa w module w aparacie (5D Mark II), tylko na komputerze,
-bez ograniczeń aparatu: wybierasz film i suwaki (te same, co w aparacie) oraz rozmiar,
+bez ograniczeń aparatu: wybierasz film i suwaki (te same, co w aparacie), kadr oraz dowolny rozmiar,
 a program robi z Twoich zdjęć gotowe pliki JPG z wyglądem filmu.
-Oryginały zostają nietknięte. Źródłem może być JPG z aparatu albo plik RAW: CR2 (Canon),
-CR3 (Canon EOS R...) albo DNG (program bierze z nich pełnowymiarowy podgląd JPG, który aparat
-albo Lightroom zapisuje w pliku RAW obok surowych danych).
+Oryginały zostają nietknięte. Źródłem może być JPG z aparatu albo plik RAW. Z plików RAW program
+wywołuje zdjęcie z surowych danych matrycy (nie z JPG zapisanego w pliku, który ma niską jakość):
+najpierw sam wywołuje RAW (balans bieli, światło, kolory), potem nakłada film. Czyta:
+- CR2 z aparatu Canon EOS 5D Mark II,
+- DNG (z matrycą Bayera albo liniowe, bez kompresji albo z kompresją bezstratną).
+Plik CR3 (Canon EOS R...) i CR2 z innych aparatów: program bierze z nich pełnowymiarowy podgląd JPG
+(w pliku RAW leży obok surowych danych). Żeby użyć RAW z CR3, zamień go na DNG darmowym programem
+Adobe DNG Converter - wtedy zdjęcie wywoła się z surowych danych.
 
 
 NAJPROSTSZY SPOSÓB (Windows i Mac): plik FILMLOOK_DESKTOP.html
@@ -29,6 +34,14 @@ NAJPROSTSZY SPOSÓB (Windows i Mac): plik FILMLOOK_DESKTOP.html
    Twoje zdjęcie w każdym filmie. "Ustawienia z karty..." bierze suwaki zapisane przez
    moduł w aparacie (plik ML/SETTINGS/FILMLOOK.TXT na karcie).
 5. Ustawienia (prawy panel), działy rozwijane kliknięciem:
+   - Źródło zdjęcia (RAW): skąd program bierze zdjęcie. "RAW" (domyślnie) - z surowych danych
+     matrycy; "JPG z pliku" - z gotowego JPG, który aparat zapisał w pliku (niższa jakość, jak
+     dawniej). Drugi przełącznik, "Wzorzec tonalny z JPG aparatu" (domyślnie włączony): ton
+     wywołanego RAW (jasność, kontrast) jest dopasowany do JPG z aparatu, który leży w tym samym
+     pliku - czyli do tego, co widać na ekranie aparatu - i na ten wygląd nakładają się filmy.
+     Wyłączony: czysty RAW ze standardowym, neutralnym tonem programu, bez wzorca z aparatu.
+     Wzorzec dopasowuje tylko jasność i kontrast, nie kolory. Przy zwykłym JPG i przy CR3 ten
+     dział tylko mówi, dlaczego nie ma RAW.
    - Film i ziarno: siła efektu, ilość, wielkość i szorstkość ziarna, kolor ziarna
      (w filmach kolorowych ziarno jest domyślnie kolorowe, jak w prawdziwym filmie barwnym;
      0 = szare ziarno, jak w aparacie), winieta, matowość
@@ -56,24 +69,51 @@ NAJPROSTSZY SPOSÓB (Windows i Mac): plik FILMLOOK_DESKTOP.html
    klawisz F - całe zdjęcie, 1 - 100 %, + i - powiększenie. Przy powiększeniu program
    liczy zdjęcie w pełnym rozmiarze, więc widać prawdziwe ziarno i szczegóły.
    Przytrzymaj klawisz \ (albo przycisk "Przed"), żeby zobaczyć oryginał.
-7. Rozmiar (5616x3744, 3861x2574 albo 2784x1856) i jakość JPG (domyślnie 95).
-   Zdjęcie nigdy nie jest powiększane.
-8. "Wywołaj zaznaczone": kilka zdjęć naraz wywołuje się równolegle.
+7. Kadr (przycisk "Kadr" nad zdjęciem albo klawisz C): ramka z uchwytami i siatką trzecich.
+   Przeciągnij ramkę, żeby ją przesunąć, uchwyty na rogach i bokach zmieniają jej rozmiar.
+   Na pasku z góry wybierasz proporcje, jak w Lightroomie: Oryginał, Dowolne (bez blokady),
+   1:1, 5:4 (4x5), 7:5 (5x7), 4:3, 3:2 (2x3, jak w aparacie), 16:10, 16:9, 2:1, 3:1 (panorama)
+   albo Własne (np. 7:3). Przy wybranych proporcjach ramka ma zawsze dokładnie ten kształt
+   ("Obróć" albo klawisz X zamienia poziomo na pionowo). "Wyzeruj" daje całą klatkę,
+   Enter albo "Gotowe" zapisuje kadr, Esc go odrzuca, dwukrotne kliknięcie w ramce też kończy.
+   Kadr jest osobny dla każdego zdjęcia. "Dla wszystkich" ustawia te same proporcje
+   (wyśrodkowane) wszystkim zdjęciom, które nie mają jeszcze własnego kadru; pionowe zdjęcia
+   dostają proporcje pionowe. Kadr jest też w prawym panelu ("Kadr") i przy "Usuń kadr".
+   Winieta i ziarno są liczone już na wykadrowanym zdjęciu, tak jak będą w pliku.
+8. Rozmiar zapisu (pole "Rozmiar" na dole): "Pełny" (rozmiar zdjęcia, a po kadrowaniu rozmiar
+   kadru) albo dowolny: dłuższy bok, szerokość albo wysokość w pikselach (od 16 do 16384 px,
+   najwyżej 160 Mpix). Rozmiar może być też większy niż zdjęcie - wtedy zdjęcie jest powiększane
+   (metodą bicubic, Catmull-Rom), a pomniejszane jest uśredniane. Druga strona zawsze wynika
+   z proporcji kadru. Pod polem widać, ile pikseli wyjdzie z tego zdjęcia.
+   Jakość JPG ma domyślnie 98.
+   "Najwyższa jakość" (domyślnie włączona): gotowy JPG ma kolory w pełnej rozdzielczości (4:4:4,
+   a nie w połowie, jak w aparacie), a każdy piksel jest liczony dokładnie. Pliki są większe
+   (np. 8-14 MB zamiast 5-8 MB przy pełnym rozmiarze), wywoływanie trwa trochę dłużej. Wyłączona:
+   jak w aparacie (mniejszy plik, szybciej).
+9. "Wywołaj zaznaczone": kilka zdjęć naraz wywołuje się równolegle.
    Potem "Pobierz ZIP" (albo "pobierz" przy pojedynczym zdjęciu).
    W Chrome i Edge jest też "Zapisz w folderze..." - zdjęcia lądują od razu w wybranym folderze.
-   Nazwa wyniku: nazwa zdjęcia + nazwa filmu (+ _M albo _S dla mniejszych rozmiarów).
-Strona pamięta ostatnio wybrany film, suwaki, rozmiar, jakość i układ okna.
-Uwaga: program pracuje na pełnowymiarowym podglądzie JPG zapisanym w pliku CR2, CR3 albo DNG,
-a nie na surowych danych z matrycy, więc balans bieli i światła mają łagodniejszy zakres niż
-w prawdziwym RAW. DNG musi mieć taki podgląd w środku (w Lightroomie: przy zapisie DNG
-wybierz "Pełnowymiarowy podgląd JPEG"); bez niego program napisze, że nie ma czego wywołać.
+   Nazwa wyniku: nazwa zdjęcia + nazwa filmu (+ _3000px, _w2048 albo _h1080 przy wybranym rozmiarze).
+Strona pamięta ostatnio wybrany film, suwaki, rozmiar, proporcje kadru, jakość i układ okna
+(kadry zdjęć nie, bo lista zdjęć jest za każdym razem nowa).
+Uwaga: to, co widać w podglądzie, jest liczone w połowie rozmiaru (po powiększeniu - w pełnym),
+dlatego ziarno w gotowym zdjęciu wygląda nieco inaczej. Wywołanie RAW trwa ok. 1-3 sekund na zdjęcie
+(21 Mpix), a zdjęcie jest wczytywane do pamięci w całości (CR2 z 5D Mark II ma ok. 25 MB).
+Ograniczenia RAW: kolory bierze z uniwersalnej macierzy aparatu (nie z profili Adobe), a wzorzec
+z JPG dopasowuje tylko ton; programy takie jak Lightroom dadzą nieco inne kolory.
 
 
 DRUGI SPOSÓB: program w wierszu poleceń (foldery Windows i macOS)
 ------------------------------------------------------------------
 Windows (filmlook_cli.exe): przeciągnij zdjęcia albo folder na filmlook_cli.exe,
   program zapyta o film i rozmiar. Wyniki trafiają do folderu FILMLOOK obok zdjęć.
-  (Dodatkowe suwaki z całej reszty ustawień: --expo --hi_t --sh_t --wh_t --bl_t --wb_temp --wb_tint
+  (Opcje: --usejpg 1 - weź JPG z pliku zamiast RAW, --rawref 0 - RAW bez wzorca z JPG aparatu,
+  --hq 0 - jak w aparacie (JPG 4:2:0, mniejszy plik), --quality N - jakość JPG, domyślnie 98.
+  Kadr i rozmiar: --crop X0,Y0,X1,Y1 (prostokąt w ułamkach 0..1, np. 0.1,0.1,0.9,0.9),
+  --ratio 3:2 (największy kadr o tych proporcjach, w środku; dla zdjęcia pionowego proporcja
+  się obraca, 3:2! = dokładnie tak jak wpisano), --long 3000 (dłuższy bok w px), --width 2048,
+  --height 1080 (zdjęcie może być też powiększone).
+  Dodatkowe suwaki z całej reszty ustawień: --expo --hi_t --sh_t --wh_t --bl_t --wb_temp --wb_tint
   --skin_hue --skin_sat --skin_lum --gcolor --filter --ton_mode --hue_red ... oraz krzywe
   --crv0_n 3 --crv0_x0 0 --crv0_y0 0 --crv0_x1 128 --crv0_y1 90 --crv0_x2 255 --crv0_y2 255
   (0 = RGB, 1 = R, 2 = G, 3 = B) - pełna lista: --help)
@@ -82,7 +122,7 @@ Windows (filmlook_cli.exe): przeciągnij zdjęcia albo folder na filmlook_cli.ex
 Mac (filmlook_cli_macos.tar.gz): rozpakuj, otwórz Terminal i wpisz (raz):
     xattr -d com.apple.quarantine filmlook_cli
   potem np.:
-    ./filmlook_cli --film "Kodak Portra 400" --size M --ziarno 80 ~/Zdjecia/folder
+    ./filmlook_cli --film "Kodak Portra 400" --long 3000 --ratio 3:2 --ziarno 80 ~/Zdjecia/folder
   Lista filmów: ./filmlook_cli --list    Wszystkie opcje: ./filmlook_cli --help
   Na Macu łatwiej jest użyć strony HTML (nie ma ostrzeżeń systemu).
 

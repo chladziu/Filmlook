@@ -291,3 +291,36 @@ dialog pre { white-space: pre-wrap; font: 11.5px/1.45 var(--mono); background: v
 .crvcv:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
 .crvinfo { text-align: center; min-height: 1.4em; margin-top: 3px; }
 .tabs2 button[style*="--tc"][aria-selected="true"] { background: var(--tc); color: #fff; }
+
+/* the source of the picture (RAW / JPG) */
+label.chk.dim { opacity: .5; cursor: default; }
+#srcSeg { margin: 6px 0 8px; }
+#srcSeg button:disabled { opacity: .5; cursor: default; }
+
+/* the crop tool: a frame over the picture with handles, a rule of thirds grid, the dimmed outside, and a bar with the ratios */
+.cropui { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+.croprect { position: absolute; pointer-events: auto; cursor: move; border: 1.5px solid #fff; box-shadow: 0 0 0 9999px rgba(0,0,0,.58), 0 0 0 1px rgba(0,0,0,.6); touch-action: none; }
+.croprect .gl { position: absolute; background: rgba(255,255,255,.4); pointer-events: none; }
+.croprect .gh1, .croprect .gh2 { left: 0; right: 0; height: 1px; }
+.croprect .gv1, .croprect .gv2 { top: 0; bottom: 0; width: 1px; }
+.croprect .gh1 { top: 33.333%; } .croprect .gh2 { top: 66.666%; }
+.croprect .gv1 { left: 33.333%; } .croprect .gv2 { left: 66.666%; }
+.croprect .ch { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; background: transparent; touch-action: none; }
+.croprect .ch::after { content: ""; position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; background: #fff; border: 1px solid rgba(0,0,0,.7); border-radius: 2px; }
+.croprect .ch[data-h="nw"] { left: 0; top: 0; cursor: nwse-resize; } .croprect .ch[data-h="se"] { left: 100%; top: 100%; cursor: nwse-resize; }
+.croprect .ch[data-h="ne"] { left: 100%; top: 0; cursor: nesw-resize; } .croprect .ch[data-h="sw"] { left: 0; top: 100%; cursor: nesw-resize; }
+.croprect .ch[data-h="n"] { left: 50%; top: 0; cursor: ns-resize; } .croprect .ch[data-h="s"] { left: 50%; top: 100%; cursor: ns-resize; }
+.croprect .ch[data-h="w"] { left: 0; top: 50%; cursor: ew-resize; } .croprect .ch[data-h="e"] { left: 100%; top: 50%; cursor: ew-resize; }
+.croprect .cropsize { position: absolute; left: 6px; top: 6px; font: 11.5px var(--mono); color: #fff; background: rgba(0,0,0,.6); border-radius: 5px; padding: 1px 7px; pointer-events: none; white-space: nowrap; }
+.cropbar { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); z-index: 6; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 8px; max-width: calc(100% - 20px); width: max-content;
+  background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--line2); border-radius: 11px; padding: 6px 10px; box-shadow: 0 8px 26px rgba(0,0,0,.5); cursor: default; }
+.cropbar select, .cropbar input[type=number], #outMode { border: 1px solid var(--line2); border-radius: 6px; background: var(--panel2); color: var(--ink); padding: 3px 6px; font-size: 13px; }
+.cropbar input[type=number] { width: 48px; text-align: right; font-family: var(--mono); }
+#cropCustom { display: inline-flex; align-items: center; gap: 4px; }
+#stage.cropping { cursor: default; }
+#outMode { flex: 1 1 auto; min-width: 0; }
+.erow #outPx { width: 74px; }
+#outInfo { min-height: 1.3em; }
+#outInfo.bad { color: var(--bad); }
+.hint#cropSum { margin-top: 2px; }
+@media (max-width: 899px) { .cropbar { top: 6px; padding: 5px 8px; } }

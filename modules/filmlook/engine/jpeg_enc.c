@@ -478,6 +478,9 @@ static void emit_dht(se_jpeg *j, int tc, int th,
     jo_bytes(j, vals, (size_t)total);
 }
 
+static int g_enc_flags;                       /* see se_jpeg_set_flags() */
+void se_jpeg_set_flags(int flags) { g_enc_flags = flags & SE_JPEG_F_444; }
+
 se_err se_jpeg_begin(se_jpeg *j, int width, int height, int quality,
                      uint8_t *strip, const se_jpeg_exif *exif,
                      se_jpeg_sink sink, void *ctx)
@@ -493,6 +496,7 @@ se_err se_jpeg_begin(se_jpeg *j, int width, int height, int quality,
     build_all_codes();
 
     j->sink = sink; j->ctx = ctx;
+    j->flags = g_enc_flags;
     j->width = width; j->height = height;
     j->strip = strip;
     j->quality = SE_CLAMP(quality, 1, 100);
@@ -539,7 +543,7 @@ se_err se_jpeg_begin(se_jpeg *j, int width, int height, int quality,
     jo_byte(j, 0x01);
     for (i = 0; i < 64; i++) jo_byte(j, j->qt[1][g_zigzag[i]]);
 
-    /* SOF0, 4:2:0: Y 2x2, Cb and Cr 1x1 */
+    /* SOF0, 4:2:0: Y 2x2, Cb and Cr 1x1 (4:4:4: all 1x1) */
     jo_u16(j, 0xffc0);
     jo_u16(j, 8 + 3 * 3);
     jo_byte(j, 8);
@@ -548,7 +552,7 @@ se_err se_jpeg_begin(se_jpeg *j, int width, int height, int quality,
     jo_byte(j, 3);
     for (i = 0; i < 3; i++) {
         jo_byte(j, (uint8_t)(i + 1));
-        jo_byte(j, (uint8_t)(i == 0 ? 0x22 : 0x11));   /* sampling factors */
+        jo_byte(j, (uint8_t)(i == 0 && !(j->flags & SE_JPEG_F_444) ? 0x22 : 0x11));   /* sampling factors */
         jo_byte(j, (uint8_t)(i == 0 ? 0 : 1));  /* quant table id */
     }
 
@@ -567,6 +571,35 @@ se_err se_jpeg_begin(se_jpeg *j, int width, int height, int quality,
     jo_byte(j, 0); jo_byte(j, 63); jo_byte(j, 0);
 
     return j->failed ? SE_E_IO : SE_OK;
+}
+
+/* 4:4:4: the 16 rows of the strip are two rows of 8 x 8 blocks, one MCU = Y + Cb + Cr of the same 8 x 8 pixels. The last strip
+ * may hold fewer block rows than two (the padding rows are not written: the stream has to end where the picture does). */
+static void encode_strip_444(se_jpeg *j)
+{
+    int w = j->width, nbrows = (j->height + 7) / 8, half, mcux, cy, cx;
+
+    for (half = 0; half < 2 && j->brow < nbrows; half++, j->brow++) {
+        for (mcux = 0; mcux * 8 < w; mcux++) {
+            int32_t Y[64], Cb[64], Cr[64];
+            int x0 = mcux * 8;
+            for (cy = 0; cy < 8; cy++) {
+                const uint8_t *s = j->strip + (size_t)(half * 8 + cy) * w * 3;
+                for (cx = 0; cx < 8; cx++) {
+                    int x = x0 + cx, r, g, b;
+                    const uint8_t *p;
+                    if (x >= w) x = w - 1;                       /* replicate the right edge */
+                    p = s + x * 3; r = p[0]; g = p[1]; b = p[2];
+                    Y[cy * 8 + cx]  = ((19595 * r + 38470 * g + 7471 * b + 32768) >> 16) - 128;
+                    Cb[cy * 8 + cx] = (-11056 * r - 21712 * g + 32768 * b + 32768) >> 16;
+                    Cr[cy * 8 + cx] = ( 32768 * r - 27440 * g -  5328 * b + 32768) >> 16;
+                }
+            }
+            encode_block(j, Y, 0, 0, g_dc_lum, g_ac_lum);
+            encode_block(j, Cb, 1, 1, g_dc_chr, g_ac_chr);
+            encode_block(j, Cr, 1, 2, g_dc_chr, g_ac_chr);
+        }
+    }
 }
 
 /* Encode the 16 rows currently held in j->strip: one MCU = 16 x 16 pixels = 4 luma blocks + 1 Cb + 1 Cr (4:2:0). */
@@ -634,7 +667,7 @@ se_err se_jpeg_write_rows(se_jpeg *j, const uint8_t *rgb, int nrows)
         j->strip_rows++;
         j->rows_done++;
         if (j->strip_rows == SE_JPEG_MCU) {
-            encode_strip(j);
+            if (j->flags & SE_JPEG_F_444) encode_strip_444(j); else encode_strip(j);
             j->strip_rows = 0;
         }
     }
@@ -652,7 +685,7 @@ se_err se_jpeg_end(se_jpeg *j)
                    (size_t)w * 3);
             j->strip_rows++;
         }
-        encode_strip(j);
+        if (j->flags & SE_JPEG_F_444) encode_strip_444(j); else encode_strip(j);
         j->strip_rows = 0;
     }
     jo_bit_flush(j);

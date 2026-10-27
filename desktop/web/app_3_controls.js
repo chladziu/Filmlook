@@ -26,6 +26,7 @@ function setVal(key, v, quiet) {
   if (!quiet) afterChange(key);
 }
 function afterChange(key) {
+  if (key && SRC_KEYS.indexOf(key) >= 0) { paintSource(); refreshBefore(); }
   if (key && /^(cg_|ton_mode)/.test(key)) paintWheels();
   if (!key || /^(ton_mode|cg_|filter|wb_)/.test(key)) refreshChips();
   updateMods();
@@ -69,6 +70,8 @@ function mixerKeys(mono) {
 }
 function sectionList() {
   var mono = isMono(), L = [];
+  L.push({ id: 'crop', title: 'Kadr', keys: [], body: bodyCrop, reset: cropRemove, mod: cropAnyMod });
+  L.push({ id: 'source', title: 'Źródło zdjęcia (RAW)', keys: SRC_KEYS, body: bodySource });
   var fk = mono ? ['strength', 'grain', 'gsize', 'grough', 'vig', 'fade'] : ['strength', 'grain', 'gsize', 'grough', 'gcolor', 'vig', 'fade'];
   L.push({ id: 'film', title: 'Film i ziarno', keys: fk, body: bodyRows(fk) });
   L.push({ id: 'light', title: 'Światło', keys: ['expo', 'contrast', 'hi_t', 'sh_t', 'wh_t', 'bl_t'], body: bodyRows(['expo', 'contrast', 'hi_t', 'sh_t', 'wh_t', 'bl_t']) });
@@ -84,6 +87,60 @@ function sectionList() {
   L.push({ id: 'hsl', title: mono ? 'Mieszalnik czerni i bieli' : 'Mikser kolorów', keys: mixerKeys(mono), body: bodyMixer });
   if (!mono) L.push({ id: 'tone', title: 'Kolorystyka (tonowanie)', keys: toneKeys(), body: bodyTone });
   return L;
+}
+
+/* where the picture comes from: the sensor data (RAW) or the JPEG of the camera that is in the file */
+function srcState() {                                   /* what is known about the photo on the screen */
+  var pv = S.pv, f = pv && pv.file, info = pv && pv.info, name = f ? f.name : '';
+  if (!pv) return { kind: 'none', text: 'Wybierz zdjęcie — tu zobaczysz, z czego program je wywołuje.' };
+  if (info && info.raw) return { kind: 'raw', text: 'Ten plik ma surowe dane matrycy (RAW, ' + info.rawW + ' × ' + info.rawH + ').' + (info.fit ? '' : ' Brak w nim dużego JPG, więc wzorzec tonalny jest ogólny (średni dla tego aparatu).') };
+  if (/\.cr3$/i.test(name)) return { kind: 'nojpg', text: 'To plik CR3 — jego surowych danych program jeszcze nie czyta, pracuje na JPG z pliku. Żeby użyć RAW, zamień go na DNG (darmowy Adobe DNG Converter) i wczytaj plik DNG.' };
+  if (info && info.rawErrText) return { kind: 'nojpg', text: 'Surowych danych tego pliku nie udało się odczytać (' + info.rawErrText + '), więc pracuję na JPG z pliku.' };
+  if (/\.(cr2|dng)$/i.test(name)) return { kind: 'nojpg', text: 'Program czyta RAW z aparatu Canon 5D Mark II (CR2) i z plików DNG (z matrycą Bayera lub liniowe, bez kompresji albo z kompresją bezstratną). Ten plik jest innego rodzaju — pracuję na JPG z pliku.' };
+  return { kind: 'nojpg', text: 'To zwykły JPG — nie ma w nim surowych danych, więc nie ma z czego robić RAW.' };
+}
+function bodySource(box) {
+  var st = srcState(), p = document.createElement('p'), seg = document.createElement('div'), lab = document.createElement('label'), h2 = document.createElement('p');
+  p.className = 'hint'; p.id = 'srcInfo';
+  seg.className = 'seg wide'; seg.id = 'srcSeg'; seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', 'Źródło zdjęcia');
+  [['0', 'RAW'], ['1', 'JPG z pliku']].forEach(function (o) {
+    var b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'radio'); b.setAttribute('data-v', o[0]); b.textContent = o[1];
+    b.title = o[0] === '0' ? 'Wywołuj z surowych danych matrycy: najwyższa jakość, pełny zakres jasności' : 'Wywołuj z JPG, który aparat zapisał w pliku (niższa jakość, jak dotąd)';
+    b.onclick = function () { setVal('usejpg', Number(o[0])); };
+    seg.appendChild(b);
+  });
+  lab.className = 'chk small'; lab.id = 'srcRefLab';
+  lab.innerHTML = '<input type="checkbox" id="chkRef"> <span>Wzorzec tonalny z JPG aparatu</span>';
+  lab.title = CTRL.rawref.hint;
+  lab.querySelector('input').onchange = function (e) { setVal('rawref', e.target.checked ? 1 : 0); };
+  h2.className = 'hint'; h2.id = 'srcRefHint';
+  h2.textContent = 'Włączone: jasność i kontrast zdjęcia są dopasowane do JPG, który aparat zapisał w tym samym pliku (taki, jaki widać na ekranie aparatu) — filmy nakładają się na ten wygląd. Wyłączone: czysty RAW z neutralnym, standardowym tonem, bez wzorca z aparatu.';
+  box.appendChild(p); box.appendChild(seg); box.appendChild(lab); box.appendChild(h2);
+  paintSource();
+}
+function paintSource() {
+  var st = srcState(), p = $('#srcInfo'), seg = $('#srcSeg'), chk = $('#chkRef'), lab = $('#srcRefLab');
+  if (!p || !seg) return;
+  var usejpg = val('usejpg') === 1, canRaw = st.kind === 'raw';
+  p.textContent = st.text + (canRaw ? (usejpg ? ' Wybrano JPG z pliku.' : ' Zdjęcie jest wywoływane z RAW.') : '');
+  Array.prototype.forEach.call(seg.children, function (b) {
+    var on = (b.getAttribute('data-v') === '1') === usejpg;
+    b.setAttribute('aria-checked', String(on)); b.setAttribute('aria-pressed', String(on));
+    b.disabled = st.kind === 'nojpg';
+  });
+  chk.checked = val('rawref') === 1;
+  chk.disabled = !(canRaw && !usejpg);
+  lab.classList.toggle('dim', chk.disabled);
+}
+/* "before": the starting picture is made again when the source or the crop on the screen is changed */
+async function refreshBefore() {
+  var pv = S.pv;
+  if (!pv || !S.preview || !pv.beforeUrl) return;
+  if (pv.beforeSig === beforeSigNow()) return;
+  if (await runBefore(S.pvSeq, pv, true) && S.pv === pv) {
+    if (S.pvView === 'before') showCurrent();
+    scheduleDetail();
+  }
 }
 
 function bodyRows(keys) {
@@ -109,7 +166,7 @@ function bodyWB(box) {
   box.appendChild(lg); box.appendChild(ch);
   box.appendChild(makeRow('wb_temp', { trk: 'linear-gradient(90deg,#4f8dff,#d8d8d8,#ffb347)' }));
   box.appendChild(makeRow('wb_tint', { trk: 'linear-gradient(90deg,#3fbf5c,#d8d8d8,#d65fd0)' }));
-  var n = document.createElement('p'); n.className = 'hint'; n.textContent = 'Poprawia kolor całego zdjęcia przed nałożeniem filmu. Program pracuje na podglądzie JPG, więc zakres jest łagodniejszy niż w prawdziwym RAW.';
+  var n = document.createElement('p'); n.className = 'hint'; n.textContent = 'Poprawia kolor całego zdjęcia przed nałożeniem filmu. Przy pliku RAW balans bieli działa na surowych danych (tak jak w Lightroomie); przy zwykłym JPG jest łagodniejszy.';
   box.appendChild(n);
   refreshChips();
 }
@@ -231,7 +288,7 @@ function refreshChips() {
 }
 
 /* ---------------------------------------------------------------- building the panel */
-function sectionOpen(id) { var o = S.ui.open[id]; return o === undefined ? (id === 'film' || id === 'light') : !!o; }
+function sectionOpen(id) { var o = S.ui.open[id]; return o === undefined ? (id === 'film' || id === 'light' || id === 'source') : !!o; }
 
 function renderAdjust() {
   var box = $('#adj'), tb, secs = sectionList();
@@ -241,7 +298,10 @@ function renderAdjust() {
   tb.innerHTML = '<span class="muted small">Korekta</span><span class="grow"></span><button type="button" class="btn sm" id="rsFilm" title="Przywraca suwaki tego filmu do wartości domyślnych">Resetuj film</button><button type="button" class="btn sm" id="rsScene" title="Zeruje światło, krzywe, balans bieli, tony skóry i mikser kolorów">Resetuj korekty</button>';
   box.appendChild(tb);
   tb.querySelector('#rsFilm').onclick = function () { delete S.looks[S.film]; afterReset(); };
-  tb.querySelector('#rsScene').onclick = function () { S.scene = {}; afterReset(); };
+  tb.querySelector('#rsScene').onclick = function () {                    /* (the choice of the source is not a correction: it stays) */
+    var keep = {}; SRC_KEYS.forEach(function (k) { if (typeof S.scene[k] === 'number') keep[k] = S.scene[k]; });
+    S.scene = keep; afterReset();
+  };
   secs.forEach(function (s) {
     var el = document.createElement('div'), sh = document.createElement('div'), body = document.createElement('div');
     el.className = 'sec' + (sectionOpen(s.id) ? ' open' : ''); el.setAttribute('data-id', s.id);
@@ -269,7 +329,7 @@ function renderAdjust() {
   });
   updateMods();
 }
-function afterReset() { renderAdjust(); save(); schedulePreview(); staleResults(); }
+function afterReset() { renderAdjust(); save(); refreshBefore(); schedulePreview(); staleResults(); }
 
 function updateMods() {
   Array.prototype.forEach.call(document.querySelectorAll('#adj .sec'), function (el) {
@@ -277,7 +337,7 @@ function updateMods() {
   });
   var rf = $('#rsFilm'), rs = $('#rsScene');
   if (rf) rf.disabled = !CTRL_LIST.some(function (c) { return c.scope === 'film' && modKey(c.key); });
-  if (rs) rs.disabled = !CTRL_LIST.some(function (c) { return c.scope === 'scene' && modKey(c.key); }) && !crvAnyMod();
+  if (rs) rs.disabled = !CTRL_LIST.some(function (c) { return c.scope === 'scene' && SRC_KEYS.indexOf(c.key) < 0 && modKey(c.key); }) && !crvAnyMod();
   if (S.ui.hsl !== undefined) {
     var tabs = document.querySelectorAll('#adj .sec[data-id="hsl"] .tabs2 button'), kinds = ['hue', 'sat', 'lum'];
     Array.prototype.forEach.call(tabs, function (b, i) { b.classList.toggle('mod', BANDS.some(function (bd) { return modKey(kinds[i] + '_' + bd[0]); })); });

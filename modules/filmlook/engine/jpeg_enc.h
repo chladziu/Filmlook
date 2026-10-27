@@ -67,6 +67,10 @@ typedef struct {
     int      outpos;
 
     uint8_t  exifbuf[1024];
+
+    /* the desktop program only (the camera never sets it): SE_JPEG_F_444 */
+    int      flags;
+    int      brow;             /* 4:4:4: rows of 8 x 8 blocks written so far */
 } se_jpeg;
 
 /*
@@ -82,6 +86,12 @@ typedef struct {
 se_err se_jpeg_begin(se_jpeg *j, int width, int height, int quality,
                      uint8_t *strip, const se_jpeg_exif *exif,
                      se_jpeg_sink sink, void *ctx);
+
+/* Option of the desktop program (the camera never sets it): SE_JPEG_F_444 writes the chroma planes at full resolution (4:4:4)
+ * instead of half width and height: the colours keep every pixel (fine colour edges, grain in colour); the file is bigger and
+ * the encoding a little slower. se_jpeg_set_flags() decides for every se_jpeg_begin() that follows; the default is 0. */
+#define SE_JPEG_F_444 1
+void se_jpeg_set_flags(int flags);
 
 /* Push `nrows` rows of 8-bit interleaved RGB. Any count is accepted. */
 se_err se_jpeg_write_rows(se_jpeg *j, const uint8_t *rgb, int nrows);

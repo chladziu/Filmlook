@@ -21,6 +21,10 @@ function ctl(key, scope, top, name, min, max, def, o) {
   CTRL[key] = c; CTRL_LIST.push(c);
   return c;
 }
+/* the source of the picture: the sensor data of a RAW file, or the JPEG that is inside it */
+ctl('usejpg', 'scene', false, 'Źródło: JPG z pliku', 0, 1, 0, { hint: 'wyłączone: zdjęcie jest wywoływane z surowych danych RAW; włączone: z JPG zapisanego w pliku' });
+ctl('rawref', 'scene', false, 'Wzorzec tonalny z JPG aparatu', 0, 1, 1, { hint: 'dopasowuje ton RAW do JPG, który aparat zapisał w pliku' });
+var SRC_KEYS = ['usejpg', 'rawref'];
 /* film and grain */
 ctl('strength', 'film', true, 'Efekt', 0, 100, 100, { hint: 'ile filmu jest w zdjęciu: 0 = oryginał, 100 = pełny film' });
 ctl('grain', 'film', true, 'Ziarno', 0, 200, 100, { hint: 'ilość ziarna: 100 = tak jak w filmie' });
@@ -67,6 +71,7 @@ ctl('cg_hi_s', 'film', false, 'Światła: nasycenie', 0, 100, 0, { hint: 'jak mo
 ctl('filter', 'film', false, 'Filtr barwny', 0, 5, 0);
 ctl('filter_amt', 'film', false, 'Siła filtra', 0, 100, 100, { hint: 'jak mocno filtr działa' });
 
+var RUN_NOTE = 'Wynik: nowe pliki JPG, oryginały zostają nietknięte.';
 var TOP_KEYS = ['strength', 'grain', 'contrast', 'fade', 'warm', 'shadow', 'high', 'sat', 'vig'];
 
 /* what the toning buttons set (hue in degrees, saturation 0..100 of shadows / midtones / highlights) */
@@ -96,11 +101,9 @@ var WB_PRESETS = [
   { id: 'flash', name: 'Lampa błyskowa', t: 5, i: 0, tip: 'lampa błyskowa, ok. 5600 K: odrobinę cieplej' }
 ];
 
-var SIZE_SUFFIX = ['', '_M', '_S'];
-
 /* ---------------------------------------------------------------- state */
 var S = {
-  films: [], film: 0, looks: {}, scene: {}, size: 0, quality: 95, pair: true,
+  films: [], film: 0, looks: {}, scene: {}, out: { mode: 'full', px: 3000 }, quality: 98, hq: true, pair: true,
   ui: { lw: 300, rw: 340, lc: null, rc: null, open: { film: 1, light: 1 }, theme: '', hsl: 0 },
   files: [], nextId: 1, sel: null, running: false, cancel: false,
   module: null, pool: [], preview: null, detail: null, pv: null, outDir: null, inline: false, pvView: 'after'
@@ -132,7 +135,7 @@ function anyMod(keys) { return keys.some(modKey); }
 
 /* the parameters of one development: the film, the size, the quality and every control */
 function paramsFor(film, size, quality, looks, scene) {
-  var p = { film: film, size: size, quality: quality, x: {} }, lv = looks[film] || {};
+  var p = { film: film, size: size, quality: quality, x: { hq: 0 } }, lv = looks[film] || {};        /* (the preview: the quicker way; the final pictures ask for hq, see runAll) */
   CTRL_LIST.forEach(function (c) {
     var src = c.scope === 'scene' ? scene : lv, v = typeof src[c.key] === 'number' ? src[c.key] : c.def;
     if (c.top) p[c.key] = v; else p.x[c.key] = v;
@@ -140,20 +143,20 @@ function paramsFor(film, size, quality, looks, scene) {
   crvParams(scene, !!(S.films[film] && S.films[film].mono), p.x);
   return p;
 }
-function params(extra) {
-  var p = paramsFor(S.film, S.size, S.quality, S.looks, S.scene), k;
+function params(extra) {                              /* size 0 = the photo as it is (a crop and a size of the result are added by the caller, see app_4_crop.js) */
+  var p = paramsFor(S.film, 0, S.quality, S.looks, S.scene), k;
   for (k in (extra || {})) p[k] = extra[k];
   return p;
 }
-/* the picture as the camera made it: the engine with everything at 0 */
+/* the picture as the program starts from it: the engine with everything at 0 (only the choice of the source stays) */
 function plainParams(size, quality) {
-  var p = { film: 0, size: size, quality: quality, x: {}, strength: 0, grain: 0, contrast: 0, fade: 0, warm: 0, shadow: 0, high: 0, sat: 0, vig: 0 };
+  var p = { film: 0, size: size, quality: quality, x: { usejpg: val('usejpg'), rawref: val('rawref'), hq: 0 }, strength: 0, grain: 0, contrast: 0, fade: 0, warm: 0, shadow: 0, high: 0, sat: 0, vig: 0 };
   return p;
 }
 
 function save() {
   var u = S.ui;
-  memo.set(STORE_KEY, { film: S.film, looks: S.looks, scene: S.scene, size: S.size, quality: S.quality, pair: S.pair, ui: u });
+  memo.set(STORE_KEY, { film: S.film, looks: S.looks, scene: S.scene, out: S.out, quality: S.quality, hq: S.hq, pair: S.pair, ui: u });
 }
 
 /* ---------------------------------------------------------------- workers */

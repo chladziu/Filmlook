@@ -1,7 +1,7 @@
 
 /* ====================================================================== part 5: developing, saving, the layout of the page, start */
 function outName(f, p, used) {
-  var base = f.name.replace(/\.[^.]+$/, ''), name = base + '_' + slug(S.films[p.film].full) + SIZE_SUFFIX[p.size], k = 1, cand = name + '.jpg';
+  var base = f.name.replace(/\.[^.]+$/, ''), name = base + '_' + slug(S.films[p.film].full) + outSuffix(), k = 1, cand = name + '.jpg';
   while (used[cand.toLowerCase()]) { k++; cand = name + '_' + k + '.jpg'; }
   used[cand.toLowerCase()] = 1;
   return cand;
@@ -24,12 +24,16 @@ async function writeToFolder(f) {
 
 /* develops the ticked photos with the settings on the screen */
 async function runAll() {
-  var todo = marked(), p = params(), used = {}, next = 0, finished = 0, t0 = Date.now();
+  var todo, p, used = {}, next = 0, finished = 0, t0 = Date.now();
+  if (CROP.on) cropClose(true);                           /* the crop being drawn is part of the settings */
+  todo = marked(); p = params();
+  p.x.hq = S.hq ? 1 : 0;                                  /* the final pictures: the best quality, if it is not switched off */
+  mergeX(p.x, outX());                                    /* the size of the result: the same for every photo (the crop is of each photo, see below) */
   if (!todo.length || S.running) return;
   S.running = true; S.cancel = false; S.sheetSeq = (S.sheetSeq || 0) + 1; detailSeq++;
   todo.forEach(function (f) { f.status = 'wait'; f.blob = null; f.pct = 0; f.outName = outName(f, p, used); });
   $('#btnStop').classList.remove('hidden'); $('#btnRun').disabled = true; $('#btnZip').disabled = true;
-  $('#runNote').textContent = 'Wynik: nowe pliki JPG, oryginały zostają nietknięte.';
+  $('#runNote').textContent = RUN_NOTE;
   renderList();
   function updateBar() {
     var part = 0; todo.forEach(function (f) { part += f.status === 'done' || f.status === 'error' ? 1 : (f.status === 'running' ? f.pct / 100 : 0); });
@@ -44,11 +48,14 @@ async function runAll() {
       var f = todo[k], buf;
       f.status = 'running'; f.pct = 0; renderList();
       try { buf = await f.file.arrayBuffer(); } catch (e) { f.status = 'error'; f.err = 'nie można odczytać pliku'; finished++; updateBar(); renderList(); continue; }
-      var res = await w.request({ type: 'process', buffer: buf, params: p, crc: true }, [buf], function (pm) {
+      var pf = {}, kk;
+      for (kk in p) pf[kk] = p[kk];
+      pf.x = mergeX(mergeX({}, p.x), geoX(f));              /* the crop of this photo */
+      var res = await w.request({ type: 'process', buffer: buf, params: pf, crc: true }, [buf], function (pm) {
         f.pct = pm / 10; var li = $('#list [data-id="' + f.id + '"]'); if (li) renderItem(f, li); updateBar();
       });
       if (res.rc === 0) {
-        f.status = 'done'; f.blob = new Blob([res.jpeg], { type: 'image/jpeg' }); f.crc = res.crc; f.outW = res.outW; f.outH = res.outH;
+        f.status = 'done'; f.blob = new Blob([res.jpeg], { type: 'image/jpeg' }); f.crc = res.crc; f.outW = res.shownW; f.outH = res.shownH; f.raw = !!res.raw; f.rawNote = res.rawErrText || '';
         f.checked = false; f.developed = true;                         /* done: it leaves the "to develop" set */
         await writeToFolder(f);
       } else { f.status = 'error'; f.err = res.text; }
@@ -59,7 +66,10 @@ async function runAll() {
   S.running = false; $('#btnStop').classList.add('hidden');
   todo.forEach(function (f) { if (f.status === 'wait') f.status = 'wait'; });
   var ok = todo.filter(function (f) { return f.status === 'done'; }).length, bad = todo.filter(function (f) { return f.status === 'error'; }).length;
-  $('#runInfo').textContent = (S.cancel ? 'Zatrzymano. ' : 'Gotowe. ') + ok + ' ' + plural(ok, 'zdjęcie', 'zdjęcia', 'zdjęć') + ' w ' + Math.round((Date.now() - t0) / 1000) + ' s' + (bad ? ', z błędem: ' + bad : '') + '.';
+  var viaRaw = todo.filter(function (f) { return f.status === 'done' && f.raw; }).length;
+  var lostRaw = todo.filter(function (f) { return f.status === 'done' && !f.raw && /\.(cr2|dng)$/i.test(f.name); }).length;
+  var rawNote = (viaRaw ? ' Z RAW: ' + viaRaw + '.' : '') + (lostRaw && p.x.usejpg !== 1 ? ' Z JPG zamiast RAW (nieobsługiwany rodzaj pliku): ' + lostRaw + '.' : '');
+  $('#runInfo').textContent = (S.cancel ? 'Zatrzymano. ' : 'Gotowe. ') + ok + ' ' + plural(ok, 'zdjęcie', 'zdjęcia', 'zdjęć') + ' w ' + Math.round((Date.now() - t0) / 1000) + ' s' + (bad ? ', z błędem: ' + bad : '') + '.' + rawNote;
   if (!S.cancel) $('#overallBar').style.width = '100%';
   renderList();
   if (S.inline && S.sel) selectFile(S.sel);              /* (one engine only: the batch has replaced the preview's photo) */
@@ -186,12 +196,10 @@ function wire() {
   $('#btnCard').onclick = function () { $('#inCfg').click(); };
   $('#inCfg').onchange = function (e) { var f = e.target.files[0]; if (f) f.text().then(loadCard); e.target.value = ''; };
 
-  Array.prototype.forEach.call(document.querySelectorAll('#sizes button'), function (b) {
-    b.onclick = function () { S.size = Number(b.getAttribute('data-size')); markSizes(); save(); staleResults(); };
-  });
   var qr = $('#qr'), qn = $('#qn');
   function setQ(v) { v = clamp(Math.round(Number(v)), 70, 100); if (isNaN(v)) return; S.quality = v; qr.value = v; qn.value = v; save(); staleResults(); }
   qr.oninput = function () { setQ(qr.value); }; qn.onchange = function () { setQ(qn.value); };
+  $('#chkHq').onchange = function (e) { S.hq = e.target.checked; save(); staleResults(); };
   $('#btnRun').onclick = runAll;
   $('#btnStop').onclick = function () { S.cancel = true; $('#btnStop').classList.add('hidden'); };
   $('#btnZip').onclick = zipAll;
@@ -208,14 +216,18 @@ function wire() {
   };
   initSplit('#splitL', 'l'); initSplit('#splitR', 'r');
   initStage();
+  initCrop();
 
   document.addEventListener('keydown', function (e) {
     var t = e.target, typing = t && (t.tagName === 'INPUT' && t.type !== 'range' && t.type !== 'checkbox' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.key === 'Escape') { if (S.pipette) stopPipette(); return; }
+    if (e.key === 'Escape') { if (CROP.on) cropClose(false); else if (S.pipette) stopPipette(); return; }
     if (typing || (t && t.closest && (t.closest('dialog') || t.closest('.crvcv')))) return;
     var k = e.key;
-    if (k === '[') togglePanel('l');
+    if (CROP.on && k === 'Enter' && !(t && t.tagName === 'BUTTON')) { e.preventDefault(); cropClose(true); return; }
+    if (CROP.on && (k === 'x' || k === 'X')) { $('#cropFlip').click(); return; }
+    if (k === 'c' || k === 'C') cropToggle();
+    else if (k === '[') togglePanel('l');
     else if (k === ']') togglePanel('r');
     else if (k === 'f' || k === 'F') setFit();
     else if (k === '1') zoomCenter(1);
@@ -231,10 +243,6 @@ function wire() {
   document.addEventListener('keyup', function (e) { if (e.key === '\\' && S.holdPrev) { pvShow(S.holdPrev); S.holdPrev = null; } });
   window.addEventListener('blur', function () { if (S.holdPrev) { pvShow(S.holdPrev); S.holdPrev = null; } });
 }
-function markSizes() {
-  Array.prototype.forEach.call(document.querySelectorAll('#sizes button'), function (b) { b.setAttribute('aria-checked', String(Number(b.getAttribute('data-size')) === S.size)); });
-}
-
 async function boot() {
   var saved = memo.get(STORE_KEY), old = null, bin, bytes, i, eng;
   wire();
@@ -261,12 +269,16 @@ async function boot() {
   if (saved) {
     S.looks = saved.looks || {}; S.scene = saved.scene || {};
     S.film = clamp(saved.film | 0, 0, S.films.length - 1);
-    S.size = clamp(saved.size | 0, 0, 2); S.quality = clamp(saved.quality | 0 || 95, 70, 100);
+    S.quality = clamp(saved.quality | 0 || 98, 70, 100);
+    if (saved.out && typeof saved.out === 'object') S.out = { mode: ['full', 'long', 'w', 'h'].indexOf(saved.out.mode) >= 0 ? saved.out.mode : 'full', px: clamp(Math.round(Number(saved.out.px)) || 3000, 16, OUT_MAX) };
+    else if (saved.size === 1 || saved.size === 2) S.out = { mode: 'long', px: saved.size === 1 ? 3861 : 2784 };       /* the older page had L / M / S: M and S were 3861 and 2784 px */
+    if (saved.hq === undefined && S.quality === 95) S.quality = 98;                 /* a setting of the older page: 95 was its default, 98 is the new one */
+    if (saved.hq === false) S.hq = false;
     if (saved.pair === false) S.pair = false;
   }
-  $('#chkPair').checked = S.pair;
+  $('#chkPair').checked = S.pair; $('#chkHq').checked = S.hq;
   $('#qr').value = S.quality; $('#qn').value = S.quality;
-  markSizes();
+  cropRestoreUi();
   chooseFilm(S.film);
   emptyMessage();
   var n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
@@ -275,7 +287,7 @@ async function boot() {
   $('#chipEngine').textContent = 'silnik gotowy · ' + S.films.length + ' filmów' + (S.inline ? ' · tryb pojedynczy' : ' · równolegle: ' + S.pool.length);
   $('#chipEngine').className = 'chip ok';
   renderList();
-  window.FD = { S: S, V: V, CTRL: CTRL, val: val, setVal: setVal };                /* for the tests */
+  window.FD = { S: S, V: V, CTRL: CTRL, val: val, setVal: setVal, CROP: CROP, cropFrame: cropFrame, cropRectPx: cropRectPx, outDims: outDims };                /* for the tests */
   if (S.waitSel) { var w = S.waitSel; S.waitSel = null; selectFile(w); }
 }
 boot();

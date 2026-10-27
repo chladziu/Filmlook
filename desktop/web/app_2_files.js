@@ -82,7 +82,7 @@ function removeFiles(list) {
   S.files = S.files.filter(function (f) { return !ids[f.id]; });
   thumbQueue = thumbQueue.filter(function (f) { return !ids[f.id]; });
   applyPairs();
-  if (wasSel) { S.sel = null; if (next) selectFile(next); else clearPreview(); }
+  if (wasSel) { if (CROP.on) cropClose(false, true); S.sel = null; if (next) selectFile(next); else clearPreview(); }
   renderList();
 }
 
@@ -91,8 +91,8 @@ function itemMeta(f) {
   if (f.status === 'skipped') return { t: 'pominięte — jest plik RAW o tej samej nazwie', c: '' };
   if (f.status === 'running') return { t: 'wywołuję… ' + Math.round(f.pct) + ' %', c: '' };
   if (f.status === 'error') return { t: 'błąd: ' + f.err, c: 'err' };
-  if (f.status === 'done') return { t: '✓ gotowe · ' + f.outW + ' × ' + f.outH + ' · ' + fmtMB(f.blob.size), c: 'ok' };
-  return { t: fmtMB(f.size) + (/\.(cr2|cr3|dng)$/i.test(f.name) ? ' · ' + f.name.slice(-3).toUpperCase() : ' · JPG'), c: '' };
+  if (f.status === 'done') return { t: '✓ gotowe · ' + f.outW + ' × ' + f.outH + ' · ' + fmtMB(f.blob.size) + (f.raw ? ' · z RAW' : ''), c: 'ok' };
+  return { t: fmtMB(f.size) + (/\.(cr2|cr3|dng)$/i.test(f.name) ? ' · ' + f.name.slice(-3).toUpperCase() : ' · JPG') + (f.crop || f.cropAr ? ' · z kadrem' : ''), c: '' };
 }
 
 function renderItem(f, li) {
@@ -145,6 +145,7 @@ function renderList() {
   $('#btnZip').disabled = !done || S.running;
   $('#btnSheet').disabled = !S.pv || S.running;
   $('#btnFolder').classList.toggle('hidden', !window.showDirectoryPicker);
+  paintCropSection();                                  /* (the crop button waits while photos are being developed) */
 }
 
 function setChecked(pred) {
@@ -165,7 +166,7 @@ async function pumpThumbs() {
     if (S.files.indexOf(f) < 0) continue;
     f.thumbTried = true;
     try {
-      var buf = await previewSource(f.file), blob = new Blob([buf], { type: 'image/jpeg' });
+      var buf = await jpegSource(f.file), blob = new Blob([buf], { type: 'image/jpeg' });
       var bmp = await createImageBitmap(blob, { resizeWidth: 120, resizeQuality: 'low' });
       var c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
       c.getContext('2d').drawImage(bmp, 0, 0);
@@ -230,7 +231,7 @@ function chooseFilm(i) {
 function staleResults() {                              /* the finished pictures are of the old settings: say it */
   if (S.running) return;
   var any = S.files.some(function (f) { return f.status === 'done'; });
-  $('#runNote').textContent = any ? 'Ustawienia się zmieniły — gotowe zdjęcia są jeszcze z poprzednich. Zaznacz je ponownie i kliknij „Wywołaj”, żeby je odświeżyć.' : 'Wynik: nowe pliki JPG, oryginały zostają nietknięte. Zdjęcie nie jest powiększane ponad swój rozmiar.';
+  $('#runNote').textContent = any ? 'Ustawienia się zmieniły — gotowe zdjęcia są jeszcze z poprzednich. Zaznacz je ponownie i kliknij „Wywołaj”, żeby je odświeżyć.' : RUN_NOTE;
 }
 
 /* every film on the chosen photo, as small pictures in the film cards */
@@ -240,13 +241,14 @@ async function makeSheet() {
   seq = S.sheetSeq = (S.sheetSeq || 0) + 1;
   S.thumbs = {};
   $('#btnSheet').disabled = true; $('#btnSheet').textContent = 'Liczę filmy…';
-  var lanes = S.pool;
-  await Promise.all(lanes.map(function (w) { return w.request({ type: 'source', buffer: pv.buf.slice(0) }); }));
+  var lanes = S.pool.slice(0, pv.buf ? S.pool.length : 3);                        /* (a RAW photo is decoded by every engine that takes part: not too many) */
+  await Promise.all(lanes.map(async function (w) { return w.request({ type: 'source', buffer: await sourceCopy(pv) }); }));
   async function lane(w) {
     while (seq === S.sheetSeq) {
       var i = next++;
       if (i >= n) return;
       var p = paramsFor(i, 102, 70, S.looks, S.scene);
+      if (!CROP.on) mergeX(p.x, geoX(pv.file));                                     /* the cards show the crop, too */
       var res = await w.request({ type: 'run', params: p });
       if (seq !== S.sheetSeq) return;
       if (res.rc === 0) {

@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 OUT=out
 SRC=src
-WARN="-Wall -Wextra -Wno-unused-function -Wno-unused-parameter"
+WARN="-Wall -Wextra -Wno-unused-function -Wno-unused-parameter -ffp-contract=off"
 mkdir -p "$OUT"
 
 build_web() {

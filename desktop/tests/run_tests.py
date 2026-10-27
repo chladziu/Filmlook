@@ -6,7 +6,15 @@ same picture on every computer?
      for several films, sliders and (engine) sizes, on every photo of the samples folder
   2. the browser version (the .wasm run under Node)  ==  the command line version, byte for byte (when --wasm is given)
   3. the sizes M and S: the right dimensions, and the same bytes in the command line version and in the browser version
-  4. a file with the SHA-256 of every result: the same file must come out on Windows, macOS and Linux (compared by the workflow)
+  4. RAW: files with real sensor data (CR2 of the 5D Mark II, DNG of several kinds; tests/rawgen.py): the command line version and the
+     browser version make the same bytes, every kind of DNG gives the same pixels as the CR2, the picture comes back (close to the one
+     the sensor data was made from), the switches "JPG z pliku" / "wzorzec z JPG" / "najwyższa jakość" work, damaged files do not crash
+  5. the crop and the size of the result: every kind of file, landscape and portrait, a crop of any shape, an exact ratio, any size
+     (smaller and bigger than the photo), the same bytes in the command line version and in the browser version
+  6. a file with the SHA-256 of every result: the same file must come out on Windows, macOS and Linux (compared by the workflow)
+
+The comparisons with the module's hostdev (1) and the sizes use the camera's way: --usejpg 1 (the JPEG inside the file, not the sensor
+data) and --hq 0 (JPEG 4:2:0, colour table), because that is all the camera's engine does.
 
 usage: run_tests.py --cli filmlook_cli --samples DIR [--wasm fd_engine.wasm --node node] [--hashes hashes.txt] [--cc cc]
 The samples folder holds *.jpg / *.jpeg / *.cr2 / *.cr3 / *.dng (tests/make_samples.py makes some, real camera files are better)."""
@@ -184,12 +192,15 @@ def cli_args(film, sl):
     return a
 
 
-def cli_make(photo, film, sl, extra, outname):
+LEGACY = ["--hq", "0", "--usejpg", "1"]            # the way of the camera's engine (see the top)
+
+
+def cli_make(photo, film, sl, extra, outname, legacy=True, quality=95):
     d = os.path.join(work, "cli_" + outname)
     os.makedirs(d, exist_ok=True)
     for f in os.listdir(d):
         os.remove(os.path.join(d, f))
-    r = run([args.cli, "--quiet", "--quality", "95"] + cli_args(film, sl) + extra + ["--out", d, photo])
+    r = run([args.cli, "--quiet", "--quality", str(quality)] + cli_args(film, sl) + (LEGACY if legacy else []) + extra + ["--out", d, photo])
     out = os.listdir(d)
     if r.returncode != 0 or len(out) != 1:
         note("command line version: exit %d, files %s\n%s%s" % (r.returncode, out, r.stderr.decode(errors="replace"), r.stdout.decode(errors="replace")))
@@ -197,12 +208,13 @@ def cli_make(photo, film, sl, extra, outname):
     return os.path.join(d, out[0])
 
 
-def wasm_make(photo, film, size, sl, outpath, extra=None):
+def wasm_make(photo, film, size, sl, outpath, extra=None, legacy=True, quality=95):
     s = {"strength": 100, "grain": 100}
     s.update(sl)
-    a = [args.node, os.path.join(HERE, "test_wasm.js"), args.wasm, photo, outpath, str(film), str(size), "95"]
+    a = [args.node, os.path.join(HERE, "test_wasm.js"), args.wasm, photo, outpath, str(film), str(size), str(quality)]
     a += [str(s.get(k, 0)) for k in ORDER]
-    ex = dict(extra or {})
+    ex = dict({"hq": 0, "usejpg": 1} if legacy else {})
+    ex.update(extra or {})
     ex.update({k: v for k, v in sl.items() if k not in ORDER})          # the case's extras (gcolor ...)
     a += ["%s=%d" % kv for kv in ex.items()]
     r = run(a)
@@ -268,7 +280,7 @@ if photos:
         os.makedirs(d, exist_ok=True)
         for f in os.listdir(d):
             os.remove(os.path.join(d, f))
-        r = run([args.cli, "--quiet", "--quality", "95"] + a + ["--out", d, path])
+        r = run([args.cli, "--quiet", "--quality", "95"] + LEGACY + a + ["--out", d, path])
         out = os.listdir(d)
         if r.returncode != 0 or len(out) != 1:
             check(False, tag + ": command line version ran")
@@ -376,6 +388,134 @@ try:
 except ImportError:
     print("(numpy / pillow not installed: CR3 / DNG damage tests skipped)")
 
+# ------------------------------------------------------------------ RAW: the sensor data of CR2 / DNG files (tests/rawgen.py makes them)
+# The files hold one picture. What has to hold: the browser version makes the same bytes as the command line version (every size); the
+# CR2 and every Bayer DNG (strips, lossless tiles, big endian, a cropped active area) give the very same pixels; the picture comes back
+# (the sensor data was made from it); "JPG z pliku" / "wzorzec z JPG" / "najwyższa jakość" each change the result in their own way;
+# a portrait shot is marked as such; damaged files never crash.
+RAW_FILES = [f for f in photos if f.startswith("synth_raw_")]
+if RAW_FILES:
+    try:
+        import numpy as np
+        from PIL import Image, JpegImagePlugin
+    except ImportError:
+        np = None
+        print("(numpy / pillow not installed: RAW tests skipped)")
+    if np is not None:
+        ref_png = os.path.join(args.samples, "_raw_picture.png")
+        picture_ref = np.asarray(Image.open(ref_png).convert("RGB")).astype(np.float64) if os.path.exists(ref_png) else None
+
+        def px(path):
+            return np.asarray(Image.open(path).convert("RGB")).astype(np.int32)
+
+        raw_out = {}
+        for photo in RAW_FILES:
+            path = os.path.join(args.samples, photo)
+            tag = photo + " RAW"
+            got = cli_make(path, 0, {}, ["--size", "L"], "r1", legacy=False)
+            if not got:
+                check(False, tag + ": command line version ran")
+                continue
+            raw_out[photo] = got
+            hashes.append("%s  %s" % (sha(got), tag.replace(" ", "_")))
+            if args.wasm:
+                for code in (0, 102):
+                    extra = [] if code == 0 else ["--scale", "2"]
+                    c = got if code == 0 else cli_make(path, 0, {}, ["--scale", "2"], "r2", legacy=False)
+                    w = wasm_make(path, 0, code, {}, os.path.join(work, "w.jpg"), legacy=False)
+                    check(bool(w) and bool(c) and sha(w) == sha(c), "%s size %s: browser version == command line" % (tag, "L" if code == 0 else "half"))
+                    if c and code:
+                        hashes.append("%s  %s" % (sha(c), (tag + "_half").replace(" ", "_")))
+                for size_name, code in (("M", 1), ("S", 2)):
+                    c = cli_make(path, 6, dict(grain=150, vig=40, warm=-20), ["--size", size_name, "--expo", "30", "--wb_temp", "15", "--crv0_n", "3", "--crv0_x0", "0", "--crv0_y0", "0", "--crv0_x1", "128", "--crv0_y1", "110", "--crv0_x2", "255", "--crv0_y2", "255"], "r3", legacy=False)
+                    w = wasm_make(path, 6, code, dict(grain=150, vig=40, warm=-20), os.path.join(work, "w.jpg"), dict(expo=30, wb_temp=15, crv0_n=3, crv0_x0=0, crv0_y0=0, crv0_x1=128, crv0_y1=110, crv0_x2=255, crv0_y2=255), legacy=False)
+                    check(bool(w) and bool(c) and sha(w) == sha(c), "%s size %s with sliders: browser version == command line" % (tag, size_name))
+                    if c:
+                        hashes.append("%s  %s" % (sha(c), ("%s size %s sliders" % (tag, size_name)).replace(" ", "_")))
+            im = Image.open(got)
+            want_or = 6 if "portrait" in photo else 1
+            check(im.getexif().get(0x112) == want_or, "%s: orientation %s (wanted %d)" % (tag, im.getexif().get(0x112), want_or))
+            check(JpegImagePlugin.get_sampling(im) == 0, "%s: the JPEG has full resolution colours (4:4:4)" % tag)
+            check(im.size == (600, 400), "%s: size %s (wanted (600, 400))" % (tag, im.size))
+
+        # the picture comes back: the film at Efekt 0, no grain, quality 100
+        plain_n = [0]
+
+        def plain(photo, extra):
+            plain_n[0] += 1                                  # every call has its own folder: the results must not overwrite each other
+            d = os.path.join(work, "rp%d" % plain_n[0])
+            os.makedirs(d, exist_ok=True)
+            r = run([args.cli, "--quiet", "--film", "1", "--efekt", "0", "--ziarno", "0", "--quality", "100", "--size", "L", "--out", d, os.path.join(args.samples, photo)] + extra)
+            return os.path.join(d, os.listdir(d)[0]) if r.returncode == 0 and os.listdir(d) else None
+
+        cr2 = "synth_raw_5d2_landscape.cr2"
+        if cr2 in raw_out:
+            base = plain(cr2, [])
+            jpg = plain(cr2, ["--usejpg", "1"])
+            noref = plain(cr2, ["--rawref", "0"])
+            lowq = plain(cr2, ["--hq", "0"])
+            check(bool(base) and bool(jpg) and sha(base) != sha(jpg), "RAW: 'JPG z pliku' gives another picture than the sensor data")
+            check(bool(base) and bool(noref) and sha(base) != sha(noref), "RAW: the pattern of the camera's JPEG changes the tone")
+            check(bool(base) and bool(lowq) and sha(base) != sha(lowq), "RAW: the best quality switch changes the file")
+            if base and picture_ref is not None:
+                a = px(base)
+                mae = float(np.abs(a - picture_ref).mean())
+                check(mae < 14, "RAW: the picture comes back from the sensor data (mean error %.1f levels)" % mae)
+                if jpg:
+                    maej = float(np.abs(px(jpg) - picture_ref).mean())
+                    check(maej < 14, "RAW: 'JPG z pliku' gives the preview (mean error %.1f)" % maej)
+                if noref:
+                    mn = float(np.abs(px(noref) - picture_ref).mean())
+                    note("   (without the pattern of the JPG the mean error is %.1f: the standard tone of the program is not the camera's)" % mn)
+            if lowq:
+                check(JpegImagePlugin.get_sampling(Image.open(lowq)) == 2, "the camera's way (hq 0) writes 4:2:0")
+                check(os.path.getsize(base) > os.path.getsize(lowq), "the best quality file is the bigger one (%d > %d bytes)" % (os.path.getsize(base), os.path.getsize(lowq)))
+            # the same pixels from every Bayer file
+            if base:
+                a = px(base)
+                for other in ("synth_raw_strips.dng", "synth_raw_tiles.dng", "synth_raw_crop.dng"):
+                    if other in raw_out:
+                        o = plain(other, [])
+                        check(bool(o) and px(o).shape == a.shape and bool((px(o) == a).all()), "%s: the very same pixels as the CR2" % other)
+                if "synth_raw_linear.dng" in raw_out:
+                    o = plain("synth_raw_linear.dng", [])
+                    if o and picture_ref is not None:
+                        ml = float(np.abs(px(o) - picture_ref).mean())
+                        check(ml < 14, "synth_raw_linear.dng: the picture comes back (mean error %.1f)" % ml)
+            # the portrait file: the same pixels as the landscape one, and the orientation in the EXIF
+            if "synth_raw_5d2_portrait.cr2" in raw_out and base:
+                o = plain("synth_raw_5d2_portrait.cr2", [])
+                check(bool(o) and bool((px(o) == px(base)).all()), "portrait CR2: the pixels are the same, only the orientation mark differs")
+
+        # damaged RAW files: no crash (the command line), no trap (the browser version)
+        import random
+        rnd = random.Random(11)
+        for name in RAW_FILES:
+            data = open(os.path.join(args.samples, name), "rb").read()
+            cases = []
+            for k, cut in enumerate((40, 300, 2000, len(data) // 3, len(data) // 2, len(data) - 30000, len(data) - 100)):
+                cases.append(("cut%d_%s" % (k, name), data[:cut]))
+            for k in range(8):                              # random damage: the first 8 KB (tags) and the whole file (the sensor data)
+                d = bytearray(data)
+                for _ in range(10 if k < 4 else 40):
+                    d[rnd.randrange(0, min(len(d), 8000 if k < 4 else len(d)))] = rnd.randrange(256)
+                cases.append(("dmg%d_%s" % (k, name), bytes(d)))
+            for cname, blob in cases:
+                f = os.path.join(work, cname)
+                open(f, "wb").write(blob)
+                d = os.path.join(work, "cli_bad2")
+                os.makedirs(d, exist_ok=True)
+                for old in os.listdir(d):
+                    os.remove(os.path.join(d, old))
+                r = run([args.cli, "--quiet", "--film", "1", "--size", "S", "--out", d, f])
+                check(not (r.returncode < 0 or r.returncode > 100), "damaged %s: no crash (exit %d)" % (cname, r.returncode))
+                if args.wasm:
+                    w = run([args.node, os.path.join(HERE, "test_wasm.js"), args.wasm, f, os.path.join(work, "wb.jpg"), "0", "102", "95"])
+                    err = w.stderr.decode(errors="replace")
+                    trapped = "RuntimeError" in err or "unreachable" in err or "out of bounds" in err or "memory access" in err
+                    check(not trapped, "damaged %s: browser version does not trap" % cname)
+
+
 # sizes M and S (and the full size with the size option)
 for photo in photos:
     path = os.path.join(args.samples, photo)
@@ -399,6 +539,133 @@ for photo in photos:
             ref = os.path.join(work, "ref.jpg")
             run([hostdev, path, ref, str(film), "1", "quality=95"] + ["%s=%d" % kv for kv in dict({"gcolor": 100}, **sl).items()])
             same_file(ref, got, tag + ": size L == hostdev")
+
+# ------------------------------------------------------------------ the crop and the size of the result (any resolution, any shape)
+# The page has a crop tool (free or with a locked ratio) and "Rozmiar zapisu: pełny / własny". Every kind of file (JPG, CR2 with sensor
+# data, CR3, DNG; landscape and portrait with the orientation mark) must give: the right pixels (a crop is the same picture as that part
+# of the whole one), the exact ratio, the exact size, and the browser version must make the same bytes as the command line version.
+try:
+    import numpy as np
+    from PIL import Image, ImageOps
+    GEO_FILES = [f for f in ("synth_raw_5d2_landscape.cr2", "synth_raw_5d2_portrait.cr2", "synth_raw_strips.dng", "synth_landscape.cr3",
+                             "synth_portrait.cr2", "synth_small.jpg") if f in photos]
+    geo_n = [0]
+
+    def geo_make(photo, opts, quality=100, plain=True):
+        """the picture as a file; Efekt 0 and no grain (plain) so that a crop can be compared with the same part of the whole picture"""
+        geo_n[0] += 1
+        d = os.path.join(work, "geo%d" % geo_n[0])
+        os.makedirs(d, exist_ok=True)
+        r = run([args.cli, "--quiet", "--film", "1", "--quality", str(quality)] + (["--efekt", "0", "--ziarno", "0"] if plain else []) + opts + ["--out", d, os.path.join(args.samples, photo)])
+        out = os.listdir(d)
+        if r.returncode != 0 or len(out) != 1:
+            note("geometry %s %s: exit %d\n%s" % (photo, opts, r.returncode, r.stderr.decode(errors="replace")))
+            return None
+        return os.path.join(d, out[0])
+
+    def shown(path):                                     # the picture as it is shown (the camera's orientation applied): pixels, (w, h)
+        im = ImageOps.exif_transpose(Image.open(path).convert("RGB")) if Image.open(path).getexif().get(0x112) in (2, 3, 4, 5, 6, 7, 8) else Image.open(path).convert("RGB")
+        return np.asarray(im).astype(np.int32)
+
+    def frac(f, n):
+        return (int(f * 1000000) * n + 500000) // 1000000
+
+    for photo in GEO_FILES:
+        full = geo_make(photo, [])
+        if not full:
+            check(False, photo + " geometry: the whole picture was made")
+            continue
+        A = shown(full)
+        H, W = A.shape[:2]
+        tag = photo + " geometry"
+        # a crop in fractions of the picture as it is shown: size, and the same pixels as that part of the whole picture
+        c = geo_make(photo, ["--crop", "0.25,0.1,0.75,0.6"])
+        x0, x1, y0, y1 = frac(0.25, W), frac(0.75, W), frac(0.1, H), frac(0.6, H)
+        if c:
+            B = shown(c)
+            check(B.shape[:2] == (y1 - y0, x1 - x0), "%s: crop size %s (wanted %s)" % (tag, B.shape[1::-1], (x1 - x0, y1 - y0)))
+            if B.shape == A[y0:y1, x0:x1].shape:
+                mae = float(np.abs(B - A[y0:y1, x0:x1]).mean())
+                check(mae < 1.8, "%s: the crop is that part of the whole picture (mean error %.2f)" % (tag, mae))
+        else:
+            check(False, tag + ": crop made")
+        # the whole picture as a crop, or a rectangle with nothing in it: the same file as without a crop
+        for opts, what in ((["--crop", "0,0,1,1"], "the whole picture as a crop"), (["--crop", "0.5,0.5,0.4,0.4"], "an empty crop")):
+            w = geo_make(photo, opts)
+            check(bool(w) and sha(w) == sha(full), "%s: %s == no crop, byte for byte" % (tag, what))
+        # the ratio: exact, in the middle; for a photo that lies the other way the ratio turns round, "!" keeps it as written
+        for ratio, rw, rh in (("1:1", 1, 1), ("3:2", 3, 2), ("4:5", 4, 5), ("16:9", 16, 9)):
+            r1 = geo_make(photo, ["--ratio", ratio])
+            if not r1:
+                check(False, "%s: ratio %s made" % (tag, ratio))
+                continue
+            B = shown(r1)
+            h, w = B.shape[:2]
+            # "3:2" is long:short; on a photo that lies the other way the engine turns it round (a square photo keeps it)
+            want_swap = rw != rh and ((W < H) != (rw < rh))
+            ea, eb = (rh, rw) if want_swap else (rw, rh)
+            ok = (w * eb == h * ea)
+            check(ok, "%s: ratio %s is exact (%d x %d)" % (tag, ratio, w, h))
+            ax0, ay0 = (W - w) // 2, (H - h) // 2
+            if abs((W - w) - 2 * ax0) <= 1 and B.shape == A[ay0:ay0 + h, ax0:ax0 + w].shape:
+                mae = float(np.abs(B - A[ay0:ay0 + h, ax0:ax0 + w]).mean())
+                check(mae < 1.8, "%s: ratio %s: the middle of the picture (mean error %.2f)" % (tag, ratio, mae))
+        r2 = geo_make(photo, ["--ratio", "16:9!"])
+        if r2:
+            B = shown(r2)
+            check(B.shape[1] * 9 == B.shape[0] * 16, "%s: ratio 16:9! stays 16:9 (%d x %d)" % (tag, B.shape[1], B.shape[0]))
+        # the size: the long side, the width, the height; smaller and bigger than the photo
+        L0 = max(W, H)
+        for opts, want in ((["--long", "300"], (300, None)), (["--long", str(2 * L0)], (2 * L0, None)), (["--width", "257"], (257, None)), (["--height", "199"], (None, 199)),
+                           (["--width", str(W + 37)], (W + 37, None))):
+            r3 = geo_make(photo, opts)
+            if not r3:
+                check(False, "%s: %s made" % (tag, " ".join(opts)))
+                continue
+            B = shown(r3)
+            h, w = B.shape[:2]
+            if opts[0] == "--long":
+                okd = max(w, h) == want[0] and abs(w * H - h * W) <= max(W, H)
+            elif want[0] is not None:
+                okd = w == want[0] and abs(h - round(H * w / W)) <= 1
+            else:
+                okd = h == want[1] and abs(w - round(W * h / H)) <= 1
+            check(okd, "%s: %s gives %d x %d" % (tag, " ".join(opts), w, h))
+            if opts[0] in ("--long", "--width") and w > W and h > H:         # enlarged: against an independent bicubic (the same filter, on the tone-mapped picture)
+                ref = np.asarray(Image.fromarray(A.astype(np.uint8)).resize((w, h), Image.BICUBIC)).astype(np.int32)
+                mae = float(np.abs(ref - B).mean())
+                check(mae < 3.0, "%s: enlarged to %d x %d, mean error against bicubic %.2f" % (tag, w, h, mae))
+        # a crop and a size together, the part cut out and made bigger
+        r4 = geo_make(photo, ["--crop", "0.2,0.2,0.6,0.7", "--ratio", "1:1", "--long", "500"], plain=False)
+        if r4:
+            B = shown(r4)
+            check(B.shape[:2] == (500, 500), "%s: crop + ratio 1:1 + long 500 -> %s" % (tag, B.shape[1::-1]))
+        # too big: refused with a message, no crash
+        r5 = run([args.cli, "--quiet", "--film", "1", "--long", "20000", "--out", os.path.join(work, "geo_big"), os.path.join(args.samples, photo)])
+        check(r5.returncode == 1 and b"za du" in r5.stderr, "%s: 20000 px is refused with a message (exit %d)" % (tag, r5.returncode))
+
+    # the browser version: the same bytes as the command line version
+    if args.wasm:
+        combos = [
+            (dict(crop_x0=100000, crop_y0=200000, crop_x1=700000, crop_y1=900000, crop_ar_w=4, crop_ar_h=3, crop_ar_auto=1, out_long=900),
+             ["--crop", "0.1,0.2,0.7,0.9", "--ratio", "4:3", "--long", "900"]),
+            (dict(out_long=1500), ["--long", "1500"]),
+            (dict(crop_ar_w=1, crop_ar_h=1), ["--ratio", "1:1"]),
+            (dict(crop_x0=0, crop_y0=500000, crop_x1=500000, crop_y1=1000000, out_w=333), ["--crop", "0,0.5,0.5,1", "--width", "333"]),
+            (dict(crop_ar_w=16, crop_ar_h=9, crop_ar_auto=0, out_h=250), ["--ratio", "16:9!", "--height", "250"]),
+        ]
+        for photo in GEO_FILES:
+            for ex, cli_opts in combos:
+                c = geo_make(photo, cli_opts, quality=98, plain=False)
+                w = wasm_make(os.path.join(args.samples, photo), 0, 0, {}, os.path.join(work, "w.jpg"), ex, legacy=False, quality=98)
+                check(bool(c) and bool(w) and sha(c) == sha(w), "%s geometry %s: browser version == command line" % (photo, " ".join(cli_opts)))
+                if c:
+                    hashes.append("%s  %s" % (sha(c), ("%s geometry %s" % (photo, " ".join(cli_opts))).replace(" ", "_")))
+        if GEO_FILES:
+            w = run([args.node, os.path.join(HERE, "test_wasm.js"), args.wasm, os.path.join(args.samples, GEO_FILES[0]), os.path.join(work, "wb.jpg"), "0", "0", "95", "100", "100", "out_long=20000"])
+            check(w.returncode != 0 and b"ERROR" in w.stderr, "browser version: 20000 px is refused with a message")
+except ImportError:
+    print("(numpy / pillow not installed: crop and size tests skipped)")
 
 # a folder and a file with Polish letters in the name (the command line version must open and write them on every system)
 uni_dir = os.path.join(work, "zażółć gęślą jaźń")
@@ -436,7 +703,7 @@ try:
         for size_name in ("L", "M", "S"):
             d = os.path.join(work, "rs_%d_%s" % (pi, size_name))          # a new folder for every photo and size: listdir() finds the one file
             os.makedirs(d, exist_ok=True)
-            run([args.cli, "--quiet", "--film", "1", "--efekt", "0", "--ziarno", "0", "--quality", "100", "--size", size_name, "--out", d, path])
+            run([args.cli, "--quiet", "--film", "1", "--efekt", "0", "--ziarno", "0", "--quality", "100", "--usejpg", "1", "--size", size_name, "--out", d, path])
             outs[size_name] = np.asarray(Image.open(os.path.join(d, os.listdir(d)[0])).convert("RGB"))
         for size_name in ("M", "S"):
             small = outs[size_name]

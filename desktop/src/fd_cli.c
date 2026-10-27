@@ -5,8 +5,13 @@
  *
  *   filmlook_cli [options] photo_or_folder ...
  *     --film NAME|NUMBER     the film (see --list); asked for when missing
- *     --size L|M|S           5616x3744 (default), 3861x2574, 2784x1856
- *     --quality N            JPEG quality, default 95
+ *     --long N               the long side of the result in pixels (any size, bigger than the photo too); default: the photo's own size
+ *     --width N | --height N the width / the height of the result in pixels (the other side follows)
+ *     --crop X0,Y0,X1,Y1     crop: a rectangle of the picture as shown, in fractions 0..1 (0.1,0.1,0.9,0.9)
+ *     --ratio A:B            crop to the biggest A:B rectangle (in the middle of the --crop rectangle, or of the whole picture); 3:2 or 2:3 are the same
+ *                            for a photo that lies the other way (the ratio is long : short), use 3:2! to keep it exactly as written
+ *     --quality N            JPEG quality, default 98
+ *     --hq 0|1               best quality (default 1): JPEG 4:4:4 and exact colours; 0 = the camera's way (smaller, faster)
  *     --out FOLDER           where the JPGs go; default: the folder FILMLOOK next to the photo
  *     --efekt N --ziarno N --kontrast N --matowosc N --cieplo N --cienie N --swiatla N --nasycenie N --winieta N
  *     --list                 the films
@@ -203,13 +208,21 @@ static int process_one(const char *path, const char *outdir, const fd_job *job, 
     if (outdir) snprintf(od, sizeof od, "%s", outdir);
     else snprintf(od, sizeof od, "%sFILMLOOK", dir);
     u_mkdir(od);
-    snprintf(outpath, ocap, "%s%c%s_%s%s.jpg", od, PSEP, base, film,
-             job->size == FD_SIZE_M ? "_M" : (job->size == FD_SIZE_S ? "_S" : ""));
+    {
+        char suffix[32] = "";
+        if (job->look.out_long > 0) snprintf(suffix, sizeof suffix, "_%dpx", job->look.out_long);
+        else if (job->look.out_w > 0) snprintf(suffix, sizeof suffix, "_w%d", job->look.out_w);
+        else if (job->look.out_h > 0) snprintf(suffix, sizeof suffix, "_h%d", job->look.out_h);
+        else if (job->size == FD_SIZE_M) snprintf(suffix, sizeof suffix, "_M");
+        else if (job->size == FD_SIZE_S) snprintf(suffix, sizeof suffix, "_S");
+        snprintf(outpath, ocap, "%s%c%s_%s%s.jpg", od, PSEP, base, film, suffix);
+    }
     f = u_fopen(outpath, "wb");
     if (!f || fwrite(out.data, 1, out.len, f) != out.len) { fprintf(stderr, "  nie można zapisać %s\n", outpath); if (f) fclose(f); free(out.data); return 1; }
     fclose(f);
     free(out.data);
-    if (!g_quiet) fprintf(stderr, "  %dx%d -> %dx%d  %.1f s  %s\n", r.src_w, r.src_h, r.out_w, r.out_h,
+    if (!g_quiet) fprintf(stderr, "  %s%s  %dx%d -> %dx%d  %.1f s  %s\n", r.raw ? "RAW" : "JPG",
+                          r.raw_err ? " (RAW się nie udał, wzięty JPG)" : "", r.src_w, r.src_h, r.out_w, r.out_h,
                           (double)(clock() - t0) / CLOCKS_PER_SEC, outpath);
     return 0;
 }
@@ -246,14 +259,20 @@ static void usage(void)
         "FILM LOOK DESKTOP %s - film z aparatu na komputerze\n"
         "Użycie: filmlook_cli [opcje] zdjęcie_lub_folder ...\n"
         "  --film NAZWA|NUMER   film (lista: --list); jeśli go nie ma, program zapyta\n"
-        "  --size L|M|S         5616x3744 (domyślnie), 3861x2574, 2784x1856\n"
-        "  --quality N          jakość JPG, domyślnie 95\n"
+        "  --long N             dłuższy bok wyniku w pikselach (dowolny, także większy niż zdjęcie); domyślnie: rozmiar zdjęcia\n"
+        "  --width N | --height N   szerokość albo wysokość wyniku w pikselach (drugi bok wynika z proporcji)\n"
+        "  --crop X0,Y0,X1,Y1   kadr: prostokąt zdjęcia w ułamkach 0..1 (np. 0.1,0.1,0.9,0.9)\n"
+        "  --ratio A:B          kadr o proporcjach A:B (największy, w środku; dla zdjęcia pionowego proporcja się obraca; A:B! = dokładnie tak)\n"
+        "  --quality N          jakość JPG, domyślnie 98\n"
         "  --out FOLDER         dokąd zapisać (domyślnie folder FILMLOOK obok zdjęcia)\n"
         "  --efekt --ziarno --kontrast --matowosc --cieplo --cienie --swiatla --nasycenie --winieta  WARTOŚĆ\n"
         "  --expo --hi_t --sh_t --wh_t --bl_t --gsize --grough --gcolor --wb_temp --wb_tint --skin_hue --skin_sat --skin_lum\n"
         "  --ton_mode --cg_sh_h --cg_sh_s --cg_mid_h --cg_mid_s --cg_hi_h --cg_hi_s --filter --filter_amt\n"
         "  --hue_KOLOR --sat_KOLOR --lum_KOLOR  (KOLOR: red orange yellow green aqua blue purple magenta)  WARTOŚĆ\n"
         "  --crvK_n N --crvK_xJ X --crvK_yJ Y   krzywe (K: 0 RGB, 1 R, 2 G, 3 B; N punktów 2..12; J = 0..N-1; X, Y: 0..255)\n"
+        "  --usejpg 1           nie rozwijaj RAW: weź gotowy JPG z pliku (domyślnie 0: film nakłada się na RAW)\n"
+        "  --rawref 0|1         RAW: ton ze wzorca JPG aparatu (1, domyślnie) albo ton standardowy programu (0)\n"
+        "  --hq 0|1             najwyższa jakość (1, domyślnie): JPG z kolorami w pełnej rozdzielczości (4:4:4) i dokładne liczenie kolorów; 0 = jak w aparacie (mniejszy plik, szybciej)\n"
         "  --list               pokaż filmy\n", FD_VERSION);
 }
 
@@ -278,6 +297,21 @@ int fd_main(int argc, char **argv)
         else if (i + 1 < argc && !strcmp(a, "--size")) {
             char c = (char)tolower((unsigned char)argv[++i][0]);
             job.size = c == 'm' ? FD_SIZE_M : (c == 's' ? FD_SIZE_S : FD_SIZE_FULL); size_set = 1;
+        }
+        else if (i + 1 < argc && !strcmp(a, "--long")) { job.look.out_long = atoi(argv[++i]); size_set = 1; }
+        else if (i + 1 < argc && !strcmp(a, "--width")) { job.look.out_w = atoi(argv[++i]); size_set = 1; }
+        else if (i + 1 < argc && !strcmp(a, "--height")) { job.look.out_h = atoi(argv[++i]); size_set = 1; }
+        else if (i + 1 < argc && !strcmp(a, "--crop")) {
+            double v[4] = { 0, 0, 1, 1 };
+            if (sscanf(argv[++i], "%lf,%lf,%lf,%lf", &v[0], &v[1], &v[2], &v[3]) != 4) { fprintf(stderr, "--crop: oczekuję X0,Y0,X1,Y1 (ułamki 0..1)\n"); return 2; }
+            job.look.crop_x0 = (int)(v[0] * 1000000.0 + 0.5); job.look.crop_y0 = (int)(v[1] * 1000000.0 + 0.5);
+            job.look.crop_x1 = (int)(v[2] * 1000000.0 + 0.5); job.look.crop_y1 = (int)(v[3] * 1000000.0 + 0.5);
+        }
+        else if (i + 1 < argc && !strcmp(a, "--ratio")) {
+            int ra = 0, rb = 0, n = 0;
+            const char *t = argv[++i];
+            if (sscanf(t, "%d:%d%n", &ra, &rb, &n) != 2 || ra < 1 || rb < 1) { fprintf(stderr, "--ratio: oczekuję A:B (np. 3:2)\n"); return 2; }
+            job.look.crop_ar_w = ra; job.look.crop_ar_h = rb; job.look.crop_ar_auto = (t[n] == '!') ? 0 : 1;
         }
         else if (i + 1 < argc && !strcmp(a, "--efekt")) job.look.strength = atoi(argv[++i]);
         else if (i + 1 < argc && !strcmp(a, "--ziarno")) job.look.grain = atoi(argv[++i]);
@@ -306,10 +340,7 @@ int fd_main(int argc, char **argv)
             fprintf(stderr, "Nie ma takiego filmu.\n");
         }
         if (!size_set) {
-            if (ask("Rozmiar: L = 5616x3744, M = 3861x2574, S = 2784x1856 [L]: ", buf, sizeof buf) && buf[0]) {
-                char c = (char)tolower((unsigned char)buf[0]);
-                job.size = c == 'm' ? FD_SIZE_M : (c == 's' ? FD_SIZE_S : FD_SIZE_FULL);
-            }
+            if (ask("Dłuższy bok wyniku w pikselach (Enter = rozmiar zdjęcia): ", buf, sizeof buf) && buf[0]) job.look.out_long = atoi(buf);
         }
     } else if (filmarg) {
         job.film = find_film(filmarg);

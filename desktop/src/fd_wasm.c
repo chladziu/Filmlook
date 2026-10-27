@@ -106,9 +106,41 @@ void *realloc(void *p, size_t n)
 #define EXPORT(name) __attribute__((export_name(name)))
 
 EXPORT("fd_alloc") void *fd_alloc(size_t n) { return malloc(n); }
-EXPORT("fd_reset") void fd_reset(void) { g_top = g_base ? g_base : 0; g_last = 0; g_mark_top = 0; g_mark_last = 0; }
+EXPORT("fd_reset") void fd_reset(void)
+{
+    g_top = g_base ? g_base : 0; g_last = 0; g_mark_top = 0; g_mark_last = 0;
+    fd_pre = 0; fd_pre_src = 0; fd_pre_len = 0; fd_pre_rc = 0;                    /* the decoded photo was in that memory */
+}
 EXPORT("fd_heap_mark") void fd_heap_mark(void) { g_mark_top = g_top; g_mark_last = g_last; }      /* what is allocated now stays ... */
 EXPORT("fd_heap_release") void fd_heap_release(void) { if (g_mark_top) { g_top = g_mark_top; g_last = g_mark_last; } }   /* ... when everything after it goes */
+
+/* ------------------------------------------------------------ the sensor data of the open photo
+ * The page copies the whole file in, calls fd_source_prepare() once (a CR2 / DNG is decoded into the memory that stays until
+ * fd_reset), and only then fd_heap_mark(). Every fd_process() after that finds the decoded photo ready. */
+static fd_rawdata g_pre;
+EXPORT("fd_source_prepare")
+int wasm_source_prepare(const uint8_t *src, size_t n)
+{
+    int rc;
+    fd_pre = 0; fd_pre_src = src; fd_pre_len = n;
+    rc = fd_raw_load(src, n, &g_pre);
+    fd_pre_rc = rc;
+    if (rc == SE_OK) fd_pre = &g_pre;
+    return rc;                                     /* 0 = decoded, 1 = no sensor data in this file (a JPG, a CR3 ...), else an error code */
+}
+/* 0 decoded (1/0), 1 raw width, 2 raw height, 3 the tone was measured on the JPEG of the file (1/0), 4 error of decoding (0 none) */
+EXPORT("fd_source_info")
+int wasm_source_info(int k)
+{
+    switch (k) {
+    case 0: return fd_pre ? 1 : 0;
+    case 1: return fd_pre ? g_pre.ri.w : 0;
+    case 2: return fd_pre ? g_pre.ri.h : 0;
+    case 3: return fd_pre ? g_pre.fit : 0;
+    case 4: return (fd_pre_rc != SE_OK && fd_pre_rc != FR_NONE) ? fd_pre_rc : 0;
+    default: return 0;
+    }
+}
 
 /* ------------------------------------------------------------ the films */
 EXPORT("fd_version") const char *wasm_version(void) { return FD_VERSION; }
@@ -158,7 +190,8 @@ int fd_process(const uint8_t *src, size_t n, int film, int size, int quality,
 }
 
 /* after fd_process: 0 result code, 1 source width, 2 source height, 3 output width, 4 output height, 5 JPEG size in bytes,
- * 6 address of the JPEG in the wasm memory */
+ * 6 address of the JPEG in the wasm memory, 7 developed from the sensor data (1) or from the JPEG (0), 8 why the sensor data was not used (error code, 0 none),
+ * 9 / 10 the whole photo's width / height as it is shown (the orientation applied), full size pixels */
 EXPORT("fd_result_int")
 unsigned fd_result_int(int k)
 {
@@ -170,6 +203,11 @@ unsigned fd_result_int(int k)
     case 4: return (unsigned)g_res.out_h;
     case 5: return (unsigned)g_out.len;
     case 6: return (unsigned)(uintptr_t)g_out.data;
+    case 7: return (unsigned)g_res.raw;
+    case 8: return (unsigned)g_res.raw_err;
+    case 9: return (unsigned)g_res.pic_w;
+    case 10: return (unsigned)g_res.pic_h;
+    case 11: return (unsigned)g_res.swap;
     default: return 0;
     }
 }

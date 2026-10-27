@@ -153,6 +153,10 @@ size_t se_look_bytes(const se_look *lk, int width);
  * a caller can size its allocation from it. */
 size_t se_look_fit(se_look *lk, int width, size_t budget);
 
+/* The desktop program only (the camera never calls it): 1 = every pixel is graded exactly, 0 (the default) = through the colour table,
+ * which is quicker and a little less exact (about half a level on average, up to some levels on very saturated colours). */
+void se_look_set_exact(int on);
+
 se_err se_look_begin(se_look_run **run, const se_look *lk,
                      int width, se_arena *ar);
 

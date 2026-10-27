@@ -16,6 +16,12 @@
             delete and move points, buttons, a black and white film has the master curve only; developed == command line
   raw       CR3 and DNG files (the fake ones of make_samples.py): list, thumbnails, upright portraits, the same pictures as the command
             line version, a DNG without a preview is refused with a message
+  sensor    RAW files with real sensor data (CR2 of the 5D Mark II, DNG: synth_raw_*): the picture is developed from the sensor data
+            ("z RAW"), the switches "JPG z pliku" / "wzorzec z JPG" / "najwyższa jakość" work, developed == command line, a CR3 says
+            what to do (DNG)
+
+  crop      the crop tool (frame, handles, lock of the ratio, the list of ratios, "Dla wszystkich", Esc) and the free size of the result (also
+            bigger than the photo); developed == command line
 
 usage: test_page.py <FILMLOOK_DESKTOP.html> <filmlook_cli> <folder with photos> [screenshot folder] [--only name]
 The folder holds *.jpg / *.cr2 / *.cr3 / *.dng (tests/make_samples.py makes them: it must contain synth_portrait.cr2 for "portrait").
@@ -44,7 +50,7 @@ if "--only" in argv:
 html, cli, all_photos = [os.path.abspath(a) for a in argv[:3]]
 photos = tempfile.mkdtemp(prefix="fdpages_")            # the scenarios other than "raw" work on the JPGs and CR2 files only
 for _f in os.listdir(all_photos):
-    if _f.lower().endswith((".jpg", ".jpeg", ".cr2")):
+    if _f.lower().endswith((".jpg", ".jpeg", ".cr2")) and not _f.startswith("synth_raw_"):
         shutil.copy(os.path.join(all_photos, _f), photos)
 shots = os.path.abspath(argv[3]) if len(argv) > 3 else None
 if shots:
@@ -121,8 +127,27 @@ def run_and_wait(page):
     page.wait_for_function("document.querySelector('#runInfo').textContent.indexOf('Gotowe') === 0", timeout=900000)
 
 
+PAGE_QUALITY = "98"                                  # the quality the page starts with
+
+
+# the page has no fixed sizes any more (L / M / S): "any size" is a long side in pixels. These are the sizes the old tests used (the 5D's M and S).
+SIZE_FLAGS = {"L": ["--size", "L"], "M": ["--long", "3861"], "S": ["--long", "2784"]}
+SIZE_SUF = {"L": "", "M": "_3861px", "S": "_2784px"}
+SIZE_PX = {"L": None, "M": 3861, "S": 2784}
+
+
+def choose_size(page, code):
+    """sets "Rozmiar" of the page: L = full size, M / S = a long side of 3861 / 2784 px"""
+    if SIZE_PX[code] is None:
+        page.select_option("#outMode", "full")
+    else:
+        page.select_option("#outMode", "long")
+        page.fill("#outPx", str(SIZE_PX[code]))
+        page.dispatch_event("#outPx", "change")
+
+
 def cli_make(work, film, size_flag, flags, src):
-    subprocess.run([cli, "--quiet", "--film", str(film), "--size", size_flag, "--quality", "95", "--out", work] + flags + [src],
+    subprocess.run([cli, "--quiet", "--film", str(film)] + SIZE_FLAGS[size_flag] + ["--quality", PAGE_QUALITY, "--out", work] + flags + [src],
                    check=True, capture_output=True)
 
 
@@ -206,7 +231,7 @@ def scenario_main(browser):
     open_section(page, "skin")
     set_number(page, "skin_sat", 15)
 
-    page.click("#sizes button[data-size='1']")
+    choose_size(page, "M")
     flags = ["--ziarno", "50", "--expo", "50", "--wb_temp", "20", "--skin_sat", "15", "--hue_blue", "30"]
     run_and_wait(page)
     statuses = page.eval_on_selector_all("#list li .meta", "els => els.map(e => e.textContent)")
@@ -216,7 +241,7 @@ def scenario_main(browser):
     check(not any(ticks), "developed photos are unticked afterwards: %s" % ticks)
     z = zip_of(page)
     check(z.testzip() is None and len(z.namelist()) == 2, "ZIP is valid and holds 2 files: %s" % z.namelist())
-    compare_zip(z, "_Fuji_Velvia_50_M", FILM_NUMBER, "M", flags)
+    compare_zip(z, "_Fuji_Velvia_50" + SIZE_SUF["M"], FILM_NUMBER, "M", flags)
     shot(page, "main_3_done")
 
     # a photo added later is the only one that is developed next
@@ -367,11 +392,11 @@ def scenario_bw(browser):
     wait_idle(page)
     check(page.get_attribute("#toneChips .pill:has-text('Sepia')", "aria-pressed") == "true", "the toning button shows the chosen toning")
     shot(page, "bw_1")
-    page.click("#sizes button[data-size='2']")
+    choose_size(page, "S")
     run_and_wait(page)
     z = zip_of(page)
     flags = ["--filter", "3", "--ton_mode", "1", "--cg_sh_h", "30", "--cg_sh_s", "25", "--cg_mid_h", "40", "--cg_hi_h", "45", "--cg_hi_s", "20", "--lum_green", "-40"]
-    compare_zip(z, "_Kodak_Tri_X_400_S", 7, "S", flags)
+    compare_zip(z, "_Kodak_Tri_X_400" + SIZE_SUF["S"], 7, "S", flags)
     check(not page.errors, "no errors in the browser console: %s" % page.errors[:3])
     page.context.close()
 
@@ -384,7 +409,7 @@ def develop_and_compare(page, size_value, size_flag, grain):
     choose_velvia(page)
     set_number(page, "grain", grain)
     check(page.input_value("#sl-grain") == str(grain), "slider Ziarno = %d" % grain)
-    page.click("#sizes button[data-size='%d']" % size_value)
+    choose_size(page, "LMS"[size_value])
     run_and_wait(page)
     statuses = page.eval_on_selector_all("#list li .meta", "els => els.map(e => e.textContent)")
     ndone = sum(1 for s in statuses if s.startswith("✓ gotowe"))
@@ -392,7 +417,7 @@ def develop_and_compare(page, size_value, size_flag, grain):
     z = zip_of(page)
     check(z.testzip() is None, "ZIP is valid (CRCs match)")
     check(len(z.namelist()) == ndone, "ZIP holds %d files: %s" % (ndone, z.namelist()))
-    compare_zip(z, "_Fuji_Velvia_50" + ("", "_M", "_S")[size_value], FILM_NUMBER, size_flag, ["--ziarno", str(grain)])
+    compare_zip(z, "_Fuji_Velvia_50" + ("", SIZE_SUF["M"], SIZE_SUF["S"])[size_value], FILM_NUMBER, size_flag, ["--ziarno", str(grain)])
 
 
 def scenario_parallel(browser):
@@ -476,7 +501,7 @@ def scenario_folder(browser):
     check(sorted(got) == ["synth_landscape_Kodak_Portra_400.jpg", "synth_small_Kodak_Portra_400.jpg"], "both photos written to the folder: %s" % sorted(got))
     work = tempfile.mkdtemp()
     for src in ("synth_small.jpg", "synth_landscape.cr2"):
-        subprocess.run([cli, "--quiet", "--film", "1", "--quality", "95", "--out", work, os.path.join(photos, src)], check=True, capture_output=True)
+        subprocess.run([cli, "--quiet", "--film", "1", "--quality", PAGE_QUALITY, "--out", work, os.path.join(photos, src)], check=True, capture_output=True)
     for name, (size, crc) in got.items():
         want = open(os.path.join(work, name), "rb").read()
         check(size == len(want) and crc == zlib.crc32(want), "%s in the folder == command line" % name)
@@ -595,7 +620,7 @@ def scenario_curves(browser):
     check(c and "r" in c and c["r"][-1][0] == 255 and 220 <= c["r"][-1][1] <= 230, "red: the end point is moved: %s" % (c and c.get("r")))
     check(page.get_attribute('.sec[data-id="curves"] .tabs2 button:nth-child(2)', "class") == "mod" or "mod" in page.get_attribute('.sec[data-id="curves"] .tabs2 button:nth-child(2)', "class"), "the tab of a changed channel is marked")
     # develop with these curves: page == command line
-    page.click("#sizes button[data-size='2']")
+    choose_size(page, "S")
     run_and_wait(page)
     z = zip_of(page)
     c = crv()
@@ -606,7 +631,7 @@ def scenario_curves(browser):
             flags += ["--crv%d_n" % k, str(len(pts))]
             for j, (px_, py_) in enumerate(pts):
                 flags += ["--crv%d_x%d" % (k, j), str(px_), "--crv%d_y%d" % (k, j), str(py_)]
-    compare_zip(z, "_Kodak_Portra_400_S", 1, "S", flags)
+    compare_zip(z, "_Kodak_Portra_400" + SIZE_SUF["S"], 1, "S", flags)
     # the picture really got darker in the middle: compare with the same without the master curve
     # keys and the double click
     page.click('.sec[data-id="curves"] .tabs2 button:nth-child(1)')
@@ -674,7 +699,7 @@ def scenario_raw(browser):
     check(True, "a DNG with no preview: the page says so: " + page.inner_text("#pvMsg")[:90])
     shot(page, "raw_1")
     # develop all of them (size S): the five good ones == the command line version, the sixth is reported as an error
-    page.click("#sizes button[data-size='2']")
+    choose_size(page, "S")
     run_and_wait(page)
     statuses = page.eval_on_selector_all("#list li .meta", "els => els.map(e => e.textContent)")
     ndone = sum(1 for m in statuses if m.startswith("✓ gotowe"))
@@ -684,7 +709,7 @@ def scenario_raw(browser):
     check(z.testzip() is None and len(z.namelist()) == 5, "ZIP holds the 5 pictures: %s" % z.namelist())
     work = tempfile.mkdtemp()
     for name in z.namelist():
-        src = os.path.join(tmp, [f for f in os.listdir(tmp) if f.rsplit(".", 1)[0] == name.rsplit("_Kodak_Portra_400_S", 1)[0]][0])
+        src = os.path.join(tmp, [f for f in os.listdir(tmp) if f.rsplit(".", 1)[0] == name.rsplit("_Kodak_Portra_400" + SIZE_SUF["S"], 1)[0]][0])
         cli_make(work, 1, "S", [], src)
         check(z.read(name) == open(os.path.join(work, name), "rb").read(), "%s: page == command line" % name)
     shutil.rmtree(work, ignore_errors=True)
@@ -693,14 +718,308 @@ def scenario_raw(browser):
     page.context.close()
 
 
+def scenario_sensor(browser):
+    """real sensor data: the page develops a CR2 / DNG from the RAW, the three switches work, developed == command line"""
+    import re
+    tmp = tempfile.mkdtemp()
+    names = {"synth_raw_5d2_landscape.cr2": "sensor_a.cr2", "synth_raw_5d2_portrait.cr2": "sensor_b.cr2", "synth_raw_strips.dng": "sensor_c.dng",
+             "synth_raw_tiles.dng": "sensor_d.dng", "synth_raw_linear.dng": "sensor_e.dng"}
+    for n, to in names.items():
+        shutil.copy(os.path.join(all_photos, n), os.path.join(tmp, to))
+    cr3 = os.path.join(all_photos, "synth_landscape.cr3")
+    if os.path.exists(cr3):
+        shutil.copy(cr3, os.path.join(tmp, "sensor_f.cr3"))
+    nfiles = len(os.listdir(tmp))
+    page = open_page(browser)
+    page.set_input_files("#inDir", tmp)
+    page.wait_for_function("document.querySelectorAll('#list li').length === %d" % nfiles, timeout=20000)
+    wait_idle(page)
+    cap = page.inner_text("#pvCap")
+    check("z RAW" in cap, "the picture comes from the sensor data: " + cap)
+    info = page.inner_text("#srcInfo")
+    check("surowe dane" in info and "RAW" in info, "the source section says it: " + info[:80])
+    check(page.get_attribute('#srcSeg button[data-v="0"]', "aria-pressed") == "true", "RAW is the chosen source")
+    check(page.is_checked("#chkRef") and not page.is_disabled("#chkRef"), "the pattern of the camera's JPEG is on, and can be switched")
+    pv0 = page.evaluate("FD.S.pv.afterBlob.size")
+    shot(page, "sensor_1_raw")
+    # the pattern off: the tone changes, the source stays the sensor data
+    page.uncheck("#chkRef")
+    wait_idle(page)
+    pv1 = page.evaluate("FD.S.pv.afterBlob.size")
+    check(page.evaluate("FD.val('rawref')") == 0 and pv1 != pv0 and "z RAW" in page.inner_text("#pvCap"), "pattern off: another tone, still from the sensor data (%d -> %d bytes)" % (pv0, pv1))
+    page.check("#chkRef")
+    wait_idle(page)
+    # the JPEG of the file instead
+    page.click('#srcSeg button[data-v="1"]')
+    wait_idle(page)
+    check("z JPG" in page.inner_text("#pvCap") and page.is_disabled("#chkRef"), "JPG z pliku: the caption says so, the pattern switch is off: " + page.inner_text("#pvCap")[:60])
+    check(page.evaluate("document.querySelector('#adj .sec[data-id=\"source\"]').classList.contains('mod')"), "the section is marked as changed")
+    shot(page, "sensor_2_jpg")
+    page.click('#srcSeg button[data-v="0"]')
+    wait_idle(page)
+    check("z RAW" in page.inner_text("#pvCap"), "back to RAW")
+    # a CR3 can not be read as RAW: the page says what to do
+    if os.path.exists(cr3):
+        page.click("#list li:has-text('sensor_f.cr3')")
+        wait_idle(page)
+        check("DNG" in page.inner_text("#srcInfo") and "z JPG" in page.inner_text("#pvCap") and page.is_disabled('#srcSeg button[data-v="0"]'),
+              "CR3: the page says to make a DNG and works on the JPEG: " + page.inner_text("#srcInfo")[:70])
+        page.click("#list li:has-text('sensor_a.cr2')")
+        wait_idle(page)
+        check("z RAW" in page.inner_text("#pvCap"), "back on the CR2: from the sensor data again")
+    # portraits stand upright
+    page.click("#list li:has-text('sensor_b.cr2')")
+    wait_idle(page)
+    dims = page.evaluate("[document.querySelector('#pvImg').naturalWidth, document.querySelector('#pvImg').naturalHeight]")
+    check(dims[1] > dims[0], "the rotated CR2 is upright in the preview: %s" % dims)
+    # develop everything (the best quality): == the command line version; then with the best quality off; then from the JPEGs
+    film = page.evaluate("FD.S.films[FD.S.film].full")
+    flim = re.sub(r"[^A-Za-z0-9]+", "_", film).strip("_")
+    film_no = page.evaluate("FD.S.film") + 1
+
+    def compare_all(z, flags, label):
+        work = tempfile.mkdtemp()
+        for name in z.namelist():
+            base = name.rsplit("_" + flim, 1)[0]
+            src = [f for f in os.listdir(tmp) if f.rsplit(".", 1)[0] == base][0]
+            cli_make(work, film_no, "L", flags, os.path.join(tmp, src))
+            check(z.read(name) == open(os.path.join(work, name), "rb").read(), "%s: %s == command line" % (name, label))
+        shutil.rmtree(work, ignore_errors=True)
+
+    def develop_all(label, flags):
+        page.click("#selAll")
+        run_and_wait(page)
+        metas = page.eval_on_selector_all("#list li .meta", "els => els.map(e => e.textContent)")
+        n_raw = sum(1 for m in metas if "z RAW" in m)
+        check(all("błąd" not in m for m in metas), "%s: no errors: %s" % (label, metas))
+        return zip_of(page), n_raw
+
+    z, n_raw = develop_all("best quality", [])
+    check(n_raw == 5, "five photos are developed from the sensor data, the CR3 from its JPEG (z RAW: %d)" % n_raw)
+    compare_all(z, [], "RAW")
+    shot(page, "sensor_3_done")
+    page.uncheck("#chkHq")
+    z, _ = develop_all("best quality off", ["--hq", "0"])
+    compare_all(z, ["--hq", "0"], "RAW, hq off")
+    page.check("#chkHq")
+    page.click('#srcSeg button[data-v="1"]')
+    z, n_raw = develop_all("JPG z pliku", ["--usejpg", "1"])
+    check(n_raw == 0, "JPG z pliku: nothing is developed from the sensor data")
+    compare_all(z, ["--usejpg", "1"], "JPG z pliku")
+    check(not page.errors, "no errors in the browser console: %s" % page.errors[:3])
+    shutil.rmtree(tmp, ignore_errors=True)
+    page.context.close()
+
+
+def scenario_crop(browser):
+    """the crop tool and the free size of the result: a frame with handles, the lock of the ratio and the list of ratios, the same
+    ratio for all photos, any size (also bigger than the photo); the developed files == the command line version, byte for byte"""
+    from PIL import Image, ImageOps
+    import io
+    tmp = tempfile.mkdtemp()
+    for n in ("synth_small.jpg", "synth_portrait.cr2", "synth_landscape.cr2"):
+        shutil.copy(os.path.join(photos, n), tmp)
+    page = open_page(browser)
+    page.set_input_files("#inDir", tmp)
+    page.wait_for_selector("#list li")
+    page.click("#list li:has-text('synth_small.jpg')")
+    wait_idle(page)
+    page.wait_for_function("FD.cropFrame() !== null", timeout=60000)
+    fr = page.evaluate("FD.cropFrame()")
+    check(fr == {"W": 1200, "H": 800}, "the frame of the photo is known: %s" % fr)
+    check(page.is_enabled("#btnCrop"), "the crop button is on")
+    check("Pełny" in page.inner_text("#outMode") and page.input_value("#outMode") == "full", "the size of the result starts as the full size")
+    check(page.locator("#sizes").count() == 0, "the fixed sizes L / M / S are gone")
+    check("1200 × 800" in page.inner_text("#outInfo"), "the size of this photo is told: " + page.inner_text("#outInfo"))
+
+    def rect():
+        return page.evaluate("(() => { const r = FD.CROP.rect; return [r.x0, r.y0, r.x1, r.y1]; })()")
+
+    def dims(r):
+        return r[2] - r[0], r[3] - r[1]
+
+    def drag(sel, dx, dy):
+        bb = page.locator(sel).bounding_box()
+        x, y = bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(x + dx / 2, y + dy / 2, steps=4)
+        page.mouse.move(x + dx, y + dy, steps=6)
+        page.mouse.up()
+
+    page.click("#btnCrop")
+    page.wait_for_function("!document.querySelector('#cropUi').classList.contains('hidden')", timeout=30000)
+    check(page.is_visible("#cropBar") and page.is_visible("#cropRect"), "the crop tool opens: the bar and the frame")
+    opts = page.eval_on_selector_all("#cropAr option", "els => els.map(e => e.textContent)")
+    check(any("3 : 2" in o for o in opts) and any("1 : 1" in o for o in opts) and any("16 : 9" in o for o in opts) and any("Oryginał" in o for o in opts)
+          and any("Dowolne" in o for o in opts) and any("Własne" in o for o in opts), "the list of ratios: %s" % opts)
+    check(rect() == [0, 0, 1200, 800], "the frame starts as the whole picture: %s" % rect())
+    shot(page, "crop_1_open")
+
+    page.select_option("#cropAr", "1:1")
+    r = rect()
+    check(dims(r) == (800, 800) and r[0] == 200, "ratio 1 : 1 gives the biggest square in the middle: %s" % r)
+    drag("#cropRect .ch[data-h='se']", -90, -15)
+    r2 = rect()
+    check(dims(r2)[0] == dims(r2)[1] and dims(r2)[0] < 800 and r2[0] == r[0] and r2[1] == r[1], "dragging a corner keeps the square and the opposite corner: %s" % r2)
+    drag("#cropRect", 40, 20)
+    r3 = rect()
+    check(dims(r3) == dims(r2) and r3[0] > r2[0] and r3[1] >= r2[1], "dragging inside the frame moves it, the size stays: %s" % r3)
+    page.select_option("#cropAr", "free")
+    drag("#cropRect .ch[data-h='e']", -50, 30)
+    r4 = rect()
+    check(dims(r4)[0] < dims(r3)[0] and dims(r4)[1] == dims(r3)[1] and r4[:2] == r3[:2], "without the lock a side moves alone: %s" % r4)
+    drag("#cropRect .ch[data-h='nw']", 40, 40)
+    r5 = rect()
+    check(r5[0] > r4[0] and r5[1] > r4[1] and r5[2:] == r4[2:], "and so does a corner: %s" % r5)
+    page.select_option("#cropAr", "16:9")
+    r6 = rect()
+    check(dims(r6)[0] * 9 == dims(r6)[1] * 16, "ratio 16 : 9 is exact: %s" % r6)
+    drag("#cropRect .ch[data-h='s']", 0, 25)
+    r7 = rect()
+    check(dims(r7)[0] * 9 == dims(r7)[1] * 16, "dragging an edge with the lock keeps 16 : 9: %s" % r7)
+    page.click("#cropFlip")
+    r8 = rect()
+    check(dims(r8)[0] * 16 == dims(r8)[1] * 9 and dims(r8)[0] < dims(r8)[1], "the button turns the ratio round (9 : 16): %s" % r8)
+    page.select_option("#cropAr", "custom")
+    page.fill("#cropCa", "7"); page.dispatch_event("#cropCa", "change")
+    page.fill("#cropCb", "3"); page.dispatch_event("#cropCb", "change")
+    r9 = rect()
+    check(page.is_visible("#cropCa") and (dims(r9)[0] * 3 == dims(r9)[1] * 7 or dims(r9)[0] * 7 == dims(r9)[1] * 3), "an own ratio 7 : 3: %s" % r9)
+    page.select_option("#cropAr", "orig")
+    r10 = rect()
+    check(dims(r10)[0] * 2 == dims(r10)[1] * 3, "\"Oryginał\" is the ratio of the photo (3 : 2): %s" % r10)
+    page.click("#cropReset")
+    check(rect() == [0, 0, 1200, 800], "\"Wyzeruj\" brings back the whole frame: %s" % rect())
+    page.select_option("#cropAr", "free")
+    page.click("#cropDone")
+    check(page.evaluate("FD.S.sel.crop") is None and not page.evaluate("FD.CROP.on"), "the whole frame is no crop at all")
+
+    # a crop that is kept: 3 : 2, smaller than the photo
+    page.keyboard.press("c")
+    page.wait_for_function("FD.CROP.on === true")
+    page.select_option("#cropAr", "3:2")
+    drag("#cropRect .ch[data-h='se']", -300, -200)
+    r = rect()
+    check(dims(r)[0] * 2 == dims(r)[1] * 3 and dims(r)[0] < 1000, "a 3 : 2 crop: %s" % r)
+    shot(page, "crop_2_drawn")
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.keyboard.press("Enter")                                     # Enter = "Gotowe"
+    page.wait_for_function("FD.CROP.on === false")
+    crop = page.evaluate("FD.S.sel.crop")
+    check(crop is not None and abs((crop["x1"] - crop["x0"]) / 1e6 * 1200 - dims(r)[0]) < 0.01, "the crop is kept for the photo: %s" % crop)
+    check("z kadrem" in page.inner_text("#list li.sel .meta"), "the list says so: " + page.inner_text("#list li.sel .meta"))
+    page.wait_for_function("Math.abs(FD.V.fw - %d) <= 2 && Math.abs(FD.V.fh - %d) <= 2" % dims(r), timeout=60000)
+    check(page.evaluate("FD.V.key") != "" and page.is_hidden("#cropUi"), "the picture on the screen is the cropped one, the frame is gone")
+    wait_idle(page)
+    shot(page, "crop_3_done")
+
+    # Esc leaves the crop as it was
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.keyboard.press("c")
+    page.wait_for_function("FD.CROP.on === true && !document.querySelector('#cropUi').classList.contains('hidden')", timeout=60000)   # (the whole frame is made first)
+    check(rect() != [0, 0, 1200, 800] and dims(rect())[0] * 2 == dims(rect())[1] * 3, "opened on a cropped photo: the frame is the crop, the list shows 3 : 2 (%s, %s)" % (rect(), page.input_value("#cropAr")))
+    page.select_option("#cropAr", "free")
+    drag("#cropRect .ch[data-h='nw']", 30, 30)
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.keyboard.press("Escape")
+    page.wait_for_function("FD.CROP.on === false")
+    check(page.evaluate("FD.S.sel.crop") == crop, "Esc cancels: the crop is as it was")
+
+    # the size of the result: any, also bigger than the photo
+    page.select_option("#outMode", "long")
+    page.fill("#outPx", "900"); page.dispatch_event("#outPx", "change")
+    ow, oh = page.evaluate("[FD.outDims(%d, %d).w, FD.outDims(%d, %d).h]" % (dims(r)[0], dims(r)[1], dims(r)[0], dims(r)[1]))
+    check((ow, oh) == (900, 600) or (ow == 900 and abs(oh - 600) <= 1), "the long side 900 px: %d x %d" % (ow, oh))
+    check("900 × 600" in page.inner_text("#outInfo") and "powiększone" in page.inner_text("#outInfo"), "the line tells the size and that it is enlarged: " + page.inner_text("#outInfo"))
+    page.select_option("#outMode", "w")
+    page.fill("#outPx", "20000"); page.dispatch_event("#outPx", "change")
+    check(page.input_value("#outPx") == "16384" and "bad" in (page.get_attribute("#outInfo", "class") or ""), "too big: the number stops at 16384 and the line warns: " + page.inner_text("#outInfo"))
+    page.select_option("#outMode", "long")
+    page.fill("#outPx", "900"); page.dispatch_event("#outPx", "change")
+
+    # develop this photo and compare with the command line
+    page.click("#selNone")
+    page.locator("#list li", has_text="synth_small.jpg").locator(".ck").check()
+    run_and_wait(page)
+    z = zip_of(page)
+    names = z.namelist()
+    check(len(names) == 1 and names[0].endswith("_900px.jpg"), "the file name says the size: %s" % names)
+    im = Image.open(io.BytesIO(z.read(names[0])))
+    check(im.size == (900, 600), "the file is 900 x 600: %s" % (im.size,))
+    work = tempfile.mkdtemp()
+    box = ",".join("%.6f" % (crop[k] / 1e6) for k in ("x0", "y0", "x1", "y1"))
+    subprocess.run([cli, "--quiet", "--film", "1", "--long", "900", "--crop", box, "--quality", PAGE_QUALITY, "--out", work, os.path.join(tmp, "synth_small.jpg")], check=True, capture_output=True)
+    check(z.read(names[0]) == open(os.path.join(work, names[0]), "rb").read(), "%s: page == command line (crop + enlarged)" % names[0])
+    shutil.rmtree(work, ignore_errors=True)
+
+    # the same ratio for all photos
+    page.select_option("#outMode", "full")
+    page.click("#list li:has-text('synth_portrait.cr2')")
+    page.wait_for_function("FD.S.pv && FD.S.pv.file.name === 'synth_portrait.cr2' && FD.cropFrame() !== null", timeout=60000)
+    wait_idle(page)
+    fr2 = page.evaluate("FD.cropFrame()")
+    check(fr2["H"] > fr2["W"], "a portrait photo has an upright frame: %s" % fr2)
+    page.click("#btnCrop")
+    page.wait_for_function("FD.CROP.on === true")
+    page.select_option("#cropAr", "16:9")
+    r = rect()
+    check(dims(r)[1] * 9 == dims(r)[0] * 16, "on a portrait photo 16 : 9 stands upright (9 : 16): %s" % r)
+    page.click("#cropAll")
+    ar = page.evaluate("FD.S.files.map(f => [f.name, f.crop ? 'own' : null, f.cropAr ? f.cropAr.w + ':' + f.cropAr.h : null])")
+    check(any(a[0] == "synth_landscape.cr2" and a[2] == "16:9" for a in ar) and any(a[0] == "synth_small.jpg" and a[1] == "own" for a in ar),
+          "\"Dla wszystkich\": the others get 16 : 9, the one with an own crop keeps it: %s" % ar)
+    page.click("#cropDone")
+    page.wait_for_function("FD.CROP.on === false")
+    check(page.evaluate("!!FD.S.sel.crop"), "and this one has the crop that was drawn")
+    # drawn like this one the portrait photo has the biggest 2 : 3 in the middle, which is what the others get
+    page.click("#selNone")
+    for n in ("synth_portrait.cr2", "synth_landscape.cr2"):
+        page.locator("#list li", has_text=n).locator(".ck").check()
+    run_and_wait(page)
+    z = zip_of(page)
+    names = [n for n in z.namelist() if "synth_small" not in n]
+    check(len(names) == 2, "two files are developed: %s" % names)
+    for n in names:
+        im = ImageOps.exif_transpose(Image.open(io.BytesIO(z.read(n))))
+        w, h = im.size
+        want = (w * 16 == h * 9) if "portrait" in n else (w * 9 == h * 16)
+        check(want, "%s: the picture has the ratio (%d x %d)" % (n, w, h))
+    work = tempfile.mkdtemp()                 # the landscape photo got the ratio from "Dla wszystkich" (the portrait one has the rectangle drawn by hand)
+    subprocess.run([cli, "--quiet", "--film", "1", "--ratio", "16:9", "--quality", PAGE_QUALITY, "--out", work, os.path.join(tmp, "synth_landscape.cr2")], check=True, capture_output=True)
+    for n in names:
+        if "landscape" in n:
+            check(z.read(n) == open(os.path.join(work, n), "rb").read(), "%s: page == command line (--ratio 16:9)" % n)
+    shutil.rmtree(work, ignore_errors=True)
+
+    # switching to another photo while the tool is open keeps the crop of the first
+    page.click("#list li:has-text('synth_landscape.cr2')")
+    page.wait_for_function("FD.S.pv && FD.S.pv.file.name === 'synth_landscape.cr2' && FD.cropFrame() !== null", timeout=60000)
+    wait_idle(page)
+    page.click("#btnCrop")
+    page.wait_for_function("FD.CROP.on === true && !document.querySelector('#cropUi').classList.contains('hidden')", timeout=60000)
+    page.select_option("#cropAr", "1:1")
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.keyboard.press("ArrowRight")
+    page.wait_for_function("FD.CROP.on === false")
+    got = page.evaluate("FD.S.files.filter(f => f.name === 'synth_landscape.cr2')[0].crop")
+    check(got is not None and abs((got["x1"] - got["x0"]) * 1200 - (got["y1"] - got["y0"]) * 800) < 2e3 * 3, "another photo: the crop (1 : 1) stays with the first one: %s" % got)
+    check(not page.errors, "no errors in the browser console: %s" % page.errors[:3])
+    shutil.rmtree(tmp, ignore_errors=True)
+    page.context.close()
+
+
 SCENARIOS = [("main", scenario_main), ("zoom", scenario_zoom), ("wb", scenario_wb), ("bw", scenario_bw), ("parallel", scenario_parallel),
-             ("inline", scenario_inline), ("portrait", scenario_portrait), ("folder", scenario_folder), ("layout", scenario_layout), ("curves", scenario_curves), ("raw", scenario_raw)]
+             ("inline", scenario_inline), ("portrait", scenario_portrait), ("folder", scenario_folder), ("layout", scenario_layout), ("curves", scenario_curves), ("raw", scenario_raw), ("sensor", scenario_sensor), ("crop", scenario_crop)]
 with sync_playwright() as p:
     browser = p.chromium.launch()
     for name, fn in SCENARIOS:
         if only and only != name:
             continue
         print("\n== " + name, flush=True)
+        if name == "sensor" and not os.path.exists(os.path.join(all_photos, "synth_raw_strips.dng")):
+            print("(skipped: no synth_raw_*.cr2 / dng in the folder: use tests/make_samples.py)")
+            continue
         if name == "raw" and not os.path.exists(os.path.join(all_photos, "synth_portrait.dng")):
             print("(skipped: no synth_portrait.dng etc. in the folder: use tests/make_samples.py)")
             continue

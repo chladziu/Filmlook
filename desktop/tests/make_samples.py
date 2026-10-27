@@ -206,6 +206,26 @@ def fake_dng(path, jpeg_path, w, h, orientation, preview_small_path, be=False, w
     open(path, "wb").write(out)
 
 
+RAW_SAMPLES = ["synth_raw_5d2_landscape.cr2", "synth_raw_5d2_portrait.cr2", "synth_raw_strips.dng", "synth_raw_tiles.dng",
+               "synth_raw_linear.dng", "synth_raw_crop.dng"]
+
+
+def make_raw_samples(out):
+    """files with real sensor data (rawgen.py): a CR2 of the 5D Mark II (landscape, and 'rotated' = portrait), DNGs (uncompressed strips,
+    lossless tiles in big endian, linear RGB, a bigger active area that is cropped). All carry the same picture, so the program has to
+    develop the same pixels from the CR2 and from every Bayer DNG."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import rawgen as rg
+    rgb = np.asarray(picture(600, 400, 11))
+    rg.make_cr2(os.path.join(out, RAW_SAMPLES[0]), rgb, 1)
+    rg.make_cr2(os.path.join(out, RAW_SAMPLES[1]), rgb, 6)
+    rg.make_dng(os.path.join(out, RAW_SAMPLES[2]), rgb, kind="strips")
+    rg.make_dng(os.path.join(out, RAW_SAMPLES[3]), rgb, kind="tiles", be=True)
+    rg.make_dng(os.path.join(out, RAW_SAMPLES[4]), rgb, kind="linear")
+    rg.make_dng(os.path.join(out, RAW_SAMPLES[5]), rgb, kind="strips", margins=(64, 16, 16, 8), extra_active=(4, 2))
+    Image.fromarray(rgb).save(os.path.join(out, "_raw_picture.png"))               # (the picture itself; run_tests.py compares with it)
+
+
 def main():
     out = sys.argv[1]
     os.makedirs(out, exist_ok=True)
@@ -229,6 +249,7 @@ def main():
     fake_dng(os.path.join(out, "synth_portrait.dng"), jp, 3000, 2000, 6, sm, be=False)
     for t in ("_tmp_preview.jpg", "_tmp_prvw.jpg", "_tmp_small.jpg"):
         os.remove(os.path.join(out, t))
+    make_raw_samples(out)
     for f in sorted(os.listdir(out)):
         print("%-28s %8d bytes" % (f, os.path.getsize(os.path.join(out, f))))
 

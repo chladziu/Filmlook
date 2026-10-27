@@ -112,6 +112,17 @@ typedef struct {
     int uc_x[4][UC_MAX], uc_y[4][UC_MAX];    /* the points: input 0..255, output 0..255, input growing */
     int gcolor;     /* Kolor ziarna   0..100  colour films only: how much of the grain is coloured (every channel grains on its own,
                      * like the dye clouds of the three layers of a colour film). 0 = the grain is grey, as it always was in the camera */
+    int usejpg;     /* desktop: 1 = work from the JPEG inside the file even when the file holds the sensor data (RAW); 0 = RAW when possible */
+    int rawref;     /* desktop, RAW: 1 = the tone of the camera's own JPEG is the starting point ("wzorzec z JPG"), 0 = the plain RAW */
+    int hq;         /* desktop: 1 = best quality (the JPEG with full resolution colours, 4:4:4, and every pixel graded exactly), 0 = the camera's way */
+    /* desktop: the crop and the size of the result (zero in the camera). The crop is a rectangle of the picture as it is shown (the camera's
+     * orientation applied), in millionths of its width and height; empty (x1 <= x0 or y1 <= y0) = the whole picture. crop_ar_w : crop_ar_h
+     * fits the crop to that ratio exactly (the biggest one that fits, in the middle of the rectangle); crop_ar_auto: the ratio is
+     * long side : short side, whichever way the rectangle lies. The size: out_long = the long side in pixels, or out_w / out_h =
+     * the width / the height (the other side follows); all 0 = the crop as it is. */
+    int crop_x0, crop_y0, crop_x1, crop_y1;
+    int crop_ar_w, crop_ar_h, crop_ar_auto;
+    int out_long, out_w, out_h;
 } look_t;
 
 static int xa_id(const char *name)

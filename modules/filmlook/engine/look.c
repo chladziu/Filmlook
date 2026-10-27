@@ -294,6 +294,9 @@ size_t se_look_fit(se_look *lk, int width, size_t budget)
     return n;
 }
 
+static int g_look_exact;                                    /* see se_look_set_exact() */
+void se_look_set_exact(int on) { g_look_exact = on ? 1 : 0; }
+
 se_err se_look_begin(se_look_run **out, const se_look *lk,
                      int width, se_arena *ar)
 {
@@ -321,7 +324,7 @@ se_err se_look_begin(se_look_run **out, const se_look *lk,
 #ifdef SE_NO_LUT                                             /* (PC tests only: the old way, to compare with) */
     r->lut = 0;
 #else
-    r->lut = SE_NEW(ar, uint8_t, LUT_BYTES);                 /* (a failed allocation only means: grade every pixel directly) */
+    r->lut = g_look_exact ? 0 : SE_NEW(ar, uint8_t, LUT_BYTES);   /* (a failed allocation only means: grade every pixel directly) */
     if (r->lut) lut_build(r->lut, &r->lk);
 #endif
 

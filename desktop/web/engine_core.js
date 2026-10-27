@@ -21,11 +21,15 @@ function fdCrc32(u8) {
 /* wasmModule: a compiled WebAssembly.Module. Returns (a promise of) the engine:
  *   engine.films            the list of films: {i, name, full, maker, type, typeNo, kind, desc, iso, mono}
  *   engine.version          text
- *   engine.setSource(u8)    keeps a photo (the whole file) in the engine's memory, for several runs
+ *   engine.setSource(u8)    keeps a photo (the whole file) in the engine's memory, for several runs; a CR2 / DNG is decoded
+ *                           right here (once). Returns false (no memory) or {raw: true when sensor data was decoded, rawW, rawH,
+ *                           fit: true when the tone of the camera's JPEG could be measured, rawErr / rawErrText: why the sensor
+ *                           data of this file could not be used (undefined when it simply has none)}
  *   engine.run(params)      develops the kept photo: params = {film, size, quality, strength, grain, contrast, fade, warm,
  *                           shadow, high, sat, vig, x: {expo, hi_t, ..., hue_red, ...}}; x holds the desktop's extra sliders by
  *                           name (engine.extraNames lists them; what is missing from x is 0, filter_amt 100); returns
- *                           {rc, text, srcW, srcH, outW, outH, jpeg (Uint8Array)}
+ *                           {rc, text, srcW, srcH (the part of the photo used = the crop, as stored), outW, outH (as stored), shownW, shownH (the result as shown), picW, picH (the whole photo as shown), raw (true: developed from the sensor data), rawErr, rawErrText,
+ *                           jpeg (Uint8Array)}
  *   engine.process(u8, params)   setSource + run + forget, for one photo at a time
  *   engine.onProgress       set to a function(permille) to get progress */
 async function fdCreateEngine(wasmModule) {
@@ -61,9 +65,13 @@ async function fdCreateEngine(wasmModule) {
     var ptr = x.fd_alloc(u8.length) >>> 0;
     if (!ptr) { src = null; return false; }
     new Uint8Array(x.memory.buffer, ptr, u8.length).set(u8);
+    var prc = x.fd_source_prepare(ptr, u8.length) | 0;           /* the sensor data is decoded before the mark: it stays between the runs */
     x.fd_heap_mark();
-    src = { ptr: ptr, len: u8.length };
-    return true;
+    var info = { raw: x.fd_source_info(0) === 1, rawW: x.fd_source_info(1) | 0, rawH: x.fd_source_info(2) | 0, fit: x.fd_source_info(3) === 1 };
+    var re = x.fd_source_info(4) | 0;
+    if (re) { info.rawErr = re; info.rawErrText = str(x.fd_error_text(re)); }
+    src = { ptr: ptr, len: u8.length, info: info };
+    return info;
   };
 
   engine.run = function (p) {
@@ -77,6 +85,12 @@ async function fdCreateEngine(wasmModule) {
       var ptr = x.fd_result_int(6) >>> 0, len = x.fd_result_int(5) >>> 0;
       res.srcW = x.fd_result_int(1) | 0; res.srcH = x.fd_result_int(2) | 0;
       res.outW = x.fd_result_int(3) | 0; res.outH = x.fd_result_int(4) | 0;
+      res.raw = x.fd_result_int(7) === 1;
+      res.picW = x.fd_result_int(9) | 0; res.picH = x.fd_result_int(10) | 0;
+      res.swap = x.fd_result_int(11) === 1;                       /* true: the camera's orientation turns the picture, outW x outH are as stored */
+      res.shownW = res.swap ? res.outH : res.outW; res.shownH = res.swap ? res.outW : res.outH;      /* the result as it is shown */
+      var re = x.fd_result_int(8) | 0;
+      if (re) { res.rawErr = re; res.rawErrText = str(x.fd_error_text(re)); }
       res.jpeg = new Uint8Array(x.memory.buffer, ptr, len).slice();
     }
     x.fd_heap_release();
