@@ -425,20 +425,21 @@ if RAW_FILES:
                 continue
             raw_out[photo] = got
             hashes.append("%s  %s" % (sha(got), tag.replace(" ", "_")))
-            if args.wasm:
-                for code in (0, 102):
-                    extra = [] if code == 0 else ["--scale", "2"]
-                    c = got if code == 0 else cli_make(path, 0, {}, ["--scale", "2"], "r2", legacy=False)
+            # (the hashes of the command line version are kept on every system, so that the systems can be compared; the browser version only where there is one)
+            for code in (0, 102):
+                c = got if code == 0 else cli_make(path, 0, {}, ["--scale", "2"], "r2", legacy=False)
+                if args.wasm:
                     w = wasm_make(path, 0, code, {}, os.path.join(work, "w.jpg"), legacy=False)
                     check(bool(w) and bool(c) and sha(w) == sha(c), "%s size %s: browser version == command line" % (tag, "L" if code == 0 else "half"))
-                    if c and code:
-                        hashes.append("%s  %s" % (sha(c), (tag + "_half").replace(" ", "_")))
-                for size_name, code in (("M", 1), ("S", 2)):
-                    c = cli_make(path, 6, dict(grain=150, vig=40, warm=-20), ["--size", size_name, "--expo", "30", "--wb_temp", "15", "--crv0_n", "3", "--crv0_x0", "0", "--crv0_y0", "0", "--crv0_x1", "128", "--crv0_y1", "110", "--crv0_x2", "255", "--crv0_y2", "255"], "r3", legacy=False)
+                if c and code:
+                    hashes.append("%s  %s" % (sha(c), (tag + "_half").replace(" ", "_")))
+            for size_name, code in (("M", 1), ("S", 2)):
+                c = cli_make(path, 6, dict(grain=150, vig=40, warm=-20), ["--size", size_name, "--expo", "30", "--wb_temp", "15", "--crv0_n", "3", "--crv0_x0", "0", "--crv0_y0", "0", "--crv0_x1", "128", "--crv0_y1", "110", "--crv0_x2", "255", "--crv0_y2", "255"], "r3", legacy=False)
+                if args.wasm:
                     w = wasm_make(path, 6, code, dict(grain=150, vig=40, warm=-20), os.path.join(work, "w.jpg"), dict(expo=30, wb_temp=15, crv0_n=3, crv0_x0=0, crv0_y0=0, crv0_x1=128, crv0_y1=110, crv0_x2=255, crv0_y2=255), legacy=False)
                     check(bool(w) and bool(c) and sha(w) == sha(c), "%s size %s with sliders: browser version == command line" % (tag, size_name))
-                    if c:
-                        hashes.append("%s  %s" % (sha(c), ("%s size %s sliders" % (tag, size_name)).replace(" ", "_")))
+                if c:
+                    hashes.append("%s  %s" % (sha(c), ("%s size %s sliders" % (tag, size_name)).replace(" ", "_")))
             im = Image.open(got)
             want_or = 6 if "portrait" in photo else 1
             check(im.getexif().get(0x112) == want_or, "%s: orientation %s (wanted %d)" % (tag, im.getexif().get(0x112), want_or))
@@ -657,8 +658,8 @@ try:
         r5 = run([args.cli, "--quiet", "--film", "1", "--long", "20000", "--out", os.path.join(work, "geo_big"), os.path.join(args.samples, photo)])
         check(r5.returncode == 1 and b"za du" in r5.stderr, "%s: 20000 px is refused with a message (exit %d)" % (tag, r5.returncode))
 
-    # the browser version: the same bytes as the command line version
-    if args.wasm:
+    # the same bytes from the browser version (where there is one); the hashes of the command line version are kept on every system
+    if True:
         combos = [
             (dict(crop_x0=100000, crop_y0=200000, crop_x1=700000, crop_y1=900000, crop_ar_w=4, crop_ar_h=3, crop_ar_auto=1, out_long=900),
              ["--crop", "0.1,0.2,0.7,0.9", "--ratio", "4:3", "--long", "900"]),
@@ -670,11 +671,14 @@ try:
         for photo in GEO_FILES:
             for ex, cli_opts in combos:
                 c = geo_make(photo, cli_opts, quality=98, plain=False)
-                w = wasm_make(os.path.join(args.samples, photo), 0, 0, {}, os.path.join(work, "w.jpg"), ex, legacy=False, quality=98)
-                check(bool(c) and bool(w) and sha(c) == sha(w), "%s geometry %s: browser version == command line" % (photo, " ".join(cli_opts)))
+                if args.wasm:
+                    w = wasm_make(os.path.join(args.samples, photo), 0, 0, {}, os.path.join(work, "w.jpg"), ex, legacy=False, quality=98)
+                    check(bool(c) and bool(w) and sha(c) == sha(w), "%s geometry %s: browser version == command line" % (photo, " ".join(cli_opts)))
+                else:
+                    check(bool(c), "%s geometry %s: command line version ran" % (photo, " ".join(cli_opts)))
                 if c:
                     hashes.append("%s  %s" % (sha(c), ("%s geometry %s" % (photo, " ".join(cli_opts))).replace(" ", "_")))
-        if GEO_FILES:
+        if GEO_FILES and args.wasm:
             w = run([args.node, os.path.join(HERE, "test_wasm.js"), args.wasm, os.path.join(args.samples, GEO_FILES[0]), os.path.join(work, "wb.jpg"), "0", "0", "95", "100", "100", "out_long=20000"])
             check(w.returncode != 0 and b"ERROR" in w.stderr, "browser version: 20000 px is refused with a message")
 except ImportError:
