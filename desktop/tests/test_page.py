@@ -58,10 +58,17 @@ IDLE = ("document.querySelector('#pvImg').classList.contains('on') && !document.
         " && !(document.querySelector('#hud').classList.contains('on') && document.querySelector('#hud').textContent.indexOf('szczegóły') >= 0)")
 
 
+def annotate(msg):
+    """On GitHub Actions a failure also becomes a visible annotation (readable without downloading the log)."""
+    if os.environ.get("GITHUB_ACTIONS"):
+        print("::error title=page test::" + msg.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")[:900], flush=True)
+
+
 def check(cond, msg):
     print(("ok    " if cond else "FAIL  ") + msg, flush=True)
     if not cond:
         fails.append(msg)
+        annotate(msg)
 
 
 def shot(page, name):
@@ -700,7 +707,13 @@ with sync_playwright() as p:
         if name in ("portrait", "folder", "layout") and not os.path.exists(os.path.join(photos, "synth_portrait.cr2")):
             print("(skipped: no synth_portrait.cr2 etc. in the folder: use tests/make_samples.py)")
             continue
-        fn(browser)
+        try:
+            fn(browser)
+        except Exception as e:                      # one broken scenario must not hide the others
+            msg = "scenario %s stopped: %s: %s" % (name, type(e).__name__, str(e).strip().splitlines()[0] if str(e).strip() else "")
+            print("FAIL  " + msg, flush=True)
+            fails.append(msg)
+            annotate(msg + " | " + " ".join(str(e).split())[:600])
     browser.close()
 
 print("\n%d problem(s)" % len(fails))
