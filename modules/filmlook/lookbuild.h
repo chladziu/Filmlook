@@ -76,6 +76,27 @@ static int lb_bell(int x, int lo, int hi)        /* 4t(1-t) over [lo, hi], 0..40
 
 typedef struct { int exp, con, hi, sh, wh, bl; } lb_adj;
 
+/* 2^(e/100) in 16.16 for e in -150..150 (a stop in hundredths); no 64-bit divide, so it also builds for the camera */
+static unsigned int lb_gain(int e)
+{
+    int neg = e < 0, a = neg ? -e : e, whole = a / 100, rem = a % 100, f8 = (rem * 8 * 256) / 100, k = f8 >> 8, fr = f8 & 255;
+    unsigned int m;
+    if (a == 0) return 65536u;
+    m = lb_p2[k] + (((lb_p2[k + 1] - lb_p2[k]) * (unsigned)fr) >> 8);
+    m <<= whole;
+    return neg ? 0xFFFFFFFFu / (m >> 0) : m;
+}
+
+/* the sRGB code (0..255) that a code i becomes when its linear light is multiplied by g (16.16): the white balance of one channel */
+static int lb_wb_index(int i, unsigned int g)
+{
+    unsigned long long l = ((unsigned long long)lb_s2l[i] * g) >> 16;
+    int s;
+    if (l > 65535ull) l = 65535ull;
+    s = lb_l2s((int)l);
+    return lb_clamp((s * 255 + 2048) >> 12, 0, 255);
+}
+
 /* the global tone sliders of Lightroom, applied to an sRGB value in 0..4096 */
 static int lb_tone(int i, const lb_adj *p)
 {
@@ -235,13 +256,34 @@ static int fl_build_look(se_look *lk, se_arena *ar, const film_t *f, const look_
     for (c = 0; c < 4; c++) lb_crv_init(&cv[c], f, c, strength);
     lift = lb_clamp(L->fade, 0, 100) * 60 / 100;                  /* Matowość: lifted blacks, 0..60 of 255 */
     liftq = (lift * 4096) / 255;
-    for (i = 0; i < 256; i++) {
-        int y = lb_tone(i, &ad);
-        if (cv[0].n) y = lb_crv_eval(&cv[0], y);
-        if (lift) y = liftq + (y * (255 - lift)) / 255;
+    {
+        /* white balance (desktop): per channel gains in linear light, applied first; 0 / 0 leaves everything as it was */
+        int wb = (L->wb_temp != 0 || L->wb_tint != 0);
+        unsigned int wg[3] = { 65536u, 65536u, 65536u };
+        int yt[256], ci;
+        if (wb) {
+            int tt = lb_clamp(L->wb_temp, -100, 100), ti = lb_clamp(L->wb_tint, -100, 100);
+            wg[0] = lb_gain((tt * 80) / 100);                     /* amber: red up ... (+-100 = +-0.8 stop) */
+            wg[2] = lb_gain(-((tt * 80) / 100));                  /* ... blue down */
+            wg[1] = lb_gain(-((ti * 50) / 100));                  /* magenta: green down (+-100 = 0.5 stop) */
+        }
+        for (i = 0; i < 256; i++) {
+            int y = lb_tone(i, &ad);
+            if (cv[0].n) y = lb_crv_eval(&cv[0], y);
+            if (lift) y = liftq + (y * (255 - lift)) / 255;
+            yt[i] = y;
+        }
         for (c = 0; c < 3; c++) {
-            int yc = cv[c + 1].n ? lb_crv_eval(&cv[c + 1], y) : y;
-            lk->map[c][i] = (uint8_t)lb_clamp((yc * 255 + 2048) >> 12, 0, 255);
+            for (i = 0; i < 256; i++) {
+                int yc;
+                if (wb) {
+                    /* the tone and the curves are looked up at the balanced code: the tone is computed again at that code */
+                    ci = lb_wb_index(i, wg[c]);
+                    yc = yt[ci];
+                } else yc = yt[i];
+                if (cv[c + 1].n) yc = lb_crv_eval(&cv[c + 1], yc);
+                lk->map[c][i] = (uint8_t)lb_clamp((yc * 255 + 2048) >> 12, 0, 255);
+            }
         }
     }
 

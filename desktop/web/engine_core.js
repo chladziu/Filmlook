@@ -23,7 +23,9 @@ function fdCrc32(u8) {
  *   engine.version          text
  *   engine.setSource(u8)    keeps a photo (the whole file) in the engine's memory, for several runs
  *   engine.run(params)      develops the kept photo: params = {film, size, quality, strength, grain, contrast, fade, warm,
- *                           shadow, high, sat, vig}; returns {rc, text, srcW, srcH, outW, outH, jpeg (Uint8Array)}
+ *                           shadow, high, sat, vig, x: {expo, hi_t, ..., hue_red, ...}}; x holds the desktop's extra sliders by
+ *                           name (engine.extraNames lists them; what is missing from x is 0, filter_amt 100); returns
+ *                           {rc, text, srcW, srcH, outW, outH, jpeg (Uint8Array)}
  *   engine.process(u8, params)   setSource + run + forget, for one photo at a time
  *   engine.onProgress       set to a function(permille) to get progress */
 async function fdCreateEngine(wasmModule) {
@@ -48,6 +50,10 @@ async function fdCreateEngine(wasmModule) {
     });
   }
 
+  engine.extraNames = [];
+  var extraIndex = {};
+  for (var k = 0, nx = x.fd_extra_count(); k < nx; k++) { var nm = str(x.fd_extra_name(k)); engine.extraNames.push(nm); extraIndex[nm] = k; }
+
   engine.forget = function () { x.fd_reset(); src = null; };
 
   engine.setSource = function (u8) {
@@ -62,6 +68,8 @@ async function fdCreateEngine(wasmModule) {
 
   engine.run = function (p) {
     if (!src) return { rc: -4, text: 'za mało pamięci na to zdjęcie' };
+    x.fd_extra_reset();
+    if (p.x) for (var nm in p.x) if (Object.prototype.hasOwnProperty.call(extraIndex, nm)) x.fd_extra_set(extraIndex[nm], p.x[nm] | 0);
     var rc = x.fd_process(src.ptr, src.len, p.film | 0, p.size | 0, p.quality | 0, p.strength | 0, p.grain | 0, p.contrast | 0,
       p.fade | 0, p.warm | 0, p.shadow | 0, p.high | 0, p.sat | 0, p.vig | 0) | 0;
     var res = { rc: rc, text: str(x.fd_error_text(rc)) };

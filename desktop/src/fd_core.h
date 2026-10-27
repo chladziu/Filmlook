@@ -118,6 +118,46 @@ static void fd_job_defaults(fd_job *j)          /* the defaults of every film in
     memset(j, 0, sizeof *j);
     j->size = FD_SIZE_FULL; j->quality = 95;
     j->look.strength = 100; j->look.grain = 100;
+    j->look.filter_amt = 100;                   /* a colour filter, once chosen, works at full strength */
+}
+
+/* ---------------------------------------------------------------- the sliders of the desktop program
+ * Every number of look_t that the camera does not have, by name: the page asks for the list (fd_param_name) and sends the
+ * values by index, the command line takes them as --name value, the tests use both. Adding a slider = one line here. */
+#define FDP(n, field) { n, (int)offsetof(look_t, field) }
+static const struct { const char *name; int off; } fd_params[] = {
+    FDP("expo", expo), FDP("hi_t", hi_t), FDP("sh_t", sh_t), FDP("wh_t", wh_t), FDP("bl_t", bl_t),
+    FDP("gsize", gsize), FDP("grough", grough),
+    FDP("wb_temp", wb_temp), FDP("wb_tint", wb_tint),
+    FDP("skin_hue", skin_hue), FDP("skin_sat", skin_sat), FDP("skin_lum", skin_lum),
+    FDP("ton_mode", ton_mode),
+    FDP("cg_sh_h", cg[0]), FDP("cg_sh_s", cg[1]), FDP("cg_mid_h", cg[2]), FDP("cg_mid_s", cg[3]),
+    FDP("cg_hi_h", cg[4]), FDP("cg_hi_s", cg[5]), FDP("cg_gl_h", cg[6]), FDP("cg_gl_s", cg[7]),
+    FDP("filter", filter), FDP("filter_amt", filter_amt),
+    FDP("hue_red", hsl[0]), FDP("hue_orange", hsl[1]), FDP("hue_yellow", hsl[2]), FDP("hue_green", hsl[3]),
+    FDP("hue_aqua", hsl[4]), FDP("hue_blue", hsl[5]), FDP("hue_purple", hsl[6]), FDP("hue_magenta", hsl[7]),
+    FDP("sat_red", hsl[8]), FDP("sat_orange", hsl[9]), FDP("sat_yellow", hsl[10]), FDP("sat_green", hsl[11]),
+    FDP("sat_aqua", hsl[12]), FDP("sat_blue", hsl[13]), FDP("sat_purple", hsl[14]), FDP("sat_magenta", hsl[15]),
+    FDP("lum_red", hsl[16]), FDP("lum_orange", hsl[17]), FDP("lum_yellow", hsl[18]), FDP("lum_green", hsl[19]),
+    FDP("lum_aqua", hsl[20]), FDP("lum_blue", hsl[21]), FDP("lum_purple", hsl[22]), FDP("lum_magenta", hsl[23])
+};
+#define FD_PARAM_COUNT ((int)(sizeof fd_params / sizeof fd_params[0]))
+
+static const char *fd_param_name(int k) { return (k >= 0 && k < FD_PARAM_COUNT) ? fd_params[k].name : ""; }
+static void fd_job_set(fd_job *j, int k, int v)
+{
+    if (k >= 0 && k < FD_PARAM_COUNT) *(int *)((char *)&j->look + fd_params[k].off) = v;
+}
+/* by name; returns 1 when the name exists */
+static int fd_job_set_name(fd_job *j, const char *name, int v)
+{
+    int k;
+    for (k = 0; k < FD_PARAM_COUNT; k++) {
+        const char *a = fd_params[k].name, *b = name;
+        while (*a && *a == *b) { a++; b++; }
+        if (!*a && !*b) { fd_job_set(j, k, v); return 1; }
+    }
+    return 0;
 }
 
 typedef struct { uint8_t *data; size_t len, cap; int fail; } fd_buf;     /* the JPEG that comes out */

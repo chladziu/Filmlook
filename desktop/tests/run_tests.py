@@ -179,11 +179,12 @@ def cli_make(photo, film, sl, extra, outname):
     return os.path.join(d, out[0])
 
 
-def wasm_make(photo, film, size, sl, outpath):
+def wasm_make(photo, film, size, sl, outpath, extra=None):
     s = {"strength": 100, "grain": 100}
     s.update(sl)
     a = [args.node, os.path.join(HERE, "test_wasm.js"), args.wasm, photo, outpath, str(film), str(size), "95"]
     a += [str(s.get(k, 0)) for k in ORDER]
+    a += ["%s=%d" % kv for kv in (extra or {}).items()]
     r = run(a)
     if r.returncode != 0:
         note(r.stderr.decode(errors="replace"))
@@ -213,6 +214,56 @@ for photo in photos:
             if args.wasm:
                 w = wasm_make(path, film, 100 + eng_scale, sl, os.path.join(work, "w.jpg"))
                 check(bool(w) and sha(w) == sha(got), tag + ": browser version == command line")
+
+# the desktop's extra sliders (exposure, tone, white balance, skin, colour mixer, toning, filters): the browser version must make the
+# same bytes as the command line version, every one of them must change the picture, and they must change it in the right
+# direction (measured on the picture itself: brightness, redness, blueness ...)
+EXTRA_CASES = [
+    (0, "expo", dict(expo=100)), (0, "hi_t", dict(hi_t=-60)), (0, "sh_t", dict(sh_t=60)), (0, "wh_t", dict(wh_t=50, bl_t=-50)),
+    (0, "wb warm", dict(wb_temp=60)), (0, "wb tint", dict(wb_tint=50)), (0, "skin", dict(skin_hue=50, skin_sat=30, skin_lum=20)),
+    (0, "mixer", dict(hue_blue=40, sat_green=-60, lum_red=50)), (0, "grain size", dict(gsize=30, grough=40)),
+    (6, "bw filter red", dict(filter=3)), (6, "bw filter blue half", dict(filter=5, filter_amt=50)),
+    (6, "bw sepia", dict(ton_mode=1, cg_sh_h=30, cg_sh_s=25, cg_hi_h=45, cg_hi_s=20)),
+    (6, "bw mixer", dict(lum_green=-60, lum_blue=50)),
+]
+if photos:
+    path = os.path.join(args.samples, photos[0])
+    base = {}
+    def mean_rgb(p):
+        try:
+            import numpy as np
+            from PIL import Image
+            return np.asarray(Image.open(p).convert("RGB")).reshape(-1, 3).mean(axis=0)
+        except ImportError:
+            return None
+    for film, name, xs in EXTRA_CASES:
+        tag = "%s extra %s" % (photos[0], name)
+        a = ["--film", str(film + 1), "--scale", "2"] + [x for k, v in xs.items() for x in ("--" + k, str(v))]
+        d = os.path.join(work, "cli_x")
+        os.makedirs(d, exist_ok=True)
+        for f in os.listdir(d):
+            os.remove(os.path.join(d, f))
+        r = run([args.cli, "--quiet", "--quality", "95"] + a + ["--out", d, path])
+        out = os.listdir(d)
+        if r.returncode != 0 or len(out) != 1:
+            check(False, tag + ": command line version ran")
+            continue
+        got = os.path.join(d, out[0])
+        hashes.append("%s  %s" % (sha(got), tag.replace(" ", "_")))
+        if film not in base:
+            ref = cli_make(path, film, {}, ["--scale", "2"], "x0")
+            base[film] = (sha(ref), mean_rgb(ref))
+        check(sha(got) != base[film][0], tag + ": changes the picture")
+        if args.wasm:
+            w = wasm_make(path, film, 102, {}, os.path.join(work, "w.jpg"), xs)
+            check(bool(w) and sha(w) == sha(got), tag + ": browser version == command line")
+        m, b = mean_rgb(got), base[film][1]
+        if m is not None and b is not None:
+            want = {"expo": m.mean() > b.mean() + 5, "hi_t": m.mean() < b.mean(), "sh_t": m.mean() > b.mean(),
+                    "wb warm": m[0] - m[2] > b[0] - b[2] + 3, "wb tint": m[1] < b[1] - 1,
+                    "bw filter red": True, "bw sepia": m[0] - m[2] > 8}.get(name)
+            if want is not None:
+                check(bool(want), tag + ": goes the right way (mean RGB %s -> %s)" % (b.round(1), m.round(1)))
 
 # sizes M and S (and the full size with the size option)
 for photo in photos:

@@ -85,6 +85,27 @@ typedef struct {
     int sat;        /* Nasycenie -100..100 */
     int vig;        /* Winieta   0..100   dark corners */
     int hal;        /* Halation  0..100   glow round bright lights (JPG only) */
+    /* the desktop program (desktop/) adds more sliders on top of the camera's nine. All of them are 0 when untouched, so the
+     * camera module (which never sets them) and every picture made without them stay exactly as they were. */
+    int expo;       /* Ekspozycja     -300..300  hundredths of a stop, added to the preset's exposure */
+    int hi_t;       /* Jasne partie   -100..100  highlights (tone), added to the preset's */
+    int sh_t;       /* Ciemne partie  -100..100  shadows (tone) */
+    int wh_t;       /* Biele          -100..100  whites */
+    int bl_t;       /* Czernie        -100..100  blacks */
+    int gsize;      /* Wielkość ziarna  -50..50  added to the preset's grain size */
+    int grough;     /* Szorstkość ziarna -50..50 added to the preset's grain roughness */
+    int ton_mode;   /* 0 the film's own colour grading stays, 1 it is cleared first (the wheels below are then all there is) */
+    int cg[8];      /* colour grading wheels (the "split toning" of Lightroom): shadows, midtones, highlights, global, each as
+                     * hue 0..359 degrees and saturation 0..100 */
+    int hsl[24];    /* colour mixer: hue[8], saturation[8], luminance[8] of red, orange, yellow, green, aqua, blue, purple, magenta, each -100..100
+                     * (on black and white films only the luminance counts: it is the black and white mixer) */
+    int filter;     /* colour filter in front of the lens (black and white films only): 0 none, 1 yellow, 2 orange, 3 red, 4 green, 5 blue */
+    int filter_amt; /* strength of the filter 0..100 (100 = full); only used when filter > 0 */
+    int wb_temp;    /* Temperatura     -100..100  blue .. amber, applied to the picture in linear light (JPG engine only) */
+    int wb_tint;    /* Odcień          -100..100  green .. magenta (JPG engine only) */
+    int skin_hue;   /* Tony skóry: odcień     -100..100  redder .. yellower (the orange band, with a little of red and yellow) */
+    int skin_sat;   /* Tony skóry: nasycenie  -100..100 */
+    int skin_lum;   /* Tony skóry: jasność    -100..100  (on black and white films: how bright skin comes out in grey) */
 } look_t;
 
 static int xa_id(const char *name)
@@ -118,6 +139,16 @@ static int xisqrt(int v)
     return r;
 }
 
+/* adds delta to an attribute of the preset (0 when the preset has none), within [lo, hi] */
+static void xl_add_attr(int *val, unsigned char *has, const char *name, int delta, int lo, int hi)
+{
+    int id;
+    if (delta == 0) return;
+    id = xa_id(name);
+    if (id < 0) return;
+    val[id] = xl_clamp((has[id] ? val[id] : 0) + delta, lo, hi); has[id] = 1;
+}
+
 /* adds a colour cast (hue in degrees, amount = saturation) to a Colour Grading wheel; if the preset already
  * uses that wheel the two casts are added as vectors, so neither is lost */
 static void xtint_add(int *val, unsigned char *has, const char *hue_name, const char *sat_name, int hue, int amount)
@@ -138,6 +169,19 @@ static void xtint_add(int *val, unsigned char *has, const char *hue_name, const 
     val[hi] = best; has[hi] = 1;
     val[si] = xl_clamp((mag + 5) / 10, 0, 100); has[si] = 1;
 }
+
+/* the attributes of the colour mixer by band; kind 0 hue, 1 saturation, 2 luminance, 3 black and white mixer. Static
+ * tables, because a module has no snprintf. */
+static const char *const xl_band_attr[4][8] = {
+    { "HueAdjustmentRed", "HueAdjustmentOrange", "HueAdjustmentYellow", "HueAdjustmentGreen",
+      "HueAdjustmentAqua", "HueAdjustmentBlue", "HueAdjustmentPurple", "HueAdjustmentMagenta" },
+    { "SaturationAdjustmentRed", "SaturationAdjustmentOrange", "SaturationAdjustmentYellow", "SaturationAdjustmentGreen",
+      "SaturationAdjustmentAqua", "SaturationAdjustmentBlue", "SaturationAdjustmentPurple", "SaturationAdjustmentMagenta" },
+    { "LuminanceAdjustmentRed", "LuminanceAdjustmentOrange", "LuminanceAdjustmentYellow", "LuminanceAdjustmentGreen",
+      "LuminanceAdjustmentAqua", "LuminanceAdjustmentBlue", "LuminanceAdjustmentPurple", "LuminanceAdjustmentMagenta" },
+    { "GrayMixerRed", "GrayMixerOrange", "GrayMixerYellow", "GrayMixerGreen",
+      "GrayMixerAqua", "GrayMixerBlue", "GrayMixerPurple", "GrayMixerMagenta" }
+};
 
 /* The numbers of the preset after Efekt, Ziarno, Kontrast and the look sliders: val[id] / has[id] for every attribute.
  * Shared by the Lightroom sidecar (build_xmp) and the JPG engine (lookbuild.h), so both start from the same values. */
@@ -171,6 +215,69 @@ static void fl_collect(int *val, unsigned char *has, const film_t *f, const look
     if (L->vig > 0) {
         int id = xa_id("PostCropVignetteAmount");
         if (id >= 0) { val[id] = xl_clamp((has[id] ? val[id] : 0) - L->vig, -100, 100); has[id] = 1; }
+    }
+    /* 2b. the desktop's own sliders (all zero in the camera) */
+    xl_add_attr(val, has, "Exposure2012", L->expo, -500, 500);
+    xl_add_attr(val, has, "Highlights2012", L->hi_t, -100, 100);
+    xl_add_attr(val, has, "Shadows2012", L->sh_t, -100, 100);
+    xl_add_attr(val, has, "Whites2012", L->wh_t, -100, 100);
+    xl_add_attr(val, has, "Blacks2012", L->bl_t, -100, 100);
+    xl_add_attr(val, has, "GrainSize", L->gsize, 0, 100);
+    xl_add_attr(val, has, "GrainFrequency", L->grough, 0, 100);
+    /* colour mixer (8 bands x hue / saturation / luminance); on black and white films the luminance goes to the black and white mixer */
+    {
+        int k, bw = (f->mono && strength > 0);
+        for (k = 0; k < 8; k++) {
+            if (bw) {
+                xl_add_attr(val, has, xl_band_attr[3][k], L->hsl[16 + k], -100, 100);
+            } else {
+                xl_add_attr(val, has, xl_band_attr[0][k], L->hsl[k], -100, 100);
+                xl_add_attr(val, has, xl_band_attr[1][k], L->hsl[8 + k], -100, 100);
+                xl_add_attr(val, has, xl_band_attr[2][k], L->hsl[16 + k], -100, 100);
+            }
+        }
+    }
+    /* colour grading: the preset's own grading is cleared when asked, then the wheels are added */
+    {
+        static const char *const hn[4] = { "ColorGradeShadowHue", "ColorGradeMidtoneHue", "ColorGradeHighlightHue", "ColorGradeGlobalHue" };
+        static const char *const sn[4] = { "ColorGradeShadowSat", "ColorGradeMidtoneSat", "ColorGradeHighlightSat", "ColorGradeGlobalSat" };
+        int k, id;
+        if (L->ton_mode == 1) for (k = 0; k < 4; k++) { id = xa_id(sn[k]); if (id >= 0) { val[id] = 0; has[id] = 0; } }
+        for (k = 0; k < 4; k++) {
+            int sa = xl_clamp(L->cg[2 * k + 1], 0, 100);
+            if (sa > 0) xtint_add(val, has, hn[k], sn[k], ((L->cg[2 * k] % 360) + 360) % 360, sa);
+        }
+    }
+    if (L->skin_hue || L->skin_sat || L->skin_lum) {
+        /* skin lives in the orange band of the colour wheel; red and yellow take part with less weight so that the change
+         * has no edge (band numbers: 0 red, 1 orange, 2 yellow; weights in percent) */
+        static const int band[3] = { 1, 0, 2 };
+        static const int wt[3] = { 100, 50, 30 };
+        int k, bw = (f->mono && strength > 0);
+        for (k = 0; k < 3; k++) {
+            if (!bw) {
+                xl_add_attr(val, has, xl_band_attr[0][band[k]], (L->skin_hue * wt[k]) / 300, -100, 100);   /* skin tolerates only a third of the hue range */
+                xl_add_attr(val, has, xl_band_attr[1][band[k]], (L->skin_sat * wt[k]) / 100, -100, 100);
+                xl_add_attr(val, has, xl_band_attr[2][band[k]], (L->skin_lum * wt[k]) / 100, -100, 100);
+            } else {
+                xl_add_attr(val, has, xl_band_attr[3][band[k]], (L->skin_lum * wt[k]) / 100, -100, 100);
+            }
+        }
+    }
+    if (f->mono && strength > 0) {
+        /* a colour filter acts through the black and white mixer: how bright each colour comes out in the grey picture
+         * (rows: yellow, orange, red, green, blue; columns: R O Y G A B P M) */
+        static const signed char flt[5][8] = {
+            {  10,  25,  40,   0, -15, -35, -20,   0 },
+            {  30,  45,  25, -10, -30, -50, -30,   5 },
+            {  60,  60,  30, -30, -55, -70, -45,  20 },
+            { -25,  -5,  25,  50,  25, -30, -25, -25 },
+            { -50, -45, -30, -15,  20,  55,  40,  15 }
+        };
+        if (L->filter >= 1 && L->filter <= 5) {
+            int k, amt = xl_clamp(L->filter_amt, 0, 100);
+            for (k = 0; k < 8; k++) xl_add_attr(val, has, xl_band_attr[3][k], (flt[L->filter - 1][k] * amt) / 100, -100, 100);
+        }
     }
     if (L->warm != 0)                                    /* amber .. blue over the whole picture */
         xtint_add(val, has, "ColorGradeGlobalHue", "ColorGradeGlobalSat", L->warm > 0 ? 38 : 218,

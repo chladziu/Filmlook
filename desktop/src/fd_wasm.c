@@ -132,12 +132,23 @@ static void on_progress(void *ctx, int pm)
 
 /* size: 0 5616x3744, 1 3861x2574, 2 2784x1856, 101 / 102 the engine's own full / half size (the preview on the page uses 102).
  * Returns 0 or an error code (see fd_error_text). */
+static fd_job g_jx;                      /* the desktop's extra sliders (fd_extra), kept between the photos */
+static int g_jx_ready;
+static void jx_init(void) { if (!g_jx_ready) { fd_job_defaults(&g_jx); g_jx_ready = 1; } }
+
+/* the extra sliders by index (fd_param_name tells which is which): fd_extra_count / fd_extra_name / fd_extra_set */
+EXPORT("fd_extra_count") int wasm_extra_count(void) { return FD_PARAM_COUNT; }
+EXPORT("fd_extra_name") const char *wasm_extra_name(int k) { return fd_param_name(k); }
+EXPORT("fd_extra_set") void wasm_extra_set(int k, int v) { jx_init(); fd_job_set(&g_jx, k, v); }
+EXPORT("fd_extra_reset") void wasm_extra_reset(void) { fd_job_defaults(&g_jx); g_jx_ready = 1; }
+
 EXPORT("fd_process")
 int fd_process(const uint8_t *src, size_t n, int film, int size, int quality,
                int strength, int grain, int contrast, int fade, int warm, int shadow, int high, int sat, int vig)
 {
     fd_job j;
-    fd_job_defaults(&j);
+    jx_init();
+    j = g_jx;
     j.film = film; j.size = size; j.quality = quality;
     j.look.strength = strength; j.look.grain = grain; j.look.contrast = contrast; j.look.fade = fade;
     j.look.warm = warm; j.look.shadow = shadow; j.look.high = high; j.look.sat = sat; j.look.vig = vig;

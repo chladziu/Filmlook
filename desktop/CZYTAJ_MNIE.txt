@@ -13,27 +13,58 @@ NAJPROSTSZY SPOSÓB (Windows i Mac): plik FILMLOOK_DESKTOP.html
 1. Kliknij dwa razy FILMLOOK_DESKTOP.html. Otworzy się w przeglądarce
    (Chrome, Edge, Firefox, Safari). Nic nie trzeba instalować i nie trzeba internetu.
    Zdjęcia nigdzie nie są wysyłane - wszystko dzieje się na Twoim komputerze.
-2. Krok 1: przeciągnij na stronę zdjęcia (JPG albo CR2) albo cały folder z karty
-   (np. DCIM). Można też użyć przycisków "Wybierz zdjęcia" / "Wybierz folder".
-   Gdy w folderze jest para RAW+JPG, domyślnie brany jest tylko plik CR2.
-3. Krok 2: wybierz film (zakładki: Kolor, Czarno-biały, Slajd) i ustaw suwaki.
-   Po prawej widać podgląd zdjęcia z filmem; przytrzymaj zdjęcie, żeby zobaczyć oryginał.
-   Przycisk "Pokaż wszystkie filmy na moim zdjęciu" pokazuje Twoje zdjęcie w każdym filmie.
-   Przycisk "Wczytaj ustawienia z karty" bierze suwaki zapisane przez moduł w aparacie
-   (plik ML/SETTINGS/FILMLOOK.TXT na karcie).
-4. Krok 3: rozmiar (5616x3744, 3861x2574 albo 2784x1856) i jakość JPG (domyślnie 95).
+2. Układ okna: zdjęcie jest pośrodku, po lewej lista zdjęć i wybór filmu, po prawej
+   ustawienia. Oba panele chowają się jednym kliknięciem w strzałkę na ich krawędzi
+   (albo klawiszami [ i ]), a ich szerokość zmieniasz przeciągając krawędź.
+   Na małym ekranie (telefon, wąskie okno) panele wsuwają się nad zdjęcie.
+3. Zdjęcia: przeciągnij je (JPG albo CR2) albo cały folder z karty (np. DCIM) na okno
+   albo użyj przycisków "+ Zdjęcia" / "+ Folder". Gdy w folderze jest para RAW+JPG,
+   domyślnie brany jest tylko plik CR2.
+   Każde zdjęcie ma okienko do zaznaczania i krzyżyk (usuwa je z listy; plik na dysku
+   zostaje). Wywoływane są tylko zaznaczone zdjęcia, a po wywołaniu zdejmują się z
+   zaznaczenia - nowe zdjęcia dodane później wywołają się osobno.
+   Klawisze: strzałki - poprzednie/następne zdjęcie, Delete - usuń z listy.
+4. Film: zakładki Kolor, Czarno-biały, Slajd. "Pokaż filmy na moim zdjęciu" pokazuje
+   Twoje zdjęcie w każdym filmie. "Ustawienia z karty..." bierze suwaki zapisane przez
+   moduł w aparacie (plik ML/SETTINGS/FILMLOOK.TXT na karcie).
+5. Ustawienia (prawy panel), działy rozwijane kliknięciem:
+   - Film i ziarno: siła efektu, ilość, wielkość i szorstkość ziarna, winieta, matowość
+   - Światło: ekspozycja, kontrast, światła, cienie, biel, czerń
+   - Filtr barwny i tonowanie (filmy czarno-białe): filtr żółty/pomarańczowy/czerwony/
+     zielony/niebieski oraz tonowanie: sepia, selen, cyjanotypia... osobno dla cieni,
+     półtonów i świateł (w filmach kolorowych: dział "Kolorystyka")
+   - Balans bieli: temperatura, odcień, kroplomierz (kliknij w zdjęciu coś szarego)
+     i "Automatycznie"
+   - Kolor: nasycenie, ciepło, kolor cieni i świateł
+   - Tony skóry: odcień, nasycenie i jasność tylko barw skóry
+   - Mikser kolorów: barwa, nasycenie i luminancja osobno dla ośmiu kolorów
+     (w czerni i bieli: jasność każdego koloru, jak filtry w ciemni)
+   Dwukrotne kliknięcie nazwy suwaka przywraca jego wartość, "↺" w nagłówku działu
+   przywraca cały dział. Suwaki filmu (ziarno, kontrast, kolor...) pamiętane są osobno
+   dla każdego filmu, a korekty (światło, balans bieli, skóra, mikser) zostają przy
+   zmianie filmu. Ustawienia dotyczą wszystkich zaznaczonych zdjęć naraz.
+6. Podgląd: kółko myszy powiększa, przeciąganie przesuwa, dwukrotne kliknięcie to 100 %,
+   klawisz F - całe zdjęcie, 1 - 100 %, + i - powiększenie. Przy powiększeniu program
+   liczy zdjęcie w pełnym rozmiarze, więc widać prawdziwe ziarno i szczegóły.
+   Przytrzymaj klawisz \ (albo przycisk "Przed"), żeby zobaczyć oryginał.
+7. Rozmiar (5616x3744, 3861x2574 albo 2784x1856) i jakość JPG (domyślnie 95).
    Zdjęcie nigdy nie jest powiększane.
-5. Krok 4: "Wywołaj". Kilka zdjęć naraz wywołuje się równolegle.
-   Potem "Pobierz wszystko jako ZIP" (albo "Pobierz" przy jednym zdjęciu).
-   W Chrome i Edge jest też "Zapisz w folderze" - zdjęcia lądują od razu w wybranym folderze.
+8. "Wywołaj zaznaczone": kilka zdjęć naraz wywołuje się równolegle.
+   Potem "Pobierz ZIP" (albo "pobierz" przy pojedynczym zdjęciu).
+   W Chrome i Edge jest też "Zapisz w folderze..." - zdjęcia lądują od razu w wybranym folderze.
    Nazwa wyniku: nazwa zdjęcia + nazwa filmu (+ _M albo _S dla mniejszych rozmiarów).
-Strona pamięta ostatnio wybrany film, suwaki, rozmiar i jakość.
+Strona pamięta ostatnio wybrany film, suwaki, rozmiar, jakość i układ okna.
+Uwaga: program pracuje na pełnowymiarowym podglądzie JPG zapisanym w pliku CR2, a nie na
+surowych danych z matrycy, więc balans bieli i światła mają łagodniejszy zakres niż w
+prawdziwym RAW.
 
 
 DRUGI SPOSÓB: program w wierszu poleceń (foldery Windows i macOS)
 ------------------------------------------------------------------
 Windows (filmlook_cli.exe): przeciągnij zdjęcia albo folder na filmlook_cli.exe,
   program zapyta o film i rozmiar. Wyniki trafiają do folderu FILMLOOK obok zdjęć.
+  (Dodatkowe suwaki z całej reszty ustawień: --expo --hi_t --sh_t --wh_t --bl_t --wb_temp --wb_tint
+  --skin_hue --skin_sat --skin_lum --filter --ton_mode --hue_red ... - pełna lista: --help)
   Jeśli Windows pokaże niebieskie okno "System Windows ochronił ten komputer",
   kliknij "Więcej informacji", a potem "Uruchom mimo to" (program nie ma płatnego podpisu).
 Mac (filmlook_cli_macos.tar.gz): rozpakuj, otwórz Terminal i wpisz (raz):

@@ -250,6 +250,9 @@ static void usage(void)
         "  --quality N          jakość JPG, domyślnie 95\n"
         "  --out FOLDER         dokąd zapisać (domyślnie folder FILMLOOK obok zdjęcia)\n"
         "  --efekt --ziarno --kontrast --matowosc --cieplo --cienie --swiatla --nasycenie --winieta  WARTOŚĆ\n"
+        "  --expo --hi_t --sh_t --wh_t --bl_t --gsize --grough --wb_temp --wb_tint --skin_hue --skin_sat --skin_lum\n"
+        "  --ton_mode --cg_sh_h --cg_sh_s --cg_mid_h --cg_mid_s --cg_hi_h --cg_hi_s --filter --filter_amt\n"
+        "  --hue_KOLOR --sat_KOLOR --lum_KOLOR  (KOLOR: red orange yellow green aqua blue purple magenta)  WARTOŚĆ\n"
         "  --list               pokaż filmy\n", FD_VERSION);
 }
 
@@ -284,6 +287,7 @@ int fd_main(int argc, char **argv)
         else if (i + 1 < argc && !strcmp(a, "--swiatla")) job.look.high = atoi(argv[++i]);
         else if (i + 1 < argc && !strcmp(a, "--nasycenie")) job.look.sat = atoi(argv[++i]);
         else if (i + 1 < argc && !strcmp(a, "--winieta")) job.look.vig = atoi(argv[++i]);
+        else if (i + 1 < argc && a[0] == '-' && a[1] == '-' && fd_job_set_name(&job, a + 2, atoi(argv[i + 1]))) i++;   /* --expo 50, --wb_temp -20, --hue_orange 10 ... */
         else if (a[0] == '-' && a[1] == '-') { fprintf(stderr, "nieznana opcja %s\n", a); usage(); return 2; }
         else if (u_isdir(a)) list_folder(a, &files);
         else list_add(&files, a);

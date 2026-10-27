@@ -2,244 +2,156 @@
 <html lang="pl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<title>Film Look Desktop</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Film Look Simulation</title>
 <style>
-:root {
-  --paper: #f3ede1; --paper2: #ebe3d3; --card: #fbf8f1; --ink: #231d16; --ink2: #6b6154; --line: #d6ccb9;
-  --accent: #b2432a; --accent-ink: #fff8ef; --ok: #3d7a45; --bad: #b3261e; --shadow: 0 1px 0 rgba(0,0,0,.04), 0 6px 18px -10px rgba(60,40,10,.35);
-  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --paper: #12100d; --paper2: #1b1814; --card: #1a1713; --ink: #efe6d6; --ink2: #a39783; --line: #35302a;
-    --accent: #e0734f; --accent-ink: #1a0d07; --ok: #7bc287; --bad: #ff8a80; --shadow: 0 1px 0 rgba(255,255,255,.03), 0 8px 22px -12px rgba(0,0,0,.8);
-  }
-}
-:root[data-theme="dark"] {
-  --paper: #12100d; --paper2: #1b1814; --card: #1a1713; --ink: #efe6d6; --ink2: #a39783; --line: #35302a;
-  --accent: #e0734f; --accent-ink: #1a0d07; --ok: #7bc287; --bad: #ff8a80; --shadow: 0 1px 0 rgba(255,255,255,.03), 0 8px 22px -12px rgba(0,0,0,.8);
-}
-* { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.5 var(--sans); }
-h1, h2, h3 { font-family: var(--serif); font-weight: 600; margin: 0; letter-spacing: .01em; }
-button, input { font: inherit; color: inherit; }
-button { cursor: pointer; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.wrap { max-width: 1240px; margin: 0 auto; padding: 0 16px 48px; }
-
-/* head: a strip of film */
-header { padding: 26px 0 18px; position: relative; }
-header::after { content: ""; display: block; height: 10px; margin-top: 18px;
-  background: radial-gradient(circle at 6px 5px, var(--line) 2.4px, transparent 3px) 0 0 / 18px 10px repeat-x; }
-.brand { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
-.brand h1 { font-size: 30px; }
-.brand .sub { color: var(--ink2); font-family: var(--serif); font-style: italic; font-size: 17px; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.chip { font-size: 12.5px; border: 1px solid var(--line); border-radius: 99px; padding: 2px 10px; color: var(--ink2); background: var(--card); }
-.chip.ok { color: var(--ok); } .chip.bad { color: var(--bad); }
-
-.grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
-@media (min-width: 1000px) { .grid { grid-template-columns: minmax(0, 1fr) 440px; } .side { position: sticky; top: 12px; } }
-
-section.step { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 18px 20px; margin-bottom: 20px; box-shadow: var(--shadow); }
-.step > h2 { font-size: 21px; display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
-.step > h2 .n { font-family: var(--serif); font-style: italic; color: var(--accent); font-size: 26px; line-height: 1; }
-.muted { color: var(--ink2); }
-.small { font-size: 13px; }
-
-/* drop zone */
-.drop { border: 2px dashed var(--line); border-radius: 10px; padding: 22px 14px; text-align: center; background: var(--paper2); transition: border-color .15s, background .15s; }
-.drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--paper2)); }
-.drop p { margin: 0 0 12px; }
-.drop .big { font-family: var(--serif); font-size: 19px; }
-.btns { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
-.btn { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 8px 14px; font-weight: 500; }
-.btn:hover { border-color: var(--ink2); }
-.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
-.btn.primary:hover { filter: brightness(1.07); }
-.btn.big { padding: 12px 22px; font-size: 17px; border-radius: 10px; }
-.btn[disabled] { opacity: .45; cursor: not-allowed; filter: none; }
-.btn.link { border: 0; background: none; color: var(--accent); padding: 4px 6px; text-decoration: underline; }
-
-/* file list */
-.list { list-style: none; margin: 12px 0 0; padding: 0; max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
-.list:empty { display: none; }
-.list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; padding: 7px 10px; border-bottom: 1px solid var(--line); cursor: pointer; position: relative; }
-.list li:last-child { border-bottom: 0; }
-.list li.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.list .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.list .meta { grid-column: 1; font-size: 12.5px; color: var(--ink2); }
-.list .meta.err { color: var(--bad); }
-.list .meta.ok { color: var(--ok); }
-.list .act { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
-.list .bar { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); width: 0; transition: width .2s; }
-.counts { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; flex-wrap: wrap; gap: 6px; }
-label.chk { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
-
-/* films */
-.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-.tab { border: 1px solid var(--line); background: var(--paper2); border-radius: 99px; padding: 5px 14px; }
-.tab[aria-selected="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-.films { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-.fcard { text-align: left; border: 1px solid var(--line); background: var(--paper2); border-radius: 10px; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
-.fcard .ph { aspect-ratio: 3 / 2; background: var(--paper); display: none; }
-.fcard .ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.fcard.has-th .ph { display: block; }
-.fcard .tx { padding: 8px 10px 9px; }
-.fcard .mk { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink2); }
-.fcard .fn { font-family: var(--serif); font-size: 17px; line-height: 1.2; }
-.fcard .fi { font-size: 12px; color: var(--ink2); margin-top: 2px; }
-.fcard[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
-.fdesc { margin: 12px 0 2px; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--paper2); border-radius: 0 8px 8px 0; }
-.fdesc b { font-family: var(--serif); font-size: 17px; font-weight: 600; }
-
-.sliders { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px 28px; margin-top: 14px; }
-@media (min-width: 620px) { .sliders { grid-template-columns: 1fr 1fr; } }
-.srow { display: grid; grid-template-columns: 92px minmax(0, 1fr) 64px; gap: 10px; align-items: center; padding: 3px 0; }
-.srow label { font-weight: 500; }
-.srow.mod label::after { content: " •"; color: var(--accent); }
-.srow input[type=range] { width: 100%; accent-color: var(--accent); }
-.srow input[type=number] { width: 64px; padding: 3px 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); text-align: right; }
-
-/* size */
-.opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
-.opt { border: 1px solid var(--line); background: var(--paper2); border-radius: 10px; padding: 10px 12px; cursor: pointer; display: block; }
-.opt input { position: absolute; opacity: 0; pointer-events: none; }
-.opt .t { font-family: var(--serif); font-size: 18px; }
-.opt .d { font-size: 12.5px; color: var(--ink2); }
-.opt.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
-.opt:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
-.qrow { display: grid; grid-template-columns: 110px minmax(0, 1fr) 64px; gap: 10px; align-items: center; margin-top: 14px; }
-.qrow input[type=range] { width: 100%; accent-color: var(--accent); }
-.qrow input[type=number] { width: 64px; padding: 3px 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); text-align: right; }
-
-/* run */
-.overall { height: 10px; border-radius: 99px; background: var(--paper2); border: 1px solid var(--line); overflow: hidden; margin: 14px 0 6px; }
-.overall > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .25s; }
-.runrow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.note { margin: 10px 0 0; }
-
-/* preview */
-.pv { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; box-shadow: var(--shadow); }
-.pv h2 { font-size: 21px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.seg button { border: 0; background: var(--paper2); padding: 4px 12px; font-size: 13.5px; }
-.seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
-.frame { position: relative; background: #000; border-radius: 8px; overflow: hidden; min-height: 180px; display: flex; align-items: center; justify-content: center; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
-.frame img { display: block; width: 100%; height: auto; max-height: 72vh; object-fit: contain; }
-.frame .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px; color: #d8d0c0; font-size: 14px; }
-.frame .spin { position: absolute; top: 8px; right: 8px; width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; animation: sp .8s linear infinite; display: none; }
-.frame.busy .spin { display: block; }
-@keyframes sp { to { transform: rotate(360deg); } }
-.pv .cap { margin-top: 8px; }
-
-details.lic { margin-top: 28px; }
-details.lic summary { cursor: pointer; color: var(--ink2); }
-details.lic pre { white-space: pre-wrap; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; max-height: 360px; overflow: auto; }
-footer { margin-top: 18px; color: var(--ink2); font-size: 13px; }
-.toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: var(--ink); color: var(--paper); padding: 10px 16px; border-radius: 10px; font-size: 14px; max-width: 90vw; display: none; z-index: 20; }
-.dropall { position: fixed; inset: 0; background: color-mix(in srgb, var(--accent) 16%, transparent); border: 4px dashed var(--accent); display: none; align-items: center; justify-content: center; font: 600 28px var(--serif); color: var(--accent); z-index: 10; pointer-events: none; }
-.dropall.on { display: flex; }
-.hidden { display: none !important; }
+__APP_CSS__
 </style>
 </head>
 <body>
-<div class="wrap">
-<header>
-  <div class="brand"><h1>Film Look Simulation</h1><span class="sub">wywoływanie zdjęć z aparatu na komputerze</span></div>
-  <div class="chips">
-    <span class="chip" id="chipEngine">silnik: ładuję…</span>
-    <span class="chip">działa bez internetu — zdjęcia nigdzie nie są wysyłane</span>
+<div id="app" class="boot">
+
+<header id="top">
+  <button class="ic" id="btnL" type="button" title="Pokaż lub schowaj lewy panel  ( [ )" aria-label="Lewy panel" aria-pressed="true">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9.5 4.5v15" stroke="currentColor" stroke-width="1.8"/><rect x="4.4" y="5.4" width="4.2" height="13.2" fill="currentColor" opacity=".35"/></svg>
+  </button>
+  <div class="brand"><h1>Film Look Simulation</h1><span class="sub">wywoływarka zdjęć</span></div>
+  <span class="chip" id="chipEngine">silnik: ładuję…</span>
+  <div class="tools">
+    <div class="seg" role="group" aria-label="Przed i po">
+      <button type="button" id="pvBefore" aria-pressed="false" title="Oryginał z aparatu  ( przytrzymaj \ )">Przed</button><button type="button" id="pvAfter" aria-pressed="true" title="Ze wzorem filmu">Po</button>
+    </div>
+    <div class="zoom" role="group" aria-label="Powiększenie">
+      <button type="button" id="zFit" title="Całe zdjęcie  ( F )">Całe</button>
+      <button type="button" id="z100" title="Jeden piksel zdjęcia = jeden piksel ekranu  ( 1 )">100 %</button>
+      <button type="button" id="zOut" title="Pomniejsz  ( − )" aria-label="Pomniejsz">−</button>
+      <output id="zVal" title="Powiększenie">—</output>
+      <button type="button" id="zIn" title="Powiększ  ( + )" aria-label="Powiększ">+</button>
+    </div>
+    <button class="ic" id="btnAbout" type="button" title="O programie, skróty klawiszowe, licencje" aria-label="O programie">
+      <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 11v5.5M12 7.6v.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <button class="ic" id="btnTheme" type="button" title="Jasny lub ciemny wygląd" aria-label="Motyw">
+      <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg>
+    </button>
   </div>
+  <button class="ic" id="btnR" type="button" title="Pokaż lub schowaj prawy panel  ( ] )" aria-label="Prawy panel" aria-pressed="true">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M14.5 4.5v15" stroke="currentColor" stroke-width="1.8"/><rect x="15.4" y="5.4" width="4.2" height="13.2" fill="currentColor" opacity=".35"/></svg>
+  </button>
 </header>
 
-<div class="grid">
-<main>
+<div id="cols">
 
-<section class="step" id="stepPhotos">
-  <h2><span class="n">1</span> Zdjęcia</h2>
-  <div class="drop" id="drop">
-    <p class="big">Przeciągnij tutaj zdjęcia <span class="muted">(JPG lub CR2)</span> albo cały folder</p>
-    <div class="btns">
-      <button class="btn primary" id="btnFiles" type="button">Wybierz zdjęcia…</button>
-      <button class="btn" id="btnDir" type="button">Wybierz folder…</button>
+  <!-- ============================================ left: photos and film -->
+  <aside id="left" class="panel" aria-label="Zdjęcia i film">
+    <section class="box" id="boxFiles">
+      <div class="bh">
+        <h2>Zdjęcia <span class="cnt" id="cnt"></span></h2>
+        <div class="bb">
+          <button class="btn sm primary" id="btnFiles" type="button">+ Zdjęcia</button>
+          <button class="btn sm" id="btnDir" type="button">+ Folder</button>
+        </div>
+      </div>
+      <input id="inFiles" type="file" multiple accept=".jpg,.jpeg,.JPG,.JPEG,.cr2,.CR2" class="hidden">
+      <input id="inDir" type="file" webkitdirectory class="hidden">
+      <ul class="list" id="list" aria-label="Lista zdjęć"></ul>
+      <div class="empty" id="listEmpty">Tu pojawią się Twoje zdjęcia.<br><span class="muted small">Przeciągnij je na okno albo użyj przycisków powyżej.</span></div>
+      <div class="lact" id="lact">
+        <span class="muted small">Zaznacz:</span>
+        <button class="btn link sm" id="selAll" type="button">wszystkie</button>
+        <button class="btn link sm" id="selNone" type="button">żadne</button>
+        <button class="btn link sm" id="selNew" type="button" title="Zdjęcia, które jeszcze nie były wywołane">niewywołane</button>
+        <span class="grow"></span>
+        <button class="btn link sm danger" id="delSel" type="button" title="Usuwa z listy zaznaczone zdjęcia (pliki na dysku zostają)">usuń zaznaczone</button>
+        <button class="btn link sm danger" id="btnClear" type="button" title="Usuwa wszystkie zdjęcia z listy (pliki na dysku zostają)">wyczyść</button>
+      </div>
+      <label class="chk small pair"><input type="checkbox" id="chkPair" checked> RAW+JPG: z pary biorę tylko CR2</label>
+    </section>
+
+    <section class="box grow" id="boxFilm">
+      <div class="bh"><h2>Film</h2></div>
+      <div class="tabs" id="tabs" role="tablist"></div>
+      <div class="films" id="films"></div>
+      <div class="fdesc" id="fdesc"></div>
+      <div class="bb wrap">
+        <button class="btn sm" id="btnSheet" type="button" disabled title="Na małych obrazkach pokazuje, jak wybrane zdjęcie wygląda w każdym filmie">Pokaż filmy na moim zdjęciu</button>
+        <button class="btn sm" id="btnCard" type="button" title="Wczytuje ustawienia suwaków zapisane przez moduł w aparacie (plik ML/SETTINGS/FILMLOOK.TXT na karcie)">Ustawienia z karty…</button>
+        <input id="inCfg" type="file" accept=".txt,.TXT" class="hidden">
+      </div>
+    </section>
+  </aside>
+
+  <div class="split" id="splitL" role="separator" aria-orientation="vertical" aria-label="Szerokość lewego panelu: przeciągnij albo użyj strzałek" tabindex="0">
+    <button class="sbtn" id="sbL" type="button" tabindex="-1" title="Schowaj lub pokaż lewy panel" aria-label="Schowaj lub pokaż lewy panel"></button>
+  </div>
+
+  <!-- ============================================ the picture -->
+  <main id="center">
+    <div id="stage" tabindex="0" aria-label="Podgląd zdjęcia. Kółko myszy: powiększenie, przeciąganie: przesuwanie, podwójne kliknięcie: 100 %">
+      <div id="world"><img id="pvImg" alt="Podgląd zdjęcia" draggable="false"></div>
+      <div class="msg" id="pvMsg">
+        <div>
+          <p class="big">Przeciągnij tu zdjęcia <span class="muted">(JPG lub CR2)</span> albo cały folder</p>
+          <p class="btns"><button class="btn primary" id="btnFiles2" type="button">Wybierz zdjęcia…</button> <button class="btn" id="btnDir2" type="button">Wybierz folder…</button></p>
+          <p class="muted small">Wszystko dzieje się na Twoim komputerze — zdjęcia nigdzie nie są wysyłane.</p>
+        </div>
+      </div>
+      <div class="spin" id="spin"></div>
+      <div class="hud" id="hud"></div>
+      <canvas id="hist" width="256" height="72" aria-label="Histogram"></canvas>
+      <div class="pipnote hidden" id="pipNote">Kliknij w zdjęciu coś, co ma być neutralnie szare lub białe. <button class="btn link sm" id="pipCancel" type="button">Anuluj (Esc)</button></div>
     </div>
-    <input id="inFiles" type="file" multiple accept=".jpg,.jpeg,.JPG,.JPEG,.cr2,.CR2" class="hidden">
-    <input id="inDir" type="file" webkitdirectory class="hidden">
-  </div>
-  <ul class="list" id="list" aria-label="Lista zdjęć"></ul>
-  <div class="counts">
-    <span class="muted small" id="counts">Nie wybrano żadnych zdjęć.</span>
-    <span>
-      <label class="chk small"><input type="checkbox" id="chkPair" checked> RAW+JPG: z pary biorę tylko CR2</label>
-      <button class="btn link small hidden" id="btnClear" type="button">Wyczyść listę</button>
-    </span>
-  </div>
-</section>
+    <div class="status" id="pvCap">Wybierz zdjęcie, a tutaj zobaczysz, jak będzie wyglądało.</div>
+  </main>
 
-<section class="step" id="stepFilm">
-  <h2><span class="n">2</span> Film</h2>
-  <div class="tabs" id="tabs" role="tablist"></div>
-  <div class="films" id="films"></div>
-  <div class="fdesc" id="fdesc"></div>
-  <div class="sliders" id="sliders"></div>
-  <div class="runrow" style="margin-top:12px">
-    <button class="btn" id="btnReset" type="button">Domyślne ustawienia tego filmu</button>
-    <button class="btn" id="btnSheet" type="button" disabled title="Pokazuje na małych obrazkach, jak wybrane zdjęcie wygląda w każdym filmie">Pokaż wszystkie filmy na moim zdjęciu</button>
-    <button class="btn" id="btnCard" type="button" title="Wczytuje ustawienia suwaków zapisane przez moduł w aparacie (plik ML/SETTINGS/FILMLOOK.TXT na karcie)">Wczytaj ustawienia z karty…</button>
-    <input id="inCfg" type="file" accept=".txt,.TXT" class="hidden">
+  <div class="split" id="splitR" role="separator" aria-orientation="vertical" aria-label="Szerokość prawego panelu: przeciągnij albo użyj strzałek" tabindex="0">
+    <button class="sbtn" id="sbR" type="button" tabindex="-1" title="Schowaj lub pokaż prawy panel" aria-label="Schowaj lub pokaż prawy panel"></button>
   </div>
-</section>
 
-<section class="step" id="stepSize">
-  <h2><span class="n">3</span> Rozmiar i jakość</h2>
-  <div class="opts" id="sizes">
-    <label class="opt"><input type="radio" name="size" value="0" checked><span class="t">Pełny 5616 × 3744</span><br><span class="d">tak jak z aparatu (L), 21 Mpix</span></label>
-    <label class="opt"><input type="radio" name="size" value="1"><span class="t">Średni 3861 × 2574</span><br><span class="d">jak rozmiar M aparatu, 10 Mpix</span></label>
-    <label class="opt"><input type="radio" name="size" value="2"><span class="t">Mały 2784 × 1856</span><br><span class="d">jak rozmiar S aparatu, 5 Mpix</span></label>
-  </div>
-  <div class="qrow"><label for="qr">Jakość JPG</label><input type="range" id="qr" min="70" max="100" step="1" value="95"><input type="number" id="qn" min="70" max="100" value="95"></div>
-  <p class="muted small note">Zdjęcie nigdy nie jest powiększane: mniejsze niż wybrany rozmiar zostaje takie, jakie jest.</p>
-</section>
-
-<section class="step" id="stepRun">
-  <h2><span class="n">4</span> Wywołaj</h2>
-  <div class="runrow">
-    <button class="btn primary big" id="btnRun" type="button" disabled>Wywołaj zdjęcia</button>
-    <button class="btn hidden" id="btnStop" type="button">Zatrzymaj</button>
-    <span class="muted" id="runInfo"></span>
-  </div>
-  <div class="overall" id="overall"><i id="overallBar"></i></div>
-  <div class="runrow">
-    <button class="btn" id="btnZip" type="button" disabled>Pobierz wszystko jako ZIP</button>
-    <button class="btn hidden" id="btnFolder" type="button">Zapisz w folderze…</button>
-    <span class="muted small" id="folderInfo"></span>
-  </div>
-  <p class="muted small note" id="runNote">Wynik: nowe pliki JPG, oryginały zostają nietknięte. Nazwa pliku: nazwa zdjęcia + nazwa filmu.</p>
-</section>
-
-</main>
-
-<aside class="side">
-  <div class="pv">
-    <h2><span>Podgląd</span>
-      <span class="seg" role="group" aria-label="Przed i po"><button type="button" id="pvBefore" aria-pressed="false">Przed</button><button type="button" id="pvAfter" aria-pressed="true">Po</button></span>
-    </h2>
-    <div class="frame" id="frame"><img id="pvImg" alt="Podgląd zdjęcia" class="hidden"><div class="msg" id="pvMsg">Wybierz zdjęcie, a tutaj zobaczysz, jak będzie wyglądało.</div><div class="spin"></div></div>
-    <p class="muted small cap" id="pvCap">Przytrzymaj palec lub przycisk myszy na zdjęciu, aby zobaczyć oryginał.</p>
-  </div>
-</aside>
+  <!-- ============================================ right: the settings -->
+  <aside id="right" class="panel" aria-label="Ustawienia wywołania">
+    <div class="scroll" id="adj"></div>
+    <div class="export" id="exp">
+      <div class="erow">
+        <span class="elabel">Rozmiar</span>
+        <div class="seg wide" id="sizes" role="radiogroup" aria-label="Rozmiar gotowych zdjęć">
+          <button type="button" role="radio" data-size="0" title="Pełny 5616 × 3744, tak jak z aparatu (L), 21 Mpix">L 21 Mpix</button><button type="button" role="radio" data-size="1" title="Średni 3861 × 2574, jak rozmiar M aparatu, 10 Mpix">M 10 Mpix</button><button type="button" role="radio" data-size="2" title="Mały 2784 × 1856, jak rozmiar S aparatu, 5 Mpix">S 5 Mpix</button>
+        </div>
+      </div>
+      <div class="erow">
+        <label class="elabel" for="qr">Jakość JPG</label>
+        <input type="range" id="qr" min="70" max="100" step="1" value="95">
+        <input type="number" id="qn" min="70" max="100" value="95" aria-label="Jakość JPG, wartość">
+      </div>
+      <button class="btn primary big full" id="btnRun" type="button" disabled>Wywołaj zaznaczone</button>
+      <div class="overall" id="overall"><i id="overallBar"></i></div>
+      <div class="erow wrapr">
+        <span class="muted small grow" id="runInfo"></span>
+        <button class="btn sm hidden" id="btnStop" type="button">Zatrzymaj</button>
+      </div>
+      <div class="erow wrapr">
+        <button class="btn sm" id="btnZip" type="button" disabled>Pobierz ZIP</button>
+        <button class="btn sm hidden" id="btnFolder" type="button">Zapisz w folderze…</button>
+        <span class="muted small grow" id="folderInfo"></span>
+      </div>
+      <p class="muted small note" id="runNote">Wynik: nowe pliki JPG, oryginały zostają nietknięte. Zdjęcie nie jest powiększane ponad swój rozmiar.</p>
+    </div>
+  </aside>
 </div>
 
-<details class="lic" id="lic"><summary>O programie i licencje</summary>
-<p class="small muted">FILM LOOK DESKTOP <span id="verTxt"></span> — ten sam silnik, który działa w module aparatu (Soup Engine, GPL v2, rozszerzony o film look), skompilowany do WebAssembly. Program jest na licencji GPL v2; kod źródłowy: https://github.com/chladziu/filmlook. Wyglądy filmów: własne presety oraz EmulsionPresets (MIT).</p>
-<pre id="licTxt">__LICENSE__</pre></details>
-<footer>FILM LOOK DESKTOP · <span id="buildTxt">__BUILD__</span></footer>
+<div id="scrim"></div>
 </div>
+
+<dialog id="about" aria-labelledby="aboutTitle">
+  <form method="dialog" class="aboutbox">
+    <div class="abouthead"><h2 id="aboutTitle">Film Look Simulation</h2><button class="btn sm" value="close">Zamknij</button></div>
+    <p class="small"><b>Skróty:</b> <kbd>[</kbd> <kbd>]</kbd> chowają panele · <kbd>F</kbd> całe zdjęcie · <kbd>1</kbd> 100 % · <kbd>+</kbd> <kbd>−</kbd> powiększenie · kółko myszy powiększa, przeciąganie przesuwa, podwójne kliknięcie przełącza całe/100 % · przytrzymaj <kbd>\</kbd> żeby zobaczyć oryginał · <kbd>←</kbd> <kbd>→</kbd> poprzednie / następne zdjęcie · <kbd>Delete</kbd> usuwa zdjęcie z listy · podwójne kliknięcie na nazwie suwaka przywraca jego wartość.</p>
+    <p class="small muted">FILM LOOK DESKTOP <span id="verTxt"></span> — ten sam silnik, który działa w module aparatu (Soup Engine, GPL v2, rozszerzony o film look), skompilowany do WebAssembly. Program jest na licencji GPL v2; kod źródłowy: https://github.com/chladziu/filmlook. Wyglądy filmów: własne presety oraz EmulsionPresets (MIT). Program używa podglądu JPG zapisanego w pliku CR2 (nie pełnego surowego zapisu matrycy).</p>
+    <pre id="licTxt">__LICENSE__</pre>
+    <p class="small muted">FILM LOOK DESKTOP · <span id="buildTxt">__BUILD__</span></p>
+  </form>
+</dialog>
 
 <div class="dropall" id="dropall">Upuść zdjęcia lub folder</div>
 <div class="toast" id="toast" role="status"></div>
@@ -249,668 +161,7 @@ footer { margin-top: 18px; color: var(--ink2); font-size: 13px; }
 __ENGINE_CORE__
 </script>
 <script>
-'use strict';
-/* ====================================================================== the page itself
- * Everything here is plain JavaScript. The engine (the same C code as in the camera module) runs in WebAssembly, inside Web Workers
- * (one per processor core, so that several photos are developed at once); if the browser does not allow workers it runs
- * on the page itself, one photo at a time. */
-var $ = function (s) { return document.querySelector(s); };
-var ENGINE_SRC = document.getElementById('engine-src').textContent;
-
-/* ---------------------------------------------------------------- the sliders of the module (the same as in the panel) */
-var SLIDERS = [
-  { key: 'strength', name: 'Efekt',     min: 0,    max: 100, def: 100, hint: 'ile filmu jest w zdjęciu: 0 = oryginał, 100 = pełny film' },
-  { key: 'grain',    name: 'Ziarno',    min: 0,    max: 200, def: 100, hint: 'ilość ziarna: 100 = tak jak w filmie' },
-  { key: 'contrast', name: 'Kontrast',  min: -50,  max: 50,  def: 0,   hint: 'mniej — więcej kontrastu' },
-  { key: 'fade',     name: 'Matowość',  min: 0,    max: 100, def: 0,   hint: 'podniesione czernie, „wyblakły” wygląd' },
-  { key: 'warm',     name: 'Ciepło',    min: -100, max: 100, def: 0,   hint: 'chłodniej — cieplej na całym zdjęciu' },
-  { key: 'shadow',   name: 'Cienie',    min: -100, max: 100, def: 0,   hint: 'kolor cieni: niebieskozielony — bursztynowy' },
-  { key: 'high',     name: 'Światła',   min: -100, max: 100, def: 0,   hint: 'kolor świateł: niebieski — bursztynowy' },
-  { key: 'sat',      name: 'Nasycenie', min: -100, max: 100, def: 0,   hint: 'mniej — więcej koloru' },
-  { key: 'vig',      name: 'Winieta',   min: 0,    max: 100, def: 0,   hint: 'ciemniejsze rogi zdjęcia' }
-];
-var SIZE_SUFFIX = ['', '_M', '_S'];
-var SIZE_NAMES = ['5616 × 3744', '3861 × 2574', '2784 × 1856'];
-
-/* ---------------------------------------------------------------- state */
-var S = {
-  films: [], tabNo: 0, film: 0, vals: {}, size: 0, quality: 95, pair: true,
-  files: [], nextId: 1, sel: null, running: false, cancel: false,
-  module: null, pool: [], pv: null, outDir: null, t0: 0
-};
-var memo = { get: function (k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
-             set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* no storage: fine */ } } };
-
-function toast(msg, ms) {
-  var t = $('#toast'); t.textContent = msg; t.style.display = 'block';
-  clearTimeout(toast.tm); toast.tm = setTimeout(function () { t.style.display = 'none'; }, ms || 4000);
-}
-function fmtMB(n) { return (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + ' MB'; }
-function slug(s) { return s.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, ''); }
-
-/* ---------------------------------------------------------------- workers */
-function makeHandler(post) {
-  var eng = null, curId = 0;
-  return async function (e) {
-    var m = e.data, res;
-    try {
-      if (m.type === 'init') {
-        eng = await fdCreateEngine(m.module);
-        eng.onProgress = function (pm) { post({ type: 'progress', id: curId, pm: pm }); };
-        post({ type: 'ready' });
-      } else if (m.type === 'source') {
-        curId = m.id;
-        post({ type: 'source', id: m.id, ok: eng.setSource(new Uint8Array(m.buffer)) });
-      } else if (m.type === 'run' || m.type === 'process') {
-        curId = m.id;
-        res = m.type === 'run' ? eng.run(m.params) : eng.process(new Uint8Array(m.buffer), m.params);
-        if (res.jpeg && m.crc) res.crc = fdCrc32(res.jpeg);
-        post({ type: 'done', id: m.id, res: res }, res.jpeg ? [res.jpeg.buffer] : []);
-      }
-    } catch (err) {
-      post({ type: 'done', id: m.id, res: { rc: -999, text: 'błąd silnika: ' + err } });
-    }
-  };
-}
-
-function Client(w) {                                  /* a worker (real or inline) with promises on top */
-  var me = this;
-  me.w = w; me.id = 0; me.pending = {}; me.readyCb = null;
-  w.onmessage = function (e) {
-    var m = e.data, p;
-    if (m.type === 'ready') { if (me.readyCb) me.readyCb(true); return; }
-    p = me.pending[m.id];
-    if (!p) return;
-    if (m.type === 'progress') { if (p.onp) p.onp(m.pm); return; }
-    delete me.pending[m.id];
-    p.res(m.type === 'source' ? m.ok : m.res);
-  };
-}
-Client.prototype.request = function (msg, transfer, onp) {
-  var me = this;
-  return new Promise(function (res) {
-    var id = ++me.id;
-    me.pending[id] = { res: res, onp: onp };
-    msg.id = id;
-    me.w.postMessage(msg, transfer || []);
-  });
-};
-Client.prototype.init = function (module) {
-  var me = this;
-  return new Promise(function (res) {
-    var done = false;
-    me.readyCb = function (ok) { if (!done) { done = true; res(ok); } };
-    me.w.onerror = function () { if (!done) { done = true; res(false); } };
-    setTimeout(function () { if (!done) { done = true; res(false); } }, 5000);
-    me.w.postMessage({ type: 'init', module: module });
-  });
-};
-
-function InlineWorker() {                             /* no Web Workers: the same handler on the page itself */
-  var me = this;
-  var handler = makeHandler(function (m) { setTimeout(function () { if (me.onmessage) me.onmessage({ data: m }); }, 0); });
-  me.postMessage = function (m) { setTimeout(function () { handler({ data: m }); }, 0); };
-}
-
-function newWorker() {
-  var src = ENGINE_SRC + '\n' + makeHandler.toString() + '\nself.onmessage = makeHandler(function (m, t) { self.postMessage(m, t || []); });';
-  var url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
-  var w = new Worker(url);
-  return w;
-}
-
-async function startWorkers(module, n) {
-  var list = [], i, c;
-  try {
-    for (i = 0; i < n; i++) { c = new Client(newWorker()); if (await c.init(module)) list.push(c); else { try { c.w.terminate(); } catch (e) {} break; } }
-  } catch (e) { list = []; }
-  if (!list.length) {                                  /* the browser does not run workers here: one engine on the page */
-    c = new Client(new InlineWorker());
-    await c.init(module);
-    list = [c]; S.inline = true;
-  }
-  return list;
-}
-
-/* ---------------------------------------------------------------- reading the photos */
-var PHOTO_RE = /\.(jpe?g|cr2)$/i;
-function isPhoto(name) { return PHOTO_RE.test(name); }
-
-function entryFiles(entry, out, path) {                /* drag and drop of a folder: walk through it */
-  return new Promise(function (resolve) {
-    if (entry.isFile) {
-      entry.file(function (f) { f._path = path + f.name; if (isPhoto(f.name)) out.push(f); resolve(); }, function () { resolve(); });
-    } else if (entry.isDirectory) {
-      if (/^FILMLOOK$/i.test(entry.name)) { resolve(); return; }       /* the folder with finished pictures */
-      var reader = entry.createReader(), all = [];
-      (function more() {
-        reader.readEntries(function (ents) {
-          if (!ents.length) {
-            var chain = Promise.resolve();
-            all.forEach(function (e) { chain = chain.then(function () { return entryFiles(e, out, path + entry.name + '/'); }); });
-            chain.then(resolve);
-          } else { all = all.concat(Array.prototype.slice.call(ents)); more(); }
-        }, function () { resolve(); });
-      })();
-    } else resolve();
-  });
-}
-
-async function addFromDrop(dt) {
-  var out = [], items = dt.items, i, ents = [];
-  if (items && items.length && items[0].webkitGetAsEntry) {
-    for (i = 0; i < items.length; i++) { var en = items[i].webkitGetAsEntry(); if (en) ents.push(en); }
-    for (i = 0; i < ents.length; i++) await entryFiles(ents[i], out, '');
-  } else {
-    for (i = 0; i < dt.files.length; i++) if (isPhoto(dt.files[i].name)) out.push(dt.files[i]);
-  }
-  addFiles(out);
-}
-
-function addFiles(files) {
-  var have = {}, added = 0;
-  S.files.forEach(function (f) { have[f.key] = 1; });
-  files.forEach(function (file) {
-    var path = file._path || file.webkitRelativePath || file.name, key = path + '|' + file.size + '|' + file.lastModified;
-    if (/(^|\/)FILMLOOK\//i.test(path)) return;
-    if (have[key]) return;
-    have[key] = 1;
-    S.files.push({ id: S.nextId++, key: key, file: file, path: path, name: file.name, size: file.size, status: 'wait', pct: 0 });
-    added++;
-  });
-  applyPairs();
-  if (added && !S.sel) selectFile(firstUsable());
-  renderList();
-  if (!added && !files.length) toast('Nie znalazłem tu zdjęć JPG ani CR2.');
-}
-
-function baseKey(f) { return f.path.replace(/\.[^.\/]+$/, '').toLowerCase(); }
-function applyPairs() {                                /* RAW+JPG: when a CR2 of the same name is there, the JPG waits out */
-  var cr2 = {};
-  S.files.forEach(function (f) { if (/\.cr2$/i.test(f.name)) cr2[baseKey(f)] = 1; });
-  S.files.forEach(function (f) {
-    if (f.status === 'skipped') f.status = 'wait';
-    if (S.pair && /\.jpe?g$/i.test(f.name) && cr2[baseKey(f)]) f.status = 'skipped';
-  });
-}
-function firstUsable() { for (var i = 0; i < S.files.length; i++) if (S.files[i].status !== 'skipped') return S.files[i]; return null; }
-function usable() { return S.files.filter(function (f) { return f.status !== 'skipped'; }); }
-
-/* ---------------------------------------------------------------- the list on the page */
-function itemMeta(f) {
-  if (f.status === 'skipped') return { t: 'pominięte — jest CR2 o tej samej nazwie', c: '' };
-  if (f.status === 'running') return { t: 'wywołuję… ' + Math.round(f.pct) + ' %', c: '' };
-  if (f.status === 'done') return { t: 'gotowe · ' + f.outW + ' × ' + f.outH + ' · ' + fmtMB(f.blob.size), c: 'ok' };
-  if (f.status === 'error') return { t: 'błąd: ' + f.err, c: 'err' };
-  return { t: fmtMB(f.size) + (/\.cr2$/i.test(f.name) ? ' · CR2' : ' · JPG'), c: '' };
-}
-
-function renderItem(f, li) {
-  var m = itemMeta(f);
-  li.className = (S.sel === f ? 'sel' : '');
-  li.querySelector('.nm').textContent = f.path;
-  li.querySelector('.nm').title = f.path;
-  var me = li.querySelector('.meta'); me.textContent = m.t; me.className = 'meta ' + m.c;
-  li.querySelector('.bar').style.width = f.status === 'running' ? f.pct + '%' : (f.status === 'done' ? '100%' : '0');
-  li.querySelector('.act').innerHTML = '';
-  if (f.status === 'done') {
-    var b = document.createElement('button'); b.className = 'btn link small'; b.type = 'button'; b.textContent = 'Pobierz';
-    b.onclick = function (ev) { ev.stopPropagation(); download(f.blob, f.outName); };
-    li.querySelector('.act').appendChild(b);
-  }
-}
-
-function renderList() {
-  var ul = $('#list'), have = {}, i;
-  S.files.forEach(function (f) {
-    var li = ul.querySelector('[data-id="' + f.id + '"]');
-    if (!li) {
-      li = document.createElement('li'); li.setAttribute('data-id', f.id);
-      li.innerHTML = '<span class="nm"></span><span class="act"></span><span class="meta"></span><span class="bar"></span>';
-      li.onclick = function () { if (f.status !== 'skipped') selectFile(f); };
-      ul.appendChild(li);
-    }
-    have[f.id] = 1;
-    renderItem(f, li);
-  });
-  Array.prototype.slice.call(ul.children).forEach(function (li) { if (!have[li.getAttribute('data-id')]) ul.removeChild(li); });
-  var u = usable(), done = S.files.filter(function (f) { return f.status === 'done'; }).length;
-  $('#counts').textContent = S.files.length ? ('Zdjęć do wywołania: ' + u.length + (S.files.length > u.length ? ' (pominięte: ' + (S.files.length - u.length) + ')' : '') + (done ? ' · gotowe: ' + done : '')) : 'Nie wybrano żadnych zdjęć.';
-  $('#btnClear').classList.toggle('hidden', !S.files.length || S.running);
-  $('#btnRun').disabled = !u.length || S.running || !S.pool.length;
-  $('#btnRun').textContent = u.length ? ((done ? 'Wywołaj jeszcze raz: ' : 'Wywołaj ') + u.length + ' ' + (u.length === 1 ? 'zdjęcie' : (u.length % 10 >= 2 && u.length % 10 <= 4 && (u.length % 100 < 10 || u.length % 100 >= 20) ? 'zdjęcia' : 'zdjęć'))) : 'Wywołaj zdjęcia';
-  $('#btnZip').disabled = !done || S.running;
-  $('#btnSheet').disabled = !S.pv || S.running;
-  $('#btnFolder').classList.toggle('hidden', !window.showDirectoryPicker);
-}
-
-/* ---------------------------------------------------------------- films and sliders */
-function curVals() {
-  var v = S.vals[S.film];
-  if (!v) { v = {}; S.vals[S.film] = v; }
-  SLIDERS.forEach(function (s) { if (typeof v[s.key] !== 'number') v[s.key] = s.def; });
-  return v;
-}
-function params(extra) {
-  var v = curVals(), p = { film: S.film, size: S.size, quality: S.quality }, k;
-  SLIDERS.forEach(function (s) { p[s.key] = v[s.key]; });
-  for (k in (extra || {})) p[k] = extra[k];
-  return p;
-}
-function isMod(v) { return SLIDERS.some(function (s) { return v[s.key] !== s.def; }); }
-function save() { memo.set('filmlook-desktop-1', { film: S.film, vals: S.vals, size: S.size, quality: S.quality, pair: S.pair }); }
-
-function renderTabs() {
-  var names = [], tabs = $('#tabs');
-  S.films.forEach(function (f) { if (names.indexOf(f.type) < 0) names.push(f.type); });
-  tabs.innerHTML = '';
-  names.forEach(function (n, k) {
-    var b = document.createElement('button'); b.type = 'button'; b.className = 'tab'; b.setAttribute('role', 'tab');
-    b.textContent = n + ' (' + S.films.filter(function (f) { return f.type === n; }).length + ')';
-    b.setAttribute('aria-selected', String(S.films[S.film].type === n));
-    b.onclick = function () { var f = S.films.filter(function (x) { return x.type === n; })[0]; chooseFilm(f.i); };
-    tabs.appendChild(b);
-  });
-}
-
-function renderFilms() {
-  var box = $('#films'), cur = S.films[S.film];
-  box.innerHTML = '';
-  S.films.filter(function (f) { return f.type === cur.type; }).forEach(function (f) {
-    var b = document.createElement('button'); b.type = 'button'; b.className = 'fcard'; b.setAttribute('data-i', f.i);
-    b.setAttribute('aria-pressed', String(f.i === S.film));
-    b.innerHTML = '<span class="ph"></span><span class="tx"><span class="mk"></span><br><span class="fn"></span><br><span class="fi"></span></span>';
-    b.querySelector('.mk').textContent = f.maker;
-    b.querySelector('.fn').textContent = f.name;
-    b.querySelector('.fi').textContent = (f.iso ? 'ISO ' + f.iso + ' · ' : '') + f.type.toLowerCase();
-    b.onclick = function () { chooseFilm(f.i); };
-    box.appendChild(b);
-    if (S.thumbs && S.thumbs[f.i]) setThumb(f.i, S.thumbs[f.i]);
-  });
-  var d = $('#fdesc'); d.innerHTML = '<b></b> <span class="muted"></span><br><span></span>';
-  d.querySelector('b').textContent = cur.full;
-  d.querySelector('.muted').textContent = '— ' + cur.kind;
-  d.lastChild.textContent = cur.desc;
-}
-
-function setThumb(i, url) {
-  var b = $('#films .fcard[data-i="' + i + '"]');
-  if (!b) return;
-  b.classList.add('has-th');
-  b.querySelector('.ph').innerHTML = '<img alt="" src="' + url + '">';
-}
-
-function renderSliders() {
-  var box = $('#sliders'), v = curVals();
-  box.innerHTML = '';
-  SLIDERS.forEach(function (s) {
-    var row = document.createElement('div'), id = 'sl-' + s.key;
-    row.className = 'srow' + (v[s.key] !== s.def ? ' mod' : ''); row.title = s.hint;
-    row.innerHTML = '<label for="' + id + '">' + s.name + '</label><input type="range" id="' + id + '" min="' + s.min + '" max="' + s.max + '" step="1"><input type="number" min="' + s.min + '" max="' + s.max + '" aria-label="' + s.name + ', wartość">';
-    var r = row.querySelector('input[type=range]'), n = row.querySelector('input[type=number]');
-    r.value = v[s.key]; n.value = v[s.key];
-    function set(val) {
-      val = Math.max(s.min, Math.min(s.max, Math.round(Number(val)))); if (isNaN(val)) return;
-      curVals()[s.key] = val; r.value = val; n.value = val;
-      row.className = 'srow' + (val !== s.def ? ' mod' : '');
-      $('#btnReset').disabled = !isMod(curVals());
-      save(); schedulePreview(); staleResults();
-    }
-    r.oninput = function () { set(r.value); };
-    n.onchange = function () { set(n.value); };
-    box.appendChild(row);
-  });
-  $('#btnReset').disabled = !isMod(v);
-}
-
-function chooseFilm(i) {
-  S.film = i; curVals();
-  renderTabs(); renderFilms(); renderSliders();
-  save(); schedulePreview(); staleResults();
-}
-
-function staleResults() {                              /* the finished pictures are of the old settings: say it */
-  if (S.running) return;
-  var any = S.files.some(function (f) { return f.status === 'done'; });
-  $('#runNote').textContent = any ? 'Ustawienia się zmieniły — gotowe zdjęcia są jeszcze z poprzednich. Kliknij „Wywołaj jeszcze raz”, żeby je odświeżyć.' : 'Wynik: nowe pliki JPG, oryginały zostają nietknięte. Nazwa pliku: nazwa zdjęcia + nazwa filmu.';
-}
-
-/* ---------------------------------------------------------------- the preview */
-function u32(b, o) { return (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0; }
-function u16(b, o) { return b[o] | (b[o + 1] << 8); }
-
-/* a CR2 carries its full size JPEG; the preview only needs that part of the file (a few MB instead of 25 - 30 MB).
- * It is given the orientation of the CR2 so that portraits stand upright. */
-async function previewSource(file) {
-  var head = new Uint8Array(await file.slice(0, 65536).arrayBuffer());
-  if (head.length > 16 && head[0] === 0x49 && head[1] === 0x49 && head[2] === 42 && head[8] === 0x43 && head[9] === 0x52) {
-    var ifd = u32(head, 4), n = u16(head, ifd), i, comp = 0, so = 0, sb = 0, ori = 1;
-    for (i = 0; i < n && ifd + 2 + 12 * i + 12 <= head.length; i++) {
-      var e = ifd + 2 + 12 * i, tag = u16(head, e);
-      if (tag === 0x103) comp = u16(head, e + 8); else if (tag === 0x111) so = u32(head, e + 8); else if (tag === 0x117) sb = u32(head, e + 8);
-      else if (tag === 0x112) ori = u16(head, e + 8);
-    }
-    if (comp === 6 && so && sb && so + sb <= file.size) {
-      var jpg = new Uint8Array(await file.slice(so, so + sb).arrayBuffer());
-      if (jpg[0] === 0xFF && jpg[1] === 0xD8) {
-        /* SOI + an Exif block with the orientation only + the rest of the JPEG */
-        var exif = new Uint8Array([0xFF, 0xE1, 0, 0x22, 0x45, 0x78, 0x69, 0x66, 0, 0,
-          0x49, 0x49, 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, ori & 255, ori >> 8, 0, 0, 0, 0, 0, 0]);
-        var out = new Uint8Array(2 + exif.length + jpg.length - 2);
-        out.set(jpg.subarray(0, 2), 0); out.set(exif, 2); out.set(jpg.subarray(2), 2 + exif.length);
-        return out.buffer;
-      }
-    }
-  }
-  return await file.arrayBuffer();
-}
-
-function pvShow(which) {
-  var img = $('#pvImg'), pv = S.pv;
-  $('#pvBefore').setAttribute('aria-pressed', String(which === 'before'));
-  $('#pvAfter').setAttribute('aria-pressed', String(which === 'after'));
-  S.pvView = which;
-  if (!pv) return;
-  var url = which === 'before' ? pv.beforeUrl : pv.afterUrl;
-  if (url) { img.src = url; img.classList.remove('hidden'); $('#pvMsg').style.display = 'none'; }
-}
-function pvMessage(t) { $('#pvMsg').textContent = t; $('#pvMsg').style.display = 'flex'; $('#pvImg').classList.add('hidden'); }
-function pvBusy(on) { $('#frame').classList.toggle('busy', !!on); }
-
-async function selectFile(f) {
-  var seq, buf, copy;
-  S.sel = f; renderList();
-  if (!f) return;
-  if (!S.preview) { S.waitSel = f; return; }               /* the engine is still starting */
-  seq = S.pvSeq = (S.pvSeq || 0) + 1;
-  S.pv = null; S.thumbs = {}; S.sheetSeq = (S.sheetSeq || 0) + 1;
-  pvMessage('Wczytuję zdjęcie…'); pvBusy(true);
-  $('#btnSheet').disabled = true;
-  try { buf = await previewSource(f.file); } catch (e) { pvMessage('Nie można odczytać tego pliku.'); pvBusy(false); return; }
-  if (seq !== S.pvSeq) return;
-  copy = buf.slice(0);
-  if (!(await S.preview.request({ type: 'source', buffer: buf }, [buf]))) { pvMessage('Za mało pamięci na podgląd tego zdjęcia.'); pvBusy(false); return; }
-  if (seq !== S.pvSeq) return;
-  S.pv = { file: f, buf: copy, beforeUrl: null, afterUrl: null };
-  /* "before": the engine with the effect at 0 (and no grain): the picture as the camera made it */
-  var res = await S.preview.request({ type: 'run', params: params({ film: 0, size: 102, quality: 88, strength: 0, grain: 0, contrast: 0, fade: 0, warm: 0, shadow: 0, high: 0, sat: 0, vig: 0 }) });
-  if (seq !== S.pvSeq) return;
-  if (res.rc !== 0) { pvMessage('Podgląd niemożliwy: ' + res.text); pvBusy(false); S.pv = null; return; }
-  S.pv.beforeUrl = URL.createObjectURL(new Blob([res.jpeg], { type: 'image/jpeg' }));
-  $('#btnSheet').disabled = S.running;
-  schedulePreview(true);
-}
-
-var pvTimer = null, pvPending = false, pvRunning = false;
-function schedulePreview(now) {
-  if (!S.pv) return;
-  clearTimeout(pvTimer);
-  pvTimer = setTimeout(function () { pvPending = true; if (!pvRunning) pumpPreview(); }, now ? 0 : 180);
-  pvBusy(true);
-}
-async function pumpPreview() {
-  pvRunning = true;
-  while (pvPending) {
-    pvPending = false;
-    var seq = S.pvSeq, pv = S.pv;
-    if (!pv) break;
-    var res = await S.preview.request({ type: 'run', params: params({ size: 102, quality: 88 }) });
-    if (seq !== S.pvSeq || S.pv !== pv) continue;
-    if (res.rc !== 0) { pvMessage('Podgląd niemożliwy: ' + res.text); continue; }
-    var old = pv.afterUrl;
-    pv.afterUrl = URL.createObjectURL(new Blob([res.jpeg], { type: 'image/jpeg' }));
-    if (old) setTimeout(function () { URL.revokeObjectURL(old); }, 2000);
-    if (S.pvView !== 'before') pvShow('after'); else $('#pvMsg').style.display = 'none';
-    $('#pvCap').textContent = S.films[S.film].full + ' · podgląd w połowie rozmiaru, ziarno w gotowym zdjęciu wygląda nieco inaczej. Przytrzymaj zdjęcie, aby zobaczyć oryginał.';
-  }
-  pvRunning = false;
-  pvBusy(false);
-}
-
-/* every film on the chosen photo, as small pictures in the film cards */
-async function makeSheet() {
-  var pv = S.pv, seq, n = S.films.length, next = 0;
-  if (!pv || S.running) return;
-  seq = S.sheetSeq = (S.sheetSeq || 0) + 1;
-  S.thumbs = {};
-  $('#btnSheet').disabled = true; $('#btnSheet').textContent = 'Liczę filmy…';
-  await Promise.all(S.pool.map(function (w) { return w.request({ type: 'source', buffer: pv.buf.slice(0) }); }));
-  async function lane(w) {
-    while (seq === S.sheetSeq) {
-      var i = next++;
-      if (i >= n) return;
-      var v = S.vals[i] || {}, p = { film: i, size: 102, quality: 70 };
-      SLIDERS.forEach(function (s) { p[s.key] = v[s.key] === undefined ? s.def : v[s.key]; });
-      var res = await w.request({ type: 'run', params: p });
-      if (seq !== S.sheetSeq) return;
-      if (res.rc === 0) {
-        var blob = new Blob([res.jpeg], { type: 'image/jpeg' }), url = await thumbUrl(blob);
-        if (seq !== S.sheetSeq) return;
-        S.thumbs[i] = url; setThumb(i, url);
-      }
-    }
-  }
-  await Promise.all(S.pool.map(lane));
-  if (seq === S.sheetSeq) { $('#btnSheet').textContent = 'Pokaż wszystkie filmy na moim zdjęciu'; $('#btnSheet').disabled = !S.pv || S.running; }
-}
-async function thumbUrl(blob) {                        /* a small copy of the picture for the card (the big one would be decoded for nothing) */
-  try {
-    var bmp = await createImageBitmap(blob, { resizeWidth: 480, resizeQuality: 'medium' });
-    var c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
-    c.getContext('2d').drawImage(bmp, 0, 0);
-    var out = await new Promise(function (r) { c.toBlob(r, 'image/jpeg', 0.82); });
-    if (bmp.close) bmp.close();
-    if (out) return URL.createObjectURL(out);
-  } catch (e) { /* the browser cannot: use the big one */ }
-  return URL.createObjectURL(blob);
-}
-
-/* ---------------------------------------------------------------- developing */
-function outName(f, p, used) {
-  var base = f.name.replace(/\.[^.]+$/, ''), name = base + '_' + slug(S.films[p.film].full) + SIZE_SUFFIX[p.size], k = 1, cand = name + '.jpg';
-  while (used[cand.toLowerCase()]) { k++; cand = name + '_' + k + '.jpg'; }
-  used[cand.toLowerCase()] = 1;
-  return cand;
-}
-
-function download(blob, name) {
-  var a = document.createElement('a'), url = URL.createObjectURL(blob);
-  a.href = url; a.download = name; document.body.appendChild(a); a.click();
-  setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 4000);
-}
-
-async function writeToFolder(f) {
-  if (!S.outDir || !f.blob) return true;
-  try {
-    var fh = await S.outDir.getFileHandle(f.outName, { create: true }), w = await fh.createWritable();
-    await w.write(f.blob); await w.close();
-    return true;
-  } catch (e) { toast('Nie udało się zapisać w folderze: ' + e.message); S.outDir = null; $('#folderInfo').textContent = ''; return false; }
-}
-
-async function runAll() {
-  var todo = usable(), p = params(), used = {}, next = 0, finished = 0, i, t0 = Date.now();
-  if (!todo.length || S.running) return;
-  S.running = true; S.cancel = false; S.sheetSeq = (S.sheetSeq || 0) + 1;
-  S.thumbs = S.thumbs || {};
-  todo.forEach(function (f) { f.status = 'wait'; f.blob = null; f.pct = 0; f.outName = outName(f, p, used); });
-  $('#btnStop').classList.remove('hidden'); $('#btnRun').disabled = true; $('#btnZip').disabled = true;
-  $('#runNote').textContent = 'Wynik: nowe pliki JPG, oryginały zostają nietknięte.';
-  renderList();
-  function updateBar() {
-    var part = 0; todo.forEach(function (f) { part += f.status === 'done' || f.status === 'error' ? 1 : (f.status === 'running' ? f.pct / 100 : 0); });
-    $('#overallBar').style.width = (100 * part / todo.length) + '%';
-    $('#runInfo').textContent = finished + ' z ' + todo.length + ' gotowe';
-  }
-  updateBar();
-  async function lane(w) {
-    while (!S.cancel) {
-      var k = next++;
-      if (k >= todo.length) return;
-      var f = todo[k], buf;
-      f.status = 'running'; f.pct = 0; renderList();
-      try { buf = await f.file.arrayBuffer(); } catch (e) { f.status = 'error'; f.err = 'nie można odczytać pliku'; finished++; updateBar(); renderList(); continue; }
-      var res = await w.request({ type: 'process', buffer: buf, params: p, crc: true }, [buf], function (pm) {
-        f.pct = pm / 10; var li = $('#list [data-id="' + f.id + '"]'); if (li) renderItem(f, li); updateBar();
-      });
-      if (res.rc === 0) {
-        f.status = 'done'; f.blob = new Blob([res.jpeg], { type: 'image/jpeg' }); f.crc = res.crc; f.outW = res.outW; f.outH = res.outH;
-        await writeToFolder(f);
-      } else { f.status = 'error'; f.err = res.text; }
-      finished++; updateBar(); renderList();
-    }
-  }
-  await Promise.all(S.pool.map(lane));
-  S.running = false; $('#btnStop').classList.add('hidden');
-  var ok = todo.filter(function (f) { return f.status === 'done'; }).length, bad = todo.filter(function (f) { return f.status === 'error'; }).length;
-  $('#runInfo').textContent = (S.cancel ? 'Zatrzymano. ' : 'Gotowe. ') + ok + ' zdjęć w ' + Math.round((Date.now() - t0) / 1000) + ' s' + (bad ? ', z błędem: ' + bad : '') + '.';
-  if (!S.cancel) $('#overallBar').style.width = '100%';
-  renderList();
-  if (S.inline && S.sel) selectFile(S.sel);              /* (one engine only: the batch has replaced the preview's photo) */
-  if (ok && !S.outDir) $('#runNote').textContent = 'Kliknij „Pobierz wszystko jako ZIP” (albo „Pobierz” przy pojedynczym zdjęciu).';
-  else if (ok) $('#runNote').textContent = 'Zdjęcia są zapisane w wybranym folderze.';
-}
-
-/* ---------------------------------------------------------------- ZIP (no compression: JPEGs do not shrink) */
-function dosTime(d) { return ((d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1)) & 0xFFFF; }
-function dosDate(d) { return (((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()) & 0xFFFF; }
-function buildZip(entries) {                           /* entries: [{name, blob, crc}] -> Blob */
-  var parts = [], central = [], offset = 0, now = new Date(), enc = new TextEncoder();
-  entries.forEach(function (e) {
-    var name = enc.encode(e.name), h = new DataView(new ArrayBuffer(30)), c = new DataView(new ArrayBuffer(46));
-    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true);
-    h.setUint16(10, dosTime(now), true); h.setUint16(12, dosDate(now), true); h.setUint32(14, e.crc, true);
-    h.setUint32(18, e.blob.size, true); h.setUint32(22, e.blob.size, true); h.setUint16(26, name.length, true); h.setUint16(28, 0, true);
-    parts.push(h.buffer, name, e.blob);
-    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, 0, true);
-    c.setUint16(12, dosTime(now), true); c.setUint16(14, dosDate(now), true); c.setUint32(16, e.crc, true);
-    c.setUint32(20, e.blob.size, true); c.setUint32(24, e.blob.size, true); c.setUint16(28, name.length, true);
-    c.setUint32(42, offset, true);
-    central.push(c.buffer, name);
-    offset += 30 + name.length + e.blob.size;
-  });
-  var csize = 0; central.forEach(function (b) { csize += b.byteLength !== undefined ? b.byteLength : b.size; });
-  var end = new DataView(new ArrayBuffer(22));
-  end.setUint32(0, 0x06054b50, true); end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true);
-  end.setUint32(12, csize, true); end.setUint32(16, offset, true);
-  return new Blob(parts.concat(central, [end.buffer]), { type: 'application/zip' });
-}
-
-function zipAll() {
-  var done = S.files.filter(function (f) { return f.status === 'done'; }), total = 0, d = new Date();
-  if (!done.length) return;
-  done.forEach(function (f) { total += f.blob.size; });
-  if (total > 3.8e9 || done.length > 60000) { toast('To za dużo na jeden ZIP (ponad 3,8 GB). Użyj „Zapisz w folderze…” albo pobieraj pojedynczo.', 8000); return; }
-  var pad = function (n) { return (n < 10 ? '0' : '') + n; };
-  download(buildZip(done.map(function (f) { return { name: f.outName, blob: f.blob, crc: f.crc }; })),
-    'FILMLOOK_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + '.zip');
-}
-
-async function pickFolder() {
-  try {
-    S.outDir = await window.showDirectoryPicker({ mode: 'readwrite' });
-  } catch (e) { return; }
-  $('#folderInfo').textContent = 'zapisuję do folderu: ' + S.outDir.name;
-  var n = 0;
-  for (var i = 0; i < S.files.length; i++) if (S.files[i].status === 'done') { if (await writeToFolder(S.files[i])) n++; }
-  toast(n ? 'Zapisano ' + n + ' zdjęć w folderze ' + S.outDir.name + '.' : 'Nowe zdjęcia będą zapisywane w folderze ' + S.outDir.name + '.');
-}
-
-/* ---------------------------------------------------------------- the settings of the camera (ML/SETTINGS/FILMLOOK.TXT) */
-function loadCard(text) {
-  var lines = text.split(/\r?\n/), n = 0, film = null, keys = ['strength', 'grain', 'contrast', 'hal', 'fade', 'warm', 'shadow', 'high', 'sat', 'vig'];
-  lines.forEach(function (ln) {
-    var m;
-    if ((m = /^film=(.*)$/.exec(ln))) { S.films.forEach(function (f) { if (f.full === m[1].trim()) film = f.i; }); }
-    else if ((m = /^mod=([^;]+);(.*)$/.exec(ln))) {
-      var f = S.films.filter(function (x) { return x.full === m[1].trim(); })[0], nums = m[2].split(',').map(Number);
-      if (!f || nums.length < 10 || nums.some(isNaN)) return;
-      var v = {};
-      keys.forEach(function (k, j) { var sl = SLIDERS.filter(function (s) { return s.key === k; })[0]; if (sl) v[k] = Math.max(sl.min, Math.min(sl.max, nums[j])); });
-      S.vals[f.i] = v; n++;
-    }
-  });
-  if (film === null && !n) { toast('To nie wygląda na plik FILMLOOK.TXT z karty.'); return; }
-  if (film !== null) S.film = film;
-  chooseFilm(S.film);
-  toast('Wczytano ustawienia z karty' + (n ? ' (zmienione filmy: ' + n + ')' : '') + '.');
-}
-
-/* ---------------------------------------------------------------- wiring */
-function wire() {
-  var drop = $('#drop'), all = $('#dropall'), depth = 0;
-  $('#btnFiles').onclick = function () { $('#inFiles').click(); };
-  $('#btnDir').onclick = function () { $('#inDir').click(); };
-  $('#inFiles').onchange = function (e) { var l = Array.prototype.slice.call(e.target.files); addFiles(l.filter(function (f) { return isPhoto(f.name); })); e.target.value = ''; };
-  $('#inDir').onchange = function (e) { var l = Array.prototype.slice.call(e.target.files); addFiles(l.filter(function (f) { return isPhoto(f.name); })); e.target.value = ''; };
-  document.addEventListener('dragenter', function (e) { if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0) { depth++; all.classList.add('on'); e.preventDefault(); } });
-  document.addEventListener('dragover', function (e) { e.preventDefault(); });
-  document.addEventListener('dragleave', function () { depth = Math.max(0, depth - 1); if (!depth) all.classList.remove('on'); });
-  document.addEventListener('drop', function (e) { e.preventDefault(); depth = 0; all.classList.remove('on'); if (e.dataTransfer) addFromDrop(e.dataTransfer); });
-  $('#btnClear').onclick = function () { S.files = []; S.sel = null; S.pv = null; S.pvSeq = (S.pvSeq || 0) + 1; pvMessage('Wybierz zdjęcie, a tutaj zobaczysz, jak będzie wyglądało.'); $('#overallBar').style.width = '0'; $('#runInfo').textContent = ''; renderList(); };
-  $('#chkPair').onchange = function (e) { S.pair = e.target.checked; applyPairs(); if (S.sel && S.sel.status === 'skipped') selectFile(firstUsable()); renderList(); save(); };
-  $('#btnReset').onclick = function () { delete S.vals[S.film]; renderSliders(); save(); schedulePreview(); staleResults(); };
-  $('#btnSheet').onclick = makeSheet;
-  $('#btnCard').onclick = function () { $('#inCfg').click(); };
-  $('#inCfg').onchange = function (e) { var f = e.target.files[0]; if (f) f.text().then(loadCard); e.target.value = ''; };
-  Array.prototype.forEach.call(document.querySelectorAll('input[name=size]'), function (r) {
-    r.onchange = function () { S.size = Number(r.value); save(); staleResults(); };
-  });
-  var qr = $('#qr'), qn = $('#qn');
-  function setQ(v) { v = Math.max(70, Math.min(100, Math.round(Number(v)))); if (isNaN(v)) return; S.quality = v; qr.value = v; qn.value = v; save(); staleResults(); }
-  qr.oninput = function () { setQ(qr.value); }; qn.onchange = function () { setQ(qn.value); };
-  $('#btnRun').onclick = runAll;
-  $('#btnStop').onclick = function () { S.cancel = true; $('#btnStop').classList.add('hidden'); };
-  $('#btnZip').onclick = zipAll;
-  $('#btnFolder').onclick = pickFolder;
-  $('#pvBefore').onclick = function () { pvShow('before'); };
-  $('#pvAfter').onclick = function () { pvShow('after'); };
-  var fr = $('#frame');
-  fr.addEventListener('pointerdown', function () { if (S.pv && S.pv.beforeUrl && S.pvView !== 'before') { S.holdPrev = S.pvView; pvShow('before'); } });
-  ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (ev) {
-    fr.addEventListener(ev, function () { if (S.holdPrev) { pvShow(S.holdPrev); S.holdPrev = null; } });
-  });
-  Array.prototype.forEach.call(document.querySelectorAll('.opt'), function (l) {            /* (the chosen size is also marked by a class: older browsers have no :has) */
-    l.querySelector('input').addEventListener('change', markSizes);
-  });
-}
-function markSizes() {
-  Array.prototype.forEach.call(document.querySelectorAll('.opt'), function (l) { l.classList.toggle('sel', l.querySelector('input').checked); });
-}
-
-async function boot() {
-  var saved = memo.get('filmlook-desktop-1'), bin, bytes, i, eng;
-  wire();
-  if (!window.WebAssembly) { $('#chipEngine').textContent = 'ta przeglądarka jest za stara (brak WebAssembly)'; $('#chipEngine').className = 'chip bad'; return; }
-  try {
-    bin = atob(document.getElementById('wasm-b64').textContent.trim());
-    bytes = new Uint8Array(bin.length);
-    for (i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    S.module = await WebAssembly.compile(bytes);
-    eng = await fdCreateEngine(S.module);
-  } catch (e) { $('#chipEngine').textContent = 'nie udało się uruchomić silnika: ' + e; $('#chipEngine').className = 'chip bad'; return; }
-  S.films = eng.films;
-  $('#verTxt').textContent = eng.version;
-  if (saved) {
-    S.vals = saved.vals || {}; S.film = Math.min(Math.max(saved.film | 0, 0), S.films.length - 1);
-    S.size = Math.min(Math.max(saved.size | 0, 0), 2); S.quality = Math.min(Math.max(saved.quality | 0 || 95, 70), 100);
-    if (saved.pair === false) S.pair = false;
-  }
-  $('#chkPair').checked = S.pair;
-  $('#qr').value = S.quality; $('#qn').value = S.quality;
-  Array.prototype.forEach.call(document.querySelectorAll('input[name=size]'), function (r) { r.checked = Number(r.value) === S.size; });
-  chooseFilm(S.film);
-  markSizes();
-  var n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
-  S.pool = await startWorkers(S.module, n + 1);          /* n for the batch + 1 for the preview */
-  if (S.pool.length > 1) S.preview = S.pool.pop(); else S.preview = S.pool[0];
-  $('#chipEngine').textContent = 'silnik gotowy · ' + S.films.length + ' filmów' + (S.inline ? ' · tryb pojedynczy' : ' · równolegle: ' + S.pool.length);
-  $('#chipEngine').className = 'chip ok';
-  renderList();
-  window.FD = { S: S };                                /* for the tests */
-  if (S.waitSel) { var w = S.waitSel; S.waitSel = null; selectFile(w); }
-}
-boot();
+__APP_JS__
 </script>
 </body>
 </html>

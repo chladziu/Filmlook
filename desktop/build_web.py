@@ -33,6 +33,9 @@ def main():
     wasm_path, out_path = sys.argv[1], sys.argv[2]
     page = read(os.path.join(HERE, "web", "page.html"))
     core = read(os.path.join(HERE, "web", "engine_core.js"))
+    css = read(os.path.join(HERE, "web", "app.css"))
+    app_parts = sorted(f for f in os.listdir(os.path.join(HERE, "web")) if f.startswith("app_") and f.endswith(".js"))
+    app = "\n".join(read(os.path.join(HERE, "web", f)) for f in app_parts)      # one script, written in several files
     with open(wasm_path, "rb") as f:
         wasm = f.read()
 
@@ -45,14 +48,19 @@ def main():
     when = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     build = "program %s · silnik %s · zbudowano %s" % (prog, eng, when)
 
-    if "</script" in core.lower():
-        sys.exit("engine_core.js must not contain </script")
-    for marker in ("__LICENSE__", "__BUILD__", "__WASM_B64__", "__ENGINE_CORE__"):
+    for name, text in (("engine_core.js", core), ("app_*.js", app)):
+        if "</script" in text.lower():
+            sys.exit(name + " must not contain </script")
+    if "</style" in css.lower():
+        sys.exit("app.css must not contain </style")
+    for marker in ("__LICENSE__", "__BUILD__", "__WASM_B64__", "__ENGINE_CORE__", "__APP_CSS__", "__APP_JS__"):
         if page.count(marker) != 1:
             sys.exit("page.html: the marker %s must occur exactly once" % marker)
     page = page.replace("__LICENSE__", html.escape(licence, quote=False))
     page = page.replace("__BUILD__", html.escape(build, quote=False))
     page = page.replace("__WASM_B64__", base64.b64encode(wasm).decode("ascii"))
+    page = page.replace("__APP_CSS__", css)
+    page = page.replace("__APP_JS__", app)
     page = page.replace("__ENGINE_CORE__", core)    # last: the text of the script may contain anything
     with open(out_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(page)
