@@ -73,7 +73,7 @@ function sectionList() {
   L.push({ id: 'crop', title: 'Kadr', keys: [], body: bodyCrop, reset: cropRemove, mod: cropAnyMod });
   L.push({ id: 'source', title: 'Źródło zdjęcia (RAW)', keys: SRC_KEYS, body: bodySource });
   var fk = mono ? ['strength', 'grain', 'gsize', 'grough', 'vig', 'fade'] : ['strength', 'grain', 'gsize', 'grough', 'gcolor', 'vig', 'fade'];
-  L.push({ id: 'film', title: 'Film i ziarno', keys: fk, body: bodyRows(fk) });
+  L.push({ id: 'film', title: 'Film i ziarno', keys: fk, body: bodyFilm(fk) });
   L.push({ id: 'light', title: 'Światło', keys: ['expo', 'contrast', 'hi_t', 'sh_t', 'wh_t', 'bl_t'], body: bodyRows(['expo', 'contrast', 'hi_t', 'sh_t', 'wh_t', 'bl_t']) });
   L.push({ id: 'curves', title: 'Krzywe', keys: [], body: bodyCurves, reset: crvReset, mod: crvAnyMod });
   if (mono) {
@@ -94,9 +94,9 @@ function srcState() {                                   /* what is known about t
   var pv = S.pv, f = pv && pv.file, info = pv && pv.info, name = f ? f.name : '';
   if (!pv) return { kind: 'none', text: 'Wybierz zdjęcie — tu zobaczysz, z czego program je wywołuje.' };
   if (info && info.raw) return { kind: 'raw', text: 'Ten plik ma surowe dane matrycy (RAW, ' + info.rawW + ' × ' + info.rawH + ').' + (info.fit ? '' : ' Brak w nim dużego JPG, więc wzorzec tonalny jest ogólny (średni dla tego aparatu).') };
-  if (/\.cr3$/i.test(name)) return { kind: 'nojpg', text: 'To plik CR3 — jego surowych danych program jeszcze nie czyta, pracuje na JPG z pliku. Żeby użyć RAW, zamień go na DNG (darmowy Adobe DNG Converter) i wczytaj plik DNG.' };
   if (info && info.rawErrText) return { kind: 'nojpg', text: 'Surowych danych tego pliku nie udało się odczytać (' + info.rawErrText + '), więc pracuję na JPG z pliku.' };
-  if (/\.(cr2|dng)$/i.test(name)) return { kind: 'nojpg', text: 'Program czyta RAW z aparatu Canon 5D Mark II (CR2) i z plików DNG (z matrycą Bayera lub liniowe, bez kompresji albo z kompresją bezstratną). Ten plik jest innego rodzaju — pracuję na JPG z pliku.' };
+  if (/\.cr3$/i.test(name)) return { kind: 'nojpg', text: 'Surowych danych tego pliku CR3 program nie czyta (aparat spoza listy albo nowszy sposób zapisu RAW) — pracuję na JPG z pliku. Możesz zamienić plik na DNG (darmowy Adobe DNG Converter) i wczytać DNG.' };
+  if (/\.(cr2|dng)$/i.test(name)) return { kind: 'nojpg', text: 'Program czyta RAW z plików Canon CR2 (5D Mark II), Canon CR3 (EOS R, RP, R5, R6 i inne) oraz z plików DNG (z matrycą Bayera lub liniowe, bez kompresji albo z kompresją bezstratną). Ten plik jest innego rodzaju — pracuję na JPG z pliku.' };
   return { kind: 'nojpg', text: 'To zwykły JPG — nie ma w nim surowych danych, więc nie ma z czego robić RAW.' };
 }
 function bodySource(box) {
@@ -143,6 +143,17 @@ async function refreshBefore() {
   }
 }
 
+function bodyFilm(keys) {
+  return function (box) {
+    var h = document.createElement('div'), p = document.createElement('p');
+    keys.forEach(function (k) { box.appendChild(makeRow(k)); });
+    h.className = 'row-btns';
+    h.innerHTML = '<button type="button" class="btn sm" id="btnGrain" title="Powiększa zdjęcie tak, że jeden piksel gotowego zdjęcia to jeden piksel ekranu (klawisz 1). Dokładnie tak ziarno będzie wyglądać w pliku.">Pokaż ziarno jak w pliku (1:1)</button>';
+    p.className = 'hint'; p.textContent = 'Ziarno ocenia się w powiększeniu: przy widoku całego zdjęcia jest zbyt drobne, żeby je dobrze zobaczyć. Widok 1:1 jest liczony tak samo jak gotowy plik (ten sam rozmiar, ta sama jakość).';
+    box.appendChild(h); box.appendChild(p);
+    h.querySelector('#btnGrain').onclick = showGrain;
+  };
+}
 function bodyRows(keys) {
   return function (box) { keys.forEach(function (k) { box.appendChild(makeRow(k)); }); };
 }
@@ -288,20 +299,47 @@ function refreshChips() {
 }
 
 /* ---------------------------------------------------------------- building the panel */
-function sectionOpen(id) { var o = S.ui.open[id]; return o === undefined ? (id === 'film' || id === 'light' || id === 'source') : !!o; }
-
-function renderAdjust() {
-  var box = $('#adj'), tb, secs = sectionList();
-  ROWS = {};
-  box.innerHTML = '';
-  tb = document.createElement('div'); tb.className = 'adjbar';
-  tb.innerHTML = '<span class="muted small">Korekta</span><span class="grow"></span><button type="button" class="btn sm" id="rsFilm" title="Przywraca suwaki tego filmu do wartości domyślnych">Resetuj film</button><button type="button" class="btn sm" id="rsScene" title="Zeruje światło, krzywe, balans bieli, tony skóry i mikser kolorów">Resetuj korekty</button>';
-  box.appendChild(tb);
-  tb.querySelector('#rsFilm').onclick = function () { delete S.looks[S.film]; afterReset(); };
-  tb.querySelector('#rsScene').onclick = function () {                    /* (the choice of the source is not a correction: it stays) */
+/* the groups of the right panel: one icon of the strip at the edge each; the sections of a group are under it */
+var GROUPS = [
+  { id: 'film', title: 'Film i ziarno' }, { id: 'light', title: 'Światło' }, { id: 'color', title: 'Kolor' },
+  { id: 'crop', title: 'Kadr i obrót' }, { id: 'source', title: 'Źródło zdjęcia' }, { id: 'export', title: 'Zapis zdjęć' }
+];
+var SEC_GROUP = { film: 'film', light: 'light', curves: 'light', wb: 'color', color: 'color', skin: 'color', hsl: 'color', tone: 'color', filter: 'color', crop: 'crop', source: 'source' };
+function groupOk(id) { return GROUPS.some(function (g) { return g.id === id; }); }
+function setGroup(id, noSave) {
+  var g = groupOk(id) ? id : 'film', title = GROUPS.filter(function (x) { return x.id === g; })[0].title;
+  S.ui.group = g;
+  Array.prototype.forEach.call(document.querySelectorAll('#adj .grp'), function (d) { d.classList.toggle('hidden', d.getAttribute('data-g') !== g); });
+  $('#adj').classList.toggle('hidden', g === 'export'); $('#exp').classList.toggle('hidden', g !== 'export');
+  Array.prototype.forEach.call(document.querySelectorAll('#rail .rb'), function (b) { var on = b.getAttribute('data-g') === g; b.setAttribute('aria-selected', String(on)); b.setAttribute('aria-pressed', String(on)); });
+  $('#rtitle').textContent = title;
+  $('#rsFilm').classList.toggle('hidden', g !== 'film');
+  $('#rsScene').classList.toggle('hidden', g !== 'light' && g !== 'color');
+  if (g === 'export') paintExportInfo();
+  if (!noSave) save();
+}
+function initRail() {
+  Array.prototype.forEach.call(document.querySelectorAll('#rail .rb'), function (b) { b.onclick = function () { setGroup(b.getAttribute('data-g')); }; });
+  $('#rsFilm').onclick = function () { delete S.looks[S.film]; afterReset(); };
+  $('#rsScene').onclick = function () {                                    /* (the choice of the source is not a correction: it stays) */
     var keep = {}; SRC_KEYS.forEach(function (k) { if (typeof S.scene[k] === 'number') keep[k] = S.scene[k]; });
     S.scene = keep; afterReset();
   };
+}
+function openExport() { setPanel('r', true); setGroup('export'); }
+
+function sectionOpen(id) { var o = S.ui.open[id]; return o === undefined ? (id === 'film' || id === 'light' || id === 'source' || id === 'crop' || id === 'wb' || id === 'filter') : !!o; }
+
+function renderAdjust() {
+  var box = $('#adj'), secs = sectionList(), gEls = {};
+  ROWS = {};
+  box.innerHTML = '';
+  GROUPS.forEach(function (g) {
+    var d;
+    if (g.id === 'export') return;
+    d = document.createElement('div'); d.className = 'grp'; d.setAttribute('data-g', g.id);
+    box.appendChild(d); gEls[g.id] = d;
+  });
   secs.forEach(function (s) {
     var el = document.createElement('div'), sh = document.createElement('div'), body = document.createElement('div');
     el.className = 'sec' + (sectionOpen(s.id) ? ' open' : ''); el.setAttribute('data-id', s.id);
@@ -323,18 +361,28 @@ function renderAdjust() {
       afterReset();
     };
     el.appendChild(sh); el.appendChild(body);
-    box.appendChild(el);
+    gEls[SEC_GROUP[s.id] || 'film'].appendChild(el);
     s.body(body);
     el.__keys = s.keys; el.__mod = s.mod;
   });
+  Object.keys(gEls).forEach(function (g) { gEls[g].classList.toggle('single', gEls[g].children.length === 1); });          /* one section in a group: the group's own title is enough */
+  setGroup(S.ui.group, true);
   updateMods();
 }
 function afterReset() { renderAdjust(); save(); refreshBefore(); schedulePreview(); staleResults(); }
 
+function groupMods() {                                  /* which groups have something changed (the dot on the icon) */
+  var m = {};
+  sectionList().forEach(function (s) { if (anyMod(s.keys || []) || (s.mod && s.mod())) m[SEC_GROUP[s.id] || 'film'] = true; });
+  if (S.out && S.out.mode !== 'full') m.export = true;
+  return m;
+}
 function updateMods() {
+  var gm = groupMods();
   Array.prototype.forEach.call(document.querySelectorAll('#adj .sec'), function (el) {
     el.classList.toggle('mod', anyMod(el.__keys || []) || !!(el.__mod && el.__mod()));
   });
+  Array.prototype.forEach.call(document.querySelectorAll('#rail .rb'), function (b) { b.classList.toggle('mod', !!gm[b.getAttribute('data-g')]); });
   var rf = $('#rsFilm'), rs = $('#rsScene');
   if (rf) rf.disabled = !CTRL_LIST.some(function (c) { return c.scope === 'film' && modKey(c.key); });
   if (rs) rs.disabled = !CTRL_LIST.some(function (c) { return c.scope === 'scene' && SRC_KEYS.indexOf(c.key) < 0 && modKey(c.key); }) && !crvAnyMod();

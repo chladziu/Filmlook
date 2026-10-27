@@ -20,6 +20,10 @@
             ("z RAW"), the switches "JPG z pliku" / "wzorzec z JPG" / "najwyższa jakość" work, developed == command line, a CR3 says
             what to do (DNG)
 
+  rotate    straightening in the crop tool (angle: number, slider, a drag outside the frame, the line along the horizon), quarter turns, the
+            frame stays inside the turned picture, Esc, removal; developed == command line (--angle --turn --crop)
+  groups    the right panel: the strip of icons with one group each, the group "Zapis" opened by the button at the top, Tab hides the panels
+  grain     the preview is counted like the file, 100 % = a pixel of the finished picture, the full size picture == the developed file
   crop      the crop tool (frame, handles, lock of the ratio, the list of ratios, "Dla wszystkich", Esc) and the free size of the result (also
             bigger than the photo); developed == command line
 
@@ -92,7 +96,24 @@ def open_page(browser, init=None, viewport=None):
     page.on("console", lambda m: page.errors.append(m.text) if m.type == "error" else None)
     page.goto("file://" + html)
     page.wait_for_function("document.querySelector('#chipEngine').className.indexOf('ok') >= 0", timeout=30000)
+    wrap_reveal(page)
     return page
+
+
+def wrap_reveal(page):
+    """The settings of the right panel are in groups (one icon each) and only one group is shown: before a click or a typing the group
+    that holds the element is opened (the page's FD.reveal), as a person would do with the icons."""
+    for name in ("click", "fill", "select_option", "check", "uncheck", "hover", "dblclick"):
+        def make(orig):
+            def wrapped(selector, *a, **k):
+                if isinstance(selector, str) and not selector.startswith(("text=", "xpath=", "//")):
+                    try:
+                        page.evaluate("s => window.FD && FD.reveal(s)", selector)
+                    except Exception:
+                        pass
+                return orig(selector, *a, **k)
+            return wrapped
+        setattr(page, name, make(getattr(page, name)))
 
 
 def wait_idle(page, timeout=120000):
@@ -172,7 +193,8 @@ def choose_velvia(page):
 
 def scenario_main(browser):
     page = open_page(browser)
-    check("filmów" in page.inner_text("#chipEngine"), "engine started: " + page.inner_text("#chipEngine"))
+    check(int(page.get_attribute("#chipEngine", "data-films") or 0) >= 15 and page.inner_text("#chipEngine") == "" and not page.is_visible("#chipEngine"),
+          "engine started and the top bar says nothing about it (no \"silnik gotowy\" chip): films=%s" % page.get_attribute("#chipEngine", "data-films"))
     check(page.is_visible("#pvMsg"), "the empty page invites to add photos")
     page.set_input_files("#inDir", photos)
     page.wait_for_selector("#list li")
@@ -422,8 +444,7 @@ def develop_and_compare(page, size_value, size_flag, grain):
 
 def scenario_parallel(browser):
     page = open_page(browser, "Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});")
-    chip = page.inner_text("#chipEngine")
-    check("równolegle: 4" in chip, "4 workers: " + chip)
+    check(page.get_attribute("#chipEngine", "data-lanes") == "4" and page.get_attribute("#chipEngine", "data-inline") == "0", "4 workers: lanes=%s" % page.get_attribute("#chipEngine", "data-lanes"))
     develop_and_compare(page, 2, "S", 30)
     check(not page.errors, "no errors in the browser console: %s" % page.errors[:3])
     page.context.close()
@@ -431,15 +452,14 @@ def scenario_parallel(browser):
 
 def scenario_inline(browser):
     page = open_page(browser, "window.Worker = undefined;")
-    chip = page.inner_text("#chipEngine")
-    check("pojedynczy" in chip, "no workers, one engine on the page: " + chip)
+    check(page.get_attribute("#chipEngine", "data-inline") == "1", "no workers, one engine on the page")
     develop_and_compare(page, 2, "S", 30)
     # the full size detail also works with one engine only
     page.locator("#list li .nm", has_text="synth_5616x3744").click()     # the big one (the order of the list depends on the system)
     wait_idle(page)
     page.click("#stage")
     page.keyboard.press("1")
-    page.wait_for_function("document.querySelector('#pvImg').naturalWidth >= 3000", timeout=120000)
+    page.wait_for_function("document.querySelector('#pvImg').naturalWidth >= 2700", timeout=120000)     # the detail is the finished picture: 2784 px (size S)
     check(True, "one engine only: the detail view works too")
     check(not page.errors, "no errors in the browser console: %s" % page.errors[:3])
     page.context.close()
@@ -491,6 +511,7 @@ def scenario_folder(browser):
             " createWritable: async () => { const parts = []; return { write: async (b) => { parts.push(b); },"
             " close: async () => { window.__written[n] = new Blob(parts); } }; } }) });")
     page = open_page(browser, mock)
+    page.click('#rail .rb[data-g="export"]')
     check(page.is_visible("#btnFolder"), "the folder button is there when the browser can write to folders")
     page.set_input_files("#inFiles", [os.path.join(photos, "synth_small.jpg"), os.path.join(photos, "synth_landscape.cr2")])
     page.wait_for_selector("#list li")
@@ -723,7 +744,8 @@ def scenario_sensor(browser):
     import re
     tmp = tempfile.mkdtemp()
     names = {"synth_raw_5d2_landscape.cr2": "sensor_a.cr2", "synth_raw_5d2_portrait.cr2": "sensor_b.cr2", "synth_raw_strips.dng": "sensor_c.dng",
-             "synth_raw_tiles.dng": "sensor_d.dng", "synth_raw_linear.dng": "sensor_e.dng"}
+             "synth_raw_tiles.dng": "sensor_d.dng", "synth_raw_linear.dng": "sensor_e.dng",
+             "synth_raw_cr3_lossless.cr3": "sensor_g.cr3", "synth_raw_cr3_portrait.cr3": "sensor_h.cr3"}          # (CR3 of the EOS RP: crxgen.py)
     for n, to in names.items():
         shutil.copy(os.path.join(all_photos, n), os.path.join(tmp, to))
     cr3 = os.path.join(all_photos, "synth_landscape.cr3")
@@ -758,15 +780,27 @@ def scenario_sensor(browser):
     page.click('#srcSeg button[data-v="0"]')
     wait_idle(page)
     check("z RAW" in page.inner_text("#pvCap"), "back to RAW")
-    # a CR3 can not be read as RAW: the page says what to do
+    # a CR3 that holds no sensor data the program can read (the fake one has only JPEGs): the page says what to do
     if os.path.exists(cr3):
         page.click("#list li:has-text('sensor_f.cr3')")
         wait_idle(page)
-        check("DNG" in page.inner_text("#srcInfo") and "z JPG" in page.inner_text("#pvCap") and page.is_disabled('#srcSeg button[data-v="0"]'),
-              "CR3: the page says to make a DNG and works on the JPEG: " + page.inner_text("#srcInfo")[:70])
+        check("nie czyta" in page.inner_text("#srcInfo") and "DNG" in page.inner_text("#srcInfo") and "z JPG" in page.inner_text("#pvCap") and page.is_disabled('#srcSeg button[data-v="0"]'),
+              "CR3 without readable sensor data: the page says so and works on the JPEG: " + page.inner_text("#srcInfo")[:70])
         page.click("#list li:has-text('sensor_a.cr2')")
         wait_idle(page)
         check("z RAW" in page.inner_text("#pvCap"), "back on the CR2: from the sensor data again")
+    # a CR3 of the EOS RP: developed from the sensor data like a CR2 (lossless in tiles / C-RAW)
+    page.click("#list li:has-text('sensor_g.cr3')")
+    wait_idle(page)
+    check("z RAW" in page.inner_text("#pvCap") and "surowe dane" in page.inner_text("#srcInfo"), "CR3 (lossless): from the sensor data: " + page.inner_text("#pvCap")[:60] + " | " + page.inner_text("#srcInfo")[:60])
+    check(page.get_attribute('#srcSeg button[data-v="0"]', "aria-pressed") == "true" and not page.is_disabled('#srcSeg button[data-v="1"]'), "CR3: RAW is the chosen source, and JPG z pliku can be chosen")
+    page.click("#list li:has-text('sensor_h.cr3')")
+    wait_idle(page)
+    dims_h = page.evaluate("[document.querySelector('#pvImg').naturalWidth, document.querySelector('#pvImg').naturalHeight]")
+    check("z RAW" in page.inner_text("#pvCap") and dims_h[1] > dims_h[0], "the rotated CR3 (C-RAW) is from the sensor data and upright: %s" % dims_h)
+    shot(page, "sensor_1b_cr3")
+    page.click("#list li:has-text('sensor_a.cr2')")
+    wait_idle(page)
     # portraits stand upright
     page.click("#list li:has-text('sensor_b.cr2')")
     wait_idle(page)
@@ -795,7 +829,7 @@ def scenario_sensor(browser):
         return zip_of(page), n_raw
 
     z, n_raw = develop_all("best quality", [])
-    check(n_raw == 5, "five photos are developed from the sensor data, the CR3 from its JPEG (z RAW: %d)" % n_raw)
+    check(n_raw == 7, "seven photos are developed from the sensor data (CR2, DNG, CR3), the fake CR3 from its JPEG (z RAW: %d)" % n_raw)
     compare_all(z, [], "RAW")
     shot(page, "sensor_3_done")
     page.uncheck("#chkHq")
@@ -1009,8 +1043,298 @@ def scenario_crop(browser):
     page.context.close()
 
 
+def scenario_rotate(browser):
+    """straightening in the crop tool (like Lightroom): the angle (number, slider, a drag outside the frame, the line along the horizon),
+    quarter turns, the frame always inside the turned picture, Esc, the removal; the developed file == the command line version"""
+    from PIL import Image, ImageOps
+    import io
+    import math
+    tmp = tempfile.mkdtemp()
+    for n in ("synth_small.jpg", "synth_portrait.cr2"):
+        shutil.copy(os.path.join(photos, n), tmp)
+    page = open_page(browser)
+    page.set_input_files("#inDir", tmp)
+    page.wait_for_selector("#list li")
+    page.click("#list li:has-text('synth_small.jpg')")
+    wait_idle(page)
+    page.wait_for_function("FD.cropFrame() !== null", timeout=60000)
+
+    def rect():
+        return page.evaluate("(() => { const r = FD.CROP.rect; return [r.x0, r.y0, r.x1, r.y1]; })()")
+
+    def inside(tol=1):
+        return page.evaluate("FD.rectInQuad(FD.CROP.rect, FD.cropFrame(), FD.CROP.rot, %s)" % tol)
+
+    def shown():
+        page.wait_for_function("FD.CROP.on === true && !document.querySelector('#cropUi').classList.contains('hidden')", timeout=60000)
+
+    page.click("#btnCrop")
+    shown()
+    for sel in ("#cropAng", "#cropAngN", "#cropRuler", "#cropTurnL", "#cropTurnR", "#cropRing"):
+        check(page.locator(sel).count() == 1, "the crop tool has " + sel)
+    check(page.evaluate("FD.CROP.rot") == 0 and page.input_value("#cropAngN") in ("0", "0.0"), "the angle starts at 0")
+    base = rect()
+
+    # the number box
+    page.fill("#cropAngN", "10"); page.dispatch_event("#cropAngN", "change")
+    check(page.evaluate("FD.CROP.rot") == 10000, "10 degrees typed: %s" % page.evaluate("FD.CROP.rot"))
+    check(page.evaluate("document.querySelector('#pvImg').style.transform") == "rotate(10deg)", "the picture on the screen is turned (clockwise)")
+    r10 = rect()
+    check(inside() and (r10[2] - r10[0]) < (base[2] - base[0]) and (r10[3] - r10[1]) < (base[3] - base[1]), "the frame shrank to lie inside the turned picture: %s -> %s" % (base, r10))
+    check(abs((r10[2] - r10[0]) * 800 - (r10[3] - r10[1]) * 1200) <= 1200 and abs((r10[0] + r10[2]) / 2 - 600) <= 1 and abs((r10[1] + r10[3]) / 2 - 400) <= 1, "(it keeps the ratio and its middle: %s)" % r10)
+    shot(page, "rot_1_ten")
+    page.fill("#cropAngN", "99"); page.dispatch_event("#cropAngN", "change")
+    check(page.evaluate("FD.CROP.rot") == 45000, "the angle stops at 45 degrees")
+    page.fill("#cropAngN", "0"); page.dispatch_event("#cropAngN", "change")
+    check(rect() == base and page.evaluate("document.querySelector('#pvImg').style.transform") in ("", "rotate(0deg)"), "back to 0: the frame is as big as before and the picture is straight: %s %s" % (rect(), page.evaluate("document.querySelector('#pvImg').style.transform")))
+
+    # the slider: the frame grows back when the angle goes back (while the slider is being moved)
+    page.evaluate("(() => { const a = document.querySelector('#cropAng'); a.value = 6; a.dispatchEvent(new Event('input', {bubbles: true})); })()")
+    r6 = rect()
+    page.evaluate("(() => { const a = document.querySelector('#cropAng'); a.value = 3; a.dispatchEvent(new Event('input', {bubbles: true})); })()")
+    r3 = rect()
+    check(page.evaluate("FD.CROP.rot") == 3000 and inside() and (r3[2] - r3[0]) > (r6[2] - r6[0]), "slider 6 then 3 degrees: the frame grows back: %s %s" % (r6, r3))
+    page.evaluate("(() => { const a = document.querySelector('#cropAng'); a.value = 0; a.dispatchEvent(new Event('input', {bubbles: true})); a.dispatchEvent(new Event('change', {bubbles: true})); })()")
+    check(rect() == base, "slider back to 0: the first frame again")
+
+    # a drag in the zone outside the frame turns the picture
+    bb = page.locator("#cropRect").bounding_box()
+    x, y = bb["x"] + bb["width"] + 32, bb["y"] + bb["height"] / 2
+    page.mouse.move(x, y); page.mouse.down(); page.mouse.move(x, y - 40, steps=5); page.mouse.move(x, y - 80, steps=5)
+    check(page.evaluate("FD.CROP.rot") < -1000 and "fine" in (page.get_attribute("#cropRect", "class") or ""), "dragging outside the frame turns it (up on the right = counter-clockwise), the fine grid shows: %s" % page.evaluate("FD.CROP.rot"))
+    page.mouse.up()
+    check(inside() and "fine" not in (page.get_attribute("#cropRect", "class") or ""), "and the frame is inside the picture; the fine grid is gone")
+    page.click("#cropReset")
+    check(page.evaluate("FD.CROP.rot") == 0 and rect() == base, "\"Wyzeruj\" brings back the angle")
+
+    # the line along the horizon
+    page.click("#cropRuler")
+    check(page.is_visible("#cropRulerPad") and page.get_attribute("#cropRuler", "aria-pressed") == "true", "\"Wyprostuj\" shows the pad for the line")
+    bb = page.locator("#cropRect").bounding_box()
+    x, y = bb["x"] + 30, bb["y"] + 60
+    dx = 300.0
+    page.mouse.move(x, y); page.mouse.down(); page.mouse.move(x + dx / 2, y + dx / 2 * math.tan(math.radians(5)), steps=4); page.mouse.move(x + dx, y + dx * math.tan(math.radians(5)), steps=4); page.mouse.up()
+    check(abs(page.evaluate("FD.CROP.rot") + 5000) <= 150 and inside() and page.is_hidden("#cropRulerPad"), "a line that falls 5 degrees to the right: the picture is turned 5 degrees back: %s" % page.evaluate("FD.CROP.rot"))
+    page.click("#cropReset")
+
+    # quarter turns
+    fr0 = page.evaluate("FD.cropFrame()")
+    page.select_option("#cropAr", "free")
+    page.evaluate("document.querySelector('#cropTurnR').click()")
+    shown()
+    fr1 = page.evaluate("FD.cropFrame()")
+    check(page.evaluate("FD.CROP.turn") == 1 and fr1 == {"W": fr0["H"], "H": fr0["W"]}, "a quarter turn to the right: the frame is upright now: %s" % fr1)
+    check(rect() == [0, 0, fr1["W"], fr1["H"]], "(the frame follows)")
+    page.keyboard.press("Control+[")
+    shown()
+    check(page.evaluate("FD.CROP.turn") == 0 and page.evaluate("FD.cropFrame()") == fr0, "Ctrl + [ turns it back")
+    page.keyboard.press("Control+]")
+    shown()
+    check(page.evaluate("FD.CROP.turn") == 1, "Ctrl + ] turns to the right")
+    shot(page, "rot_2_turned")
+
+    # a kept crop: turned 90 degrees to the right and straightened by 4.5 degrees
+    page.select_option("#cropAr", "3:2")
+    page.fill("#cropAngN", "4.5"); page.dispatch_event("#cropAngN", "change")
+    check(inside(), "3 : 2 with 4.5 degrees on a turned picture: the frame is inside: %s" % rect())
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.keyboard.press("Enter")
+    page.wait_for_function("FD.CROP.on === false")
+    f = page.evaluate("({rot: FD.S.sel.rot, turn: FD.S.sel.turn, crop: FD.S.sel.crop})")
+    check(f["rot"] == 4500 and f["turn"] == 1 and f["crop"] is not None, "kept for the photo: %s" % f)
+    check("obrócone" in page.inner_text("#list li.sel .meta"), "the list says so: " + page.inner_text("#list li.sel .meta"))
+    check("obrócone o 4,5°" in page.inner_text("#cropSum") and "w prawo" in page.inner_text("#cropSum"), "the group \"Kadr\" tells it: " + page.inner_text("#cropSum"))
+    check("mod" in (page.get_attribute('#rail .rb[data-g="crop"]', "class") or ""), "the icon of the group shows a dot")
+    page.wait_for_function("FD.V.key !== '' && document.querySelector('#cropUi').classList.contains('hidden')", timeout=60000)
+    wait_idle(page)
+    pw, ph = page.evaluate("[FD.V.fw, FD.V.fh]")
+    crop = f["crop"]
+    cw, ch = (crop["x1"] - crop["x0"]) / 1e6 * fr1["W"], (crop["y1"] - crop["y0"]) / 1e6 * fr1["H"]
+    check(abs(pw - cw) <= 2 and abs(ph - ch) <= 2, "the picture on the screen has the size of the crop (%dx%d, crop %.0fx%.0f)" % (pw, ph, cw, ch))
+    shot(page, "rot_3_done")
+
+    # Esc leaves the angle as it was
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.keyboard.press("c")
+    shown()
+    check(page.evaluate("FD.CROP.rot") == 4500 and page.evaluate("FD.CROP.turn") == 1 and inside(), "opened again: the angle and the turn are those of the photo")
+    page.fill("#cropAngN", "-12"); page.dispatch_event("#cropAngN", "change")
+    page.evaluate("document.querySelector('#cropTurnR').click()")
+    shown()
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.keyboard.press("Escape")
+    page.wait_for_function("FD.CROP.on === false")
+    check(page.evaluate("[FD.S.sel.rot, FD.S.sel.turn]") == [4500, 1], "Esc: angle and turn are as they were: %s" % page.evaluate("[FD.S.sel.rot, FD.S.sel.turn]"))
+    wait_idle(page)
+
+    # developed == the command line version
+    page.click("#selNone")
+    page.locator("#list li", has_text="synth_small.jpg").locator(".ck").check()
+    run_and_wait(page)
+    z = zip_of(page)
+    names = z.namelist()
+    check(len(names) == 1, "one file: %s" % names)
+    work = tempfile.mkdtemp()
+    box = ",".join("%.6f" % (crop[k] / 1e6) for k in ("x0", "y0", "x1", "y1"))
+    subprocess.run([cli, "--quiet", "--film", "1", "--crop", box, "--angle", "4.5", "--turn", "1", "--quality", PAGE_QUALITY, "--out", work, os.path.join(tmp, "synth_small.jpg")], check=True, capture_output=True)
+    check(z.read(names[0]) == open(os.path.join(work, names[0]), "rb").read(), "%s: page == command line (--crop --angle 4.5 --turn 1)" % names[0])
+    im = ImageOps.exif_transpose(Image.open(io.BytesIO(z.read(names[0]))))             # the file keeps the sensor's order of pixels and tells the turn in its EXIF
+    check(abs(im.size[0] - cw) <= 2 and abs(im.size[1] - ch) <= 2, "the file has the size of the crop: %s" % (im.size,))
+    shutil.rmtree(work, ignore_errors=True)
+
+    # removal
+    page.click("#btnCropClear")
+    check(page.evaluate("[FD.S.sel.rot, FD.S.sel.turn, FD.S.sel.crop]") == [None, None, None], "\"Usuń kadr i obrót\" removes all three")
+    check("mod" not in (page.get_attribute('#rail .rb[data-g="crop"]', "class") or ""), "the dot on the icon is gone")
+    # a portrait photo (the camera turns it): a quarter turn keeps it upright for the engine
+    page.click("#list li:has-text('synth_portrait.cr2')")
+    page.wait_for_function("FD.S.pv && FD.S.pv.file.name === 'synth_portrait.cr2' && FD.cropFrame() !== null", timeout=60000)
+    wait_idle(page)
+    frp = page.evaluate("FD.cropFrame()")
+    page.click("#btnCrop")
+    shown()
+    page.evaluate("document.querySelector('#cropTurnL').click()")
+    shown()
+    check(page.evaluate("FD.cropFrame()") == {"W": frp["H"], "H": frp["W"]}, "portrait photo, a quarter turn to the left: now the frame is wide: %s" % page.evaluate("FD.cropFrame()"))
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.keyboard.press("Enter")
+    page.wait_for_function("FD.CROP.on === false")
+    check(page.evaluate("FD.S.sel.turn") == 3 and page.evaluate("FD.S.sel.crop") is None, "turn 3 (= 90 degrees to the left) without a crop")
+    wait_idle(page)
+    check(page.evaluate("FD.V.fw > FD.V.fh"), "the picture on the screen is wide now: %s" % page.evaluate("[FD.V.fw, FD.V.fh]"))
+    check(not page.errors, "no errors in the browser console: %s" % page.errors[:3])
+    shutil.rmtree(tmp, ignore_errors=True)
+    page.context.close()
+
+
+def scenario_groups(browser):
+    """the right panel: one icon for every group of settings (RapidRAW style), the group "Zapis" (opened by the button at the top), nothing about
+    the engine in the top bar, Tab hides the panels"""
+    page = open_page(browser)
+    page.set_input_files("#inDir", photos)
+    page.wait_for_selector("#list li")
+    wait_idle(page)
+    rb = page.eval_on_selector_all("#rail .rb", "els => els.map(e => e.dataset.g)")
+    check(rb == ["film", "light", "color", "crop", "source", "export"], "the strip of icons: %s" % rb)
+    check(page.evaluate("document.querySelectorAll('#adj .grp:not(.hidden)').length") == 1, "one group is shown at a time")
+    check(page.is_hidden("#exp") and page.is_hidden("#btnRun"), "the saving part is not shown all the time")
+    check(not page.is_visible("#chipEngine"), "nothing about the engine in the top bar")
+    for g, title, sec in (("film", "Film i ziarno", "#sl-grain"), ("light", "Światło", "#sl-expo"), ("color", "Kolor", "#wbChips"), ("crop", "Kadr i obrót", "#btnCropOpen"), ("source", "Źródło zdjęcia", "#srcSeg")):
+        page.click('#rail .rb[data-g="%s"]' % g)
+        check(page.inner_text("#rtitle") == title and page.is_visible(sec) and page.get_attribute('#rail .rb[data-g="%s"]' % g, "aria-selected") == "true", "icon %s: the group %s is shown" % (g, title))
+    check(page.is_hidden("#sl-grain") and page.is_hidden("#sl-expo"), "(and the others are hidden)")
+    page.click('#rail .rb[data-g="film"]')
+    check(page.is_visible("#rsFilm") and page.is_hidden("#rsScene"), "the film group has \"Resetuj film\"")
+    page.click('#rail .rb[data-g="light"]')
+    check(page.is_hidden("#rsFilm") and page.is_visible("#rsScene"), "the light group has \"Resetuj korekty\"")
+    set_number(page, "expo", 0.5)
+    check("mod" in page.get_attribute('#rail .rb[data-g="light"]', "class"), "a changed slider puts a dot on the icon of its group")
+    check("mod" not in page.get_attribute('#rail .rb[data-g="color"]', "class"), "(and not on the others)")
+    page.click('#rail .rb[data-g="film"]')
+    check(page.locator('.grp[data-g="film"].single').count() == 1, "one section in the group: no second title")
+    # the button at the top
+    page.click('#rail .rb[data-g="crop"]')
+    page.click("#btnSave")
+    check(page.is_visible("#btnRun") and page.get_attribute('#rail .rb[data-g="export"]', "aria-selected") == "true" and page.is_visible("#outMode"), "\"Zapisz\" at the top opens the group \"Zapis\" (size, quality, develop)")
+    check("Do wywołania:" in page.inner_text("#expSel"), "it tells what will be developed: " + page.inner_text("#expSel"))
+    page.click('#rail .rb[data-g="film"]')
+    page.keyboard.press("Control+s")
+    check(page.is_visible("#btnRun"), "Ctrl + S opens it too")
+    # Tab hides both panels
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.keyboard.press("Tab")
+    check(page.evaluate("document.querySelector('#app').classList.contains('lc') && document.querySelector('#app').classList.contains('rc')"), "Tab hides both panels")
+    page.keyboard.press("Tab")
+    check(not page.evaluate("document.querySelector('#app').classList.contains('lc') || document.querySelector('#app').classList.contains('rc')"), "and brings them back")
+    # the choice of the group is remembered
+    page.click('#rail .rb[data-g="color"]')
+    page.reload()
+    page.wait_for_function("document.querySelector('#chipEngine').className.indexOf('ok') >= 0", timeout=30000)
+    wrap_reveal(page)
+    page.wait_for_function("document.querySelector('#rail .rb[data-g=\"color\"]').getAttribute('aria-selected') === 'true'", timeout=10000)
+    check(True, "the group that was open stays open after a reload")
+    # the button at the top shows the progress while developing
+    page.set_input_files("#inDir", photos)
+    page.wait_for_selector("#list li")
+    page.click("#selNone")
+    page.locator("#list li").first.locator(".ck").check()
+    page.click("#btnSave")
+    page.click("#btnRun")
+    page.wait_for_function("document.querySelector('#saveTxt').textContent.indexOf('Wywołuję') === 0", timeout=30000)
+    check(True, "the button at the top shows \"Wywołuję\" while photos are developed")
+    page.wait_for_function("document.querySelector('#runInfo').textContent.indexOf('Gotowe') === 0", timeout=300000)
+    check(page.inner_text("#saveTxt") == "Zapisz", "and \"Zapisz\" again when it is over")
+    check(not page.errors, "no errors in the browser console: %s" % page.errors[:3])
+    page.context.close()
+
+
+def scenario_grain(browser):
+    """the preview is counted like the file (4:4:4, every pixel exact), the full size picture is the finished one (size of the result and
+    quality of the file): the grain looks as it will in the file; 100 % = one pixel of the finished picture"""
+    from PIL import Image
+    import io
+    tmp = tempfile.mkdtemp()
+    shutil.copy(os.path.join(photos, "synth_small.jpg"), tmp)
+    page = open_page(browser)
+    page.set_input_files("#inDir", tmp)
+    page.wait_for_selector("#list li")
+    wait_idle(page)
+    page.wait_for_function("FD.cropFrame() !== null", timeout=60000)
+    check(page.evaluate("FD.pvParams({size: 102, quality: 92}).x.hq") == 1, "the preview is counted like the file (hq)")
+    sampling = page.evaluate("""async () => {
+      const b = new Uint8Array(await FD.S.pv.afterBlob.arrayBuffer());
+      for (let i = 2; i + 9 < b.length; ) {
+        if (b[i] !== 0xFF) { i++; continue; }
+        const m = b[i + 1], len = (b[i + 2] << 8) | b[i + 3];
+        if (m === 0xC0 || m === 0xC1 || m === 0xC2) { const n = b[i + 9]; const r = []; for (let c = 0; c < n; c++) r.push(b[i + 10 + 3 * c + 1]); return r; }
+        i += 2 + len;
+      }
+      return null;
+    }""")
+    check(sampling == [0x11, 0x11, 0x11], "the colours of the preview are in full resolution (4:4:4): %s" % sampling)
+    page.click('#rail .rb[data-g="export"]')
+    page.uncheck("#chkHq")
+    wait_idle(page)
+    check(page.evaluate("FD.pvParams({size: 102, quality: 92}).x.hq") == 0, "\"Najwyższa jakość\" off: the preview is counted the camera way too")
+    page.check("#chkHq")
+    wait_idle(page)
+
+    # 100 % = a pixel of the finished picture
+    check(page.evaluate("FD.outK()") == 1, "full size: one pixel of the file is one pixel of the photo")
+    page.select_option("#outMode", "long")
+    page.fill("#outPx", "600"); page.dispatch_event("#outPx", "change")
+    check(abs(page.evaluate("FD.outK()") - 2) < 0.01, "a file of 600 px from a photo of 1200 px: one pixel of the file = 2 pixels of the photo")
+    page.click("#z100")
+    check(abs(page.evaluate("FD.V.s") - 0.5) < 0.01 and page.inner_text("#zVal") == "100 %", "\"100 %%\" shows the finished picture 1:1 (scale %.2f of the photo, %s)" % (page.evaluate("FD.V.s"), page.inner_text("#zVal")))
+    page.wait_for_function("FD.S.pv.afterFull !== null", timeout=120000)
+    wait_idle(page)
+    nat = page.evaluate("[document.querySelector('#pvImg').naturalWidth, document.querySelector('#pvImg').naturalHeight]")
+    check(nat == [600, 400], "the picture shown is the file's size (600 x 400): %s" % nat)
+    check("jak w pliku" in page.inner_text("#pvCap"), "the line under the picture says it is the finished one: " + page.inner_text("#pvCap"))
+    # ... and it IS the finished picture: the same pixels as the developed file
+    detail = page.evaluate("""async () => { const r = await fetch(FD.S.pv.afterFull); return Array.from(new Uint8Array(await r.arrayBuffer())); }""")
+    page.click('#rail .rb[data-g="export"]')
+    page.click("#selNone")
+    page.locator("#list li").first.locator(".ck").check()
+    run_and_wait(page)
+    z = zip_of(page)
+    final = Image.open(io.BytesIO(z.read(z.namelist()[0]))).convert("RGB")
+    prev = Image.open(io.BytesIO(bytes(detail))).convert("RGB")
+    same = final.size == prev.size and list(final.getdata()) == list(prev.getdata())
+    check(same, "the full size picture on the screen has exactly the pixels of the developed file (%s, %s)" % (final.size, prev.size))
+    # the button in the film group
+    page.select_option("#outMode", "full")
+    page.click('#rail .rb[data-g="film"]')
+    page.click("#zFit")
+    page.click("#btnGrain")
+    check(abs(page.evaluate("FD.V.s") - 1) < 0.01, "\"Pokaż ziarno jak w pliku\" zooms to 100 %%: %s" % page.evaluate("FD.V.s"))
+    check(not page.errors, "no errors in the browser console: %s" % page.errors[:3])
+    shutil.rmtree(tmp, ignore_errors=True)
+    page.context.close()
+
+
 SCENARIOS = [("main", scenario_main), ("zoom", scenario_zoom), ("wb", scenario_wb), ("bw", scenario_bw), ("parallel", scenario_parallel),
-             ("inline", scenario_inline), ("portrait", scenario_portrait), ("folder", scenario_folder), ("layout", scenario_layout), ("curves", scenario_curves), ("raw", scenario_raw), ("sensor", scenario_sensor), ("crop", scenario_crop)]
+             ("inline", scenario_inline), ("portrait", scenario_portrait), ("folder", scenario_folder), ("layout", scenario_layout), ("curves", scenario_curves), ("raw", scenario_raw), ("sensor", scenario_sensor), ("crop", scenario_crop), ("rotate", scenario_rotate), ("groups", scenario_groups), ("grain", scenario_grain)]
 with sync_playwright() as p:
     browser = p.chromium.launch()
     for name, fn in SCENARIOS:

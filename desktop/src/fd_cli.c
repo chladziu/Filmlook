@@ -10,6 +10,9 @@
  *     --crop X0,Y0,X1,Y1     crop: a rectangle of the picture as shown, in fractions 0..1 (0.1,0.1,0.9,0.9)
  *     --ratio A:B            crop to the biggest A:B rectangle (in the middle of the --crop rectangle, or of the whole picture); 3:2 or 2:3 are the same
  *                            for a photo that lies the other way (the ratio is long : short), use 3:2! to keep it exactly as written
+ *     --angle DEG            straighten: turn the picture by DEG degrees (-90..90, positive = clockwise) before cropping; the crop
+ *                            is a rectangle of the turned picture and is shrunk to lie inside it (without --crop: the biggest one)
+ *     --turn N               N quarter turns clockwise (0..3), done by the orientation tag: no pixel moves
  *     --quality N            JPEG quality, default 98
  *     --hq 0|1               best quality (default 1): JPEG 4:4:4 and exact colours; 0 = the camera's way (smaller, faster)
  *     --out FOLDER           where the JPGs go; default: the folder FILMLOOK next to the photo
@@ -263,6 +266,8 @@ static void usage(void)
         "  --width N | --height N   szerokość albo wysokość wyniku w pikselach (drugi bok wynika z proporcji)\n"
         "  --crop X0,Y0,X1,Y1   kadr: prostokąt zdjęcia w ułamkach 0..1 (np. 0.1,0.1,0.9,0.9)\n"
         "  --ratio A:B          kadr o proporcjach A:B (największy, w środku; dla zdjęcia pionowego proporcja się obraca; A:B! = dokładnie tak)\n"
+        "  --angle STOPNIE      prostowanie: obraca zdjęcie o dany kąt (-90..90, dodatni = zgodnie z ruchem wskazówek zegara); kadr mieści się w obróconym zdjęciu\n"
+        "  --turn N             N obrotów o 90 stopni zgodnie z ruchem wskazówek zegara (0..3)\n"
         "  --quality N          jakość JPG, domyślnie 98\n"
         "  --out FOLDER         dokąd zapisać (domyślnie folder FILMLOOK obok zdjęcia)\n"
         "  --efekt --ziarno --kontrast --matowosc --cieplo --cienie --swiatla --nasycenie --winieta  WARTOŚĆ\n"
@@ -306,6 +311,11 @@ int fd_main(int argc, char **argv)
             if (sscanf(argv[++i], "%lf,%lf,%lf,%lf", &v[0], &v[1], &v[2], &v[3]) != 4) { fprintf(stderr, "--crop: oczekuję X0,Y0,X1,Y1 (ułamki 0..1)\n"); return 2; }
             job.look.crop_x0 = (int)(v[0] * 1000000.0 + 0.5); job.look.crop_y0 = (int)(v[1] * 1000000.0 + 0.5);
             job.look.crop_x1 = (int)(v[2] * 1000000.0 + 0.5); job.look.crop_y1 = (int)(v[3] * 1000000.0 + 0.5);
+        }
+        else if (i + 1 < argc && !strcmp(a, "--angle")) {
+            double d = atof(argv[++i]);
+            if (d < -90.0 || d > 90.0) { fprintf(stderr, "--angle: oczekuję kąta od -90 do 90 stopni\n"); return 2; }
+            job.look.crop_rot = (int)(d * 1000.0 + (d < 0 ? -0.5 : 0.5));
         }
         else if (i + 1 < argc && !strcmp(a, "--ratio")) {
             int ra = 0, rb = 0, n = 0;

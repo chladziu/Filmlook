@@ -22,6 +22,24 @@ async function writeToFolder(f) {
   } catch (e) { toast('Nie udało się zapisać w folderze: ' + e.message); S.outDir = null; $('#folderInfo').textContent = ''; return false; }
 }
 
+function revealEl(sel) {                                /* (for the tests) opens the group of the right panel that holds the element */
+  var el, g;
+  try { el = document.querySelector(sel); } catch (e) { return false; }
+  if (!el) return false;
+  if (el.closest('#exp')) { openExport(); return true; }
+  g = el.closest('.grp');
+  if (g) { setPanel('r', true); setGroup(g.getAttribute('data-g')); return true; }
+  return false;
+}
+/* the button "Zapisz" at the top shows how far the development is (the group "Zapis" need not be open) */
+function saveProgress(frac, done, total) {
+  var b = $('#btnSave');
+  if (!b) return;
+  b.classList.toggle('run', frac >= 0);
+  if (frac >= 0) b.style.setProperty('--p', Math.round(frac * 100) + '%'); else b.style.removeProperty('--p');
+  $('#saveTxt').textContent = frac >= 0 ? 'Wywołuję ' + done + ' / ' + total : 'Zapisz';
+}
+
 /* develops the ticked photos with the settings on the screen */
 async function runAll() {
   var todo, p, used = {}, next = 0, finished = 0, t0 = Date.now();
@@ -39,6 +57,7 @@ async function runAll() {
     var part = 0; todo.forEach(function (f) { part += f.status === 'done' || f.status === 'error' ? 1 : (f.status === 'running' ? f.pct / 100 : 0); });
     $('#overallBar').style.width = (100 * part / todo.length) + '%';
     $('#runInfo').textContent = finished + ' z ' + todo.length + ' gotowe';
+    saveProgress(todo.length ? part / todo.length : 0, finished, todo.length);
   }
   updateBar();
   async function lane(w) {
@@ -63,11 +82,11 @@ async function runAll() {
     }
   }
   await Promise.all(S.pool.map(lane));
-  S.running = false; $('#btnStop').classList.add('hidden');
+  S.running = false; $('#btnStop').classList.add('hidden'); saveProgress(-1);
   todo.forEach(function (f) { if (f.status === 'wait') f.status = 'wait'; });
   var ok = todo.filter(function (f) { return f.status === 'done'; }).length, bad = todo.filter(function (f) { return f.status === 'error'; }).length;
   var viaRaw = todo.filter(function (f) { return f.status === 'done' && f.raw; }).length;
-  var lostRaw = todo.filter(function (f) { return f.status === 'done' && !f.raw && /\.(cr2|dng)$/i.test(f.name); }).length;
+  var lostRaw = todo.filter(function (f) { return f.status === 'done' && !f.raw && /\.(cr2|cr3|dng)$/i.test(f.name); }).length;
   var rawNote = (viaRaw ? ' Z RAW: ' + viaRaw + '.' : '') + (lostRaw && p.x.usejpg !== 1 ? ' Z JPG zamiast RAW (nieobsługiwany rodzaj pliku): ' + lostRaw + '.' : '');
   $('#runInfo').textContent = (S.cancel ? 'Zatrzymano. ' : 'Gotowe. ') + ok + ' ' + plural(ok, 'zdjęcie', 'zdjęcia', 'zdjęć') + ' w ' + Math.round((Date.now() - t0) / 1000) + ' s' + (bad ? ', z błędem: ' + bad : '') + '.' + rawNote;
   if (!S.cancel) $('#overallBar').style.width = '100%';
@@ -197,9 +216,9 @@ function wire() {
   $('#inCfg').onchange = function (e) { var f = e.target.files[0]; if (f) f.text().then(loadCard); e.target.value = ''; };
 
   var qr = $('#qr'), qn = $('#qn');
-  function setQ(v) { v = clamp(Math.round(Number(v)), 70, 100); if (isNaN(v)) return; S.quality = v; qr.value = v; qn.value = v; save(); staleResults(); }
+  function setQ(v) { v = clamp(Math.round(Number(v)), 70, 100); if (isNaN(v)) return; S.quality = v; qr.value = v; qn.value = v; save(); staleResults(); clearTimeout(setQ.tm); setQ.tm = setTimeout(dropDetail, 350); }
   qr.oninput = function () { setQ(qr.value); }; qn.onchange = function () { setQ(qn.value); };
-  $('#chkHq').onchange = function (e) { S.hq = e.target.checked; save(); staleResults(); };
+  $('#chkHq').onchange = function (e) { S.hq = e.target.checked; save(); staleResults(); refreshBefore(); schedulePreview(true); dropDetail(); };
   $('#btnRun').onclick = runAll;
   $('#btnStop').onclick = function () { S.cancel = true; $('#btnStop').classList.add('hidden'); };
   $('#btnZip').onclick = zipAll;
@@ -217,20 +236,30 @@ function wire() {
   initSplit('#splitL', 'l'); initSplit('#splitR', 'r');
   initStage();
   initCrop();
+  initRail();
+  $('#btnSave').onclick = openExport;
 
   document.addEventListener('keydown', function (e) {
     var t = e.target, typing = t && (t.tagName === 'INPUT' && t.type !== 'range' && t.type !== 'checkbox' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && !typing) {
+      if ((e.key === 's' || e.key === 'S')) { e.preventDefault(); openExport(); return; }
+      if (CROP.on && (e.key === '[' || e.key === ']')) { e.preventDefault(); cropTurn(e.key === ']' ? 1 : -1); return; }
+    }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.key === 'Escape') { if (CROP.on) cropClose(false); else if (S.pipette) stopPipette(); return; }
+    if (e.key === 'Escape') { if (CROP.on && CROP.ruler) toggleRuler(false); else if (CROP.on) cropClose(false); else if (S.pipette) stopPipette(); return; }
     if (typing || (t && t.closest && (t.closest('dialog') || t.closest('.crvcv')))) return;
     var k = e.key;
+    if (k === 'Tab' && !e.shiftKey && !isNarrow() && (t === document.body || t === stageEl)) {          /* like in Lightroom and RAWmakase: Tab hides both panels, Tab again brings them back */
+      var both = $('#app').classList.contains('lc') && $('#app').classList.contains('rc');
+      e.preventDefault(); setPanel('l', both, true); setPanel('r', both); return;
+    }
     if (CROP.on && k === 'Enter' && !(t && t.tagName === 'BUTTON')) { e.preventDefault(); cropClose(true); return; }
     if (CROP.on && (k === 'x' || k === 'X')) { $('#cropFlip').click(); return; }
     if (k === 'c' || k === 'C') cropToggle();
     else if (k === '[') togglePanel('l');
     else if (k === ']') togglePanel('r');
     else if (k === 'f' || k === 'F') setFit();
-    else if (k === '1') zoomCenter(1);
+    else if (k === '1') zoomCenter(s100());
     else if (k === '+' || k === '=') zoomStep(1.25);
     else if (k === '-' || k === '_') zoomStep(0.8);
     else if (k === '\\') { if (!e.repeat && S.pvView !== 'before') { S.holdPrev = S.pvView; pvShow('before'); } }
@@ -284,10 +313,11 @@ async function boot() {
   var n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
   S.pool = await startWorkers(S.module, n + 1);          /* n for the batch + 1 for the preview (a 2nd one for the details is made when needed) */
   if (S.pool.length > 1) S.preview = S.pool.pop(); else S.preview = S.pool[0];
-  $('#chipEngine').textContent = 'silnik gotowy · ' + S.films.length + ' filmów' + (S.inline ? ' · tryb pojedynczy' : ' · równolegle: ' + S.pool.length);
+  $('#chipEngine').textContent = '';                      /* (the state of the engine is told only when something is wrong) */
   $('#chipEngine').className = 'chip ok';
+  $('#chipEngine').setAttribute('data-films', S.films.length); $('#chipEngine').setAttribute('data-lanes', S.pool.length); $('#chipEngine').setAttribute('data-inline', S.inline ? '1' : '0');
   renderList();
-  window.FD = { S: S, V: V, CTRL: CTRL, val: val, setVal: setVal, CROP: CROP, cropFrame: cropFrame, cropRectPx: cropRectPx, outDims: outDims };                /* for the tests */
+  window.FD = { S: S, V: V, CTRL: CTRL, val: val, setVal: setVal, CROP: CROP, cropFrame: cropFrame, cropRectPx: cropRectPx, outDims: outDims, setGroup: setGroup, outK: outK, reveal: revealEl, rectInQuad: rectInQuad, pvParams: pvParams };                /* for the tests */
   if (S.waitSel) { var w = S.waitSel; S.waitSel = null; selectFile(w); }
 }
 boot();

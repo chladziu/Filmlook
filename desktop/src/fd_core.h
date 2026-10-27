@@ -17,6 +17,7 @@
 void *malloc(size_t n);
 void *realloc(void *p, size_t n);
 void free(void *p);
+void *memmove(void *d, const void *s, size_t n);
 #else
 #  ifndef SE_HOSTED
 #    define SE_HOSTED 1
@@ -30,8 +31,10 @@ void free(void *p);
 #include "../../modules/filmlook/develop.h"
 #include "fd_resize.h"
 #include "fd_zoom.h"
+#include "fd_rot.h"
 #include "fd_containers.h"
 #include "fd_raw.h"
+#include "fd_cr3.h"
 
 #define FD_VERSION "0.1"
 
@@ -139,6 +142,7 @@ static const struct { const char *name; int off; } fd_params[] = {
     FDP("crop_x0", crop_x0), FDP("crop_y0", crop_y0), FDP("crop_x1", crop_x1), FDP("crop_y1", crop_y1),
     FDP("crop_ar_w", crop_ar_w), FDP("crop_ar_h", crop_ar_h), FDP("crop_ar_auto", crop_ar_auto),
     FDP("out_long", out_long), FDP("out_w", out_w), FDP("out_h", out_h),
+    FDP("crop_rot", crop_rot), FDP("turn", turn),
     FDP("wb_temp", wb_temp), FDP("wb_tint", wb_tint),
     FDP("skin_hue", skin_hue), FDP("skin_sat", skin_sat), FDP("skin_lum", skin_lum),
     FDP("ton_mode", ton_mode),
@@ -227,12 +231,28 @@ typedef struct {
     int ow, oh;              /* the result */
     int src_w, src_h;        /* the used part in full size pixels (what the page is told) */
     int route;               /* 0 = as it is, 1 = smaller (area average), 2 = bigger (bicubic) */
+    int orient;              /* the orientation of the result (the file's own, turned by look_t.turn) */
+    int rot;                 /* the straightening angle for the picture as it is stored, thousandths of a degree (0 = none) */
 } fd_geo;
 
 static int fd_has_geo(const look_t *L)
 {
     return (L->crop_x1 > L->crop_x0 && L->crop_y1 > L->crop_y0) || (L->crop_ar_w > 0 && L->crop_ar_h > 0) ||
-           L->out_long > 0 || L->out_w > 0 || L->out_h > 0;
+           L->out_long > 0 || L->out_w > 0 || L->out_h > 0 || L->crop_rot != 0 || (L->turn & 3) != 0;
+}
+
+/* The orientation of a photo (EXIF 1..8) turned by `turn` quarter turns clockwise as it is shown. Every orientation is a 2 x 2
+ * matrix (stored x, y -> shown x, y); a quarter turn multiplies it by [0 -1; 1 0]. */
+static int fd_orient_turn(int o, int turn)
+{
+    static const signed char M[9][4] = { { 1, 0, 0, 1 }, { 1, 0, 0, 1 }, { -1, 0, 0, 1 }, { -1, 0, 0, -1 }, { 1, 0, 0, -1 },
+                                         { 0, 1, 1, 0 }, { 0, -1, 1, 0 }, { 0, -1, -1, 0 }, { 0, 1, -1, 0 } };
+    int a, b, c, d, k;
+    if (o < 1 || o > 8) o = 1;
+    a = M[o][0]; b = M[o][1]; c = M[o][2]; d = M[o][3];
+    for (k = turn & 3; k > 0; k--) { int na = -c, nb = -d, nc = a, nd = b; a = na; b = nb; c = nc; d = nd; }
+    for (k = 1; k <= 8; k++) if (M[k][0] == a && M[k][1] == b && M[k][2] == c && M[k][3] == d) return k;
+    return 1;
 }
 
 static int fd_gcd(int a, int b) { while (b) { int t = a % b; a = b; b = t; } return a; }
@@ -249,9 +269,14 @@ static int fd_pic_w = 0, fd_pic_h = 0, fd_pic_swap = 0;     /* the whole photo a
 /* orient: the EXIF orientation 1..8 (0 = 1). 0 = ok, otherwise an error code */
 static int fd_geo_make(int sw, int sh, int orient, int size, const look_t *L, fd_geo *g)
 {
-    int div = 1, swap = (orient >= 5 && orient <= 8);
+    int div = 1, swap, rot = L->crop_rot;
     memset(g, 0, sizeof *g);
     if (sw < 1 || sh < 1) return FD_E_SIZE;
+    orient = fd_orient_turn(orient, L->turn);                       /* the turn of the page is a turn of the orientation tag */
+    swap = (orient >= 5 && orient <= 8);
+    g->orient = orient;
+    if (rot > 90000) rot = 90000;
+    if (rot < -90000) rot = -90000;
     fd_pic_w = swap ? sh : sw; fd_pic_h = swap ? sw : sh; fd_pic_swap = swap;
     if (size > FD_SIZE_ENGINE) { div = size - FD_SIZE_ENGINE; if (div != 2 && div != 4) div = 1; }
     g->div = div;
@@ -270,6 +295,23 @@ static int fd_geo_make(int sw, int sh, int orient, int size, const look_t *L, fd
             if (y0 > dH - 1) y0 = dH - 1;
             if (x1 < x0 + 1) x1 = x0 + 1;
             if (y1 < y0 + 1) y1 = y0 + 1;
+        }
+        if (rot) {                                                      /* the crop has to lie inside the turned picture */
+            int64_t sn, cs;
+            int s16, w = x1 - x0, h = y1 - y0, mx2 = x0 + x1 - dW, my2 = y0 + y1 - dH;
+            fd_sincos(rot, &sn, &cs);
+            s16 = fd_rot_fit(sn, cs, dW, dH, mx2, my2, w, h, (L->crop_x1 > L->crop_x0 && L->crop_y1 > L->crop_y0) ? 2 : 0);   /* (a crop that is two pixels outside is let through: the edge is repeated) */
+            if (s16 < 65536) {
+                if (s16 > 0) s16 = fd_rot_fit(sn, cs, dW, dH, mx2, my2, w, h, 0);
+                if (s16 == 0) { x0 = 0; y0 = 0; x1 = dW; y1 = dH; w = dW; h = dH; mx2 = 0; my2 = 0; s16 = fd_rot_fit(sn, cs, dW, dH, 0, 0, w, h, 0); }
+                if (s16 < 65536) {
+                    int nw = (int)(((int64_t)w * s16) >> 16), nh = (int)(((int64_t)h * s16) >> 16);
+                    if (nw < 1) nw = 1;
+                    if (nh < 1) nh = 1;
+                    x0 = (x0 + x1 - nw) / 2; x1 = x0 + nw;
+                    y0 = (y0 + y1 - nh) / 2; y1 = y0 + nh;
+                }
+            }
         }
         if (L->crop_ar_w > 0 && L->crop_ar_h > 0) {                     /* the biggest crop of that shape in the middle of the rectangle */
             int aw = L->crop_ar_w > 100000 ? 100000 : L->crop_ar_w, ah = L->crop_ar_h > 100000 ? 100000 : L->crop_ar_h;
@@ -309,6 +351,8 @@ static int fd_geo_make(int sw, int sh, int orient, int size, const look_t *L, fd
         g->src_w = g->cw * div; g->src_h = g->ch * div;
         if (g->src_w > sw) g->src_w = sw;
         if (g->src_h > sh) g->src_h = sh;
+        /* the angle of the picture as it is stored: a mirrored orientation turns the other way round */
+        g->rot = (orient == 2 || orient == 4 || orient == 5 || orient == 7) ? -rot : rot;
     }
     if (g->ow == g->cw && g->oh == g->ch) g->route = 0;
     else if (g->ow <= g->cw && g->oh <= g->ch) g->route = 1;
@@ -363,15 +407,18 @@ static void fd_develop_geo(const fl_io *io, const film_t *f, const look_t *L, in
     fl_ctx c;
     fd_rs rs;
     fd_zs8 zs;
+    fd_rot8 rt;
     fd_cropf cf;
     fd_geo g;
     uint8_t *hdr, *strip;
     uint32_t hlen, poff = 0, plen = 0;
-    int gscale, rs_open = 0, zs_open = 0, grc;
+    int gscale, rs_open = 0, zs_open = 0, rt_open = 0, grc;
+    int (*dsink)(void *ctx, const uint8_t *rgb, int nrows, int width);
+    void *dctx;
     se_err rc;
 
     memset(res, 0, sizeof *res);
-    memset(&rs, 0, sizeof rs); memset(&zs, 0, sizeof zs);
+    memset(&rs, 0, sizeof rs); memset(&zs, 0, sizeof zs); memset(&rt, 0, sizeof rt);
     se_arena_init(&ar, io->mem, io->mem_size);
     hdr = SE_NEW(&ar, uint8_t, FL_HDR_BYTES);
     if (!hdr) { res->rc = SE_E_NOMEM; return; }
@@ -411,11 +458,22 @@ static void fd_develop_geo(const fl_io *io, const film_t *f, const look_t *L, in
     cf.x0 = g.cx; cf.y0 = g.cy; cf.cw = g.cw; cf.ch = g.ch;
     if (g.route == 1) {
         if (fd_rs_begin(&rs, g.cw, g.ch, g.ow, g.oh, fl_look_rows, &c) != 0) { res->rc = FD_E_SIZE; return; }
-        rs_open = 1; cf.sink = fd_rs_rows; cf.sctx = &rs;
+        rs_open = 1; dsink = fd_rs_rows; dctx = &rs;
     } else if (g.route == 2) {
         if (fd_zs8_begin(&zs, g.cw, g.ch, g.ow, g.oh, fl_look_rows, &c) != 0) { res->rc = FD_E_SIZE; return; }
-        zs_open = 1; cf.sink = fd_zs8_rows; cf.sctx = &zs;
-    } else { cf.sink = fl_look_rows; cf.sctx = &c; }
+        zs_open = 1; dsink = fd_zs8_rows; dctx = &zs;
+    } else { dsink = fl_look_rows; dctx = &c; }
+    cf.sink = dsink; cf.sctx = dctx;
+    if (g.rot) {                                         /* straightening: the decoder feeds the band of rows the turned crop needs */
+        if (fd_rot8_begin(&rt, g.bw, g.bh, g.cx, g.cy, g.cw, g.ch, g.rot, dsink, dctx) != 0) {
+            if (rs_open) fd_rs_free(&rs);
+            if (zs_open) fd_zs8_free(&zs);
+            res->rc = SE_E_NOMEM; return;
+        }
+        rt_open = 1;
+        cf.x0 = 0; cf.cw = g.bw; cf.y0 = rt.r.y0; cf.ch = rt.r.y1 - rt.r.y0 + 1;
+        cf.sink = fd_rot8_rows; cf.sctx = &rt;
+    }
 
     memset(&ex, 0, sizeof ex);
     ex.make = meta.make[0] ? meta.make : "Canon";
@@ -423,25 +481,27 @@ static void fd_develop_geo(const fl_io *io, const film_t *f, const look_t *L, in
     ex.software = f->full;
     ex.datetime = meta.dt;
     ex.exp_num = meta.en; ex.exp_den = meta.ed; ex.fn_num = meta.fn; ex.fn_den = meta.fd;
-    ex.iso = meta.iso; ex.orientation = meta.orient;
+    ex.iso = meta.iso; ex.orientation = g.orient;
     rc = se_jpeg_begin(c.enc, g.ow, g.oh, quality, strip, &ex, fl_enc_sink, &c);
-    if (rc != SE_OK) { if (rs_open) fd_rs_free(&rs); if (zs_open) fd_zs8_free(&zs); res->rc = rc; return; }
+    if (rc != SE_OK) { if (rs_open) fd_rs_free(&rs); if (zs_open) fd_zs8_free(&zs); if (rt_open) fd_rot8_free(&rt); res->rc = rc; return; }
 
     rc = se_jpeg_decode_stream_scaled(hdr, hlen, plen, fl_src_read, &c, g.div, &ar, fd_crop_rows, &cf, &ji);
-    if (rc == SE_E_IO && cf.done && !c.err && !rs.failed && !zs.z.failed) rc = SE_OK;    /* the decoder was stopped on purpose */
-    if (rc == SE_OK && (c.err || rs.failed || zs.z.failed)) rc = SE_E_IO;
+    if (rc == SE_E_IO && cf.done && !c.err && !rs.failed && !zs.z.failed && !rt.r.failed) rc = SE_OK;    /* the decoder was stopped on purpose */
+    if (rc == SE_OK && (c.err || rs.failed || zs.z.failed || rt.r.failed)) rc = SE_E_IO;
     if (rc == SE_OK && cf.y0 + cf.ch > cf.y) rc = SE_E_TRUNCATED;                         /* the picture ended before the crop did */
+    if (rc == SE_OK && rt_open && !fd_rot_done(&rt.r)) rc = SE_E_TRUNCATED;
     if (rc == SE_OK) rc = se_look_end(c.run, fl_look_emit, &c);
     if (rc == SE_OK && !c.err) rc = se_jpeg_end(c.enc);
     if (rc == SE_OK && c.err) rc = SE_E_IO;
     if (rs_open) fd_rs_free(&rs);
     if (zs_open) fd_zs8_free(&zs);
+    if (rt_open) fd_rot8_free(&rt);
     res->rc = rc;
     res->mem_peak = ar.peak;
 }
 
 /* ================================================================== RAW
- * The sensor data of a photo (a CR2 of the 5D Mark II, a DNG) is decoded once (fd_raw_load) and kept in a fd_rawdata. A job
+ * The sensor data of a photo (a CR2 of the 5D Mark II, a CR3 of the EOS R series, a DNG) is decoded once (fd_raw_load) and kept in a fd_rawdata. A job
  * then develops it row by row: demosaic -> 16 bit linear light (fd_raw.h) -> the first tone stage of the film made on that
  * light (fr_build_map) -> 8 bit rows -> the rest of the film look of the engine -> the JPEG.
  * The tone of the camera's own JPEG is the starting point of the tone (the switch "wzorzec z JPG"): fd_raw_fit() measures it
@@ -563,6 +623,7 @@ static int fd_raw_find_jpeg(const uint8_t *src, size_t n, size_t *off, size_t *l
         *off = po; *len = pl;
         return 1;
     }
+    if (n >= 12 && src[4] == 'f' && src[5] == 't' && src[6] == 'y' && src[7] == 'p') return fd_cr3_find(src, n, off, len, &m) == SE_OK;
     return fd_dng_find(src, n, off, len, &m) == SE_OK;
 }
 
@@ -625,13 +686,15 @@ static int fd_raw_load(const uint8_t *src, size_t n, fd_rawdata *rd)
     if (src[0] == 'I' && src[1] == 'I' && src[2] == 42 && src[3] == 0 && src[8] == 'C' && src[9] == 'R') rc = fr_parse_cr2(src, n, &rd->ri);
     else if ((src[0] == 'I' && src[1] == 'I' && src[2] == 42 && src[3] == 0) || (src[0] == 'M' && src[1] == 'M' && src[2] == 0 && src[3] == 42))
         rc = fr_parse_dng(src, n, &rd->ri);
+    else if (src[4] == 'f' && src[5] == 't' && src[6] == 'y' && src[7] == 'p') rc = fr_parse_cr3(src, n, &rd->ri);        /* Canon CR3 (EOS R ...) */
     else return FR_NONE;
     if (rc) return rc;
     cnt = (size_t)rd->ri.rw * (size_t)rd->ri.rh * (size_t)(rd->ri.ncomp == 3 ? 3 : 1);
     rd->raw = (uint16_t *)malloc(cnt * sizeof(uint16_t));
-    rowbuf = (uint16_t *)malloc((rd->ri.kind == 2 ? fr_dng_rowbuf(&rd->ri) : (size_t)rd->ri.rw * 4) * sizeof(uint16_t));
-    if (!rd->raw || !rowbuf) { free(rowbuf); fd_raw_free(rd); return SE_E_NOMEM; }
-    if (rd->ri.kind == 2) { memset(rd->raw, 0, cnt * sizeof(uint16_t)); rc = fr_decode_dng(src, n, &rd->ri, rd->raw, rowbuf); }
+    rowbuf = rd->ri.kind == 3 ? 0 : (uint16_t *)malloc((rd->ri.kind == 2 ? fr_dng_rowbuf(&rd->ri) : (size_t)rd->ri.rw * 4) * sizeof(uint16_t));
+    if (!rd->raw || (!rowbuf && rd->ri.kind != 3)) { free(rowbuf); fd_raw_free(rd); return SE_E_NOMEM; }
+    if (rd->ri.kind == 3) rc = fr_decode_cr3(src, n, &rd->ri, rd->raw);
+    else if (rd->ri.kind == 2) { memset(rd->raw, 0, cnt * sizeof(uint16_t)); rc = fr_decode_dng(src, n, &rd->ri, rd->raw, rowbuf); }
     else rc = fr_decode_cr2(src, &rd->ri, rd->raw, rowbuf);
     free(rowbuf);
     if (rc) { fd_raw_free(rd); return rc; }
@@ -666,17 +729,18 @@ static void fd_develop_raw(const fl_io *io, const film_t *f, const look_t *L, co
     fr_ctx fc;
     fd_rs16 rs;
     fd_zs zs;
+    fd_rot rt;
     fd_geo g;
     fd_rawout out;
     fr_map *mp = 0;
     uint16_t *rowbuf = 0;
     uint8_t *row8 = 0, *strip;
     const fr_info *ri = &rd->ri;
-    int sw = ri->w, sh = ri->h, div, ow, oh, gscale, y, i, v, grc, full_open = 0, rs_open = 0, zs_open = 0;
+    int sw = ri->w, sh = ri->h, div, ow, oh, gscale, y, i, v, grc, full_open = 0, rs_open = 0, zs_open = 0, rt_open = 0;
     se_err rc = SE_OK;
 
     memset(res, 0, sizeof *res);
-    memset(&rs, 0, sizeof rs); memset(&zs, 0, sizeof zs);
+    memset(&rs, 0, sizeof rs); memset(&zs, 0, sizeof zs); memset(&rt, 0, sizeof rt);
     memset(&meta, 0, sizeof meta);
     fl_tiff_meta(src, (uint32_t)srclen, &meta);
     if (!meta.orient) meta.orient = ri->orient;
@@ -722,7 +786,7 @@ static void fd_develop_raw(const fl_io *io, const film_t *f, const look_t *L, co
     ex.software = f->full;
     ex.datetime = meta.dt;
     ex.exp_num = meta.en; ex.exp_den = meta.ed; ex.fn_num = meta.fn; ex.fn_den = meta.fd;
-    ex.iso = meta.iso; ex.orientation = meta.orient;
+    ex.iso = meta.iso; ex.orientation = g.orient;
     rc = se_jpeg_begin(c.enc, ow, oh, quality, strip, &ex, fl_enc_sink, &c);
     if (rc != SE_OK) { res->rc = rc; goto done; }
 
@@ -739,6 +803,19 @@ static void fd_develop_raw(const fl_io *io, const film_t *f, const look_t *L, co
         if (fr_full_begin(&fc) != 0) { res->rc = SE_E_NOMEM; goto done; }
         full_open = 1;
     }
+    if (g.rot) {                                              /* straightening: the band of rows the turned crop needs goes through the turning stage */
+        fd_rot_emit_fn de = g.route == 1 ? fd_rs16_rows : (g.route == 2 ? fd_zs_rows : fd_raw_emit);
+        void *dc = g.route == 1 ? (void *)&rs : (g.route == 2 ? (void *)&zs : (void *)&out);
+        if (fd_rot_begin(&rt, g.bw, g.bh, g.cx, g.cy, g.cw, g.ch, g.rot, 65535, de, dc) != 0) { res->rc = SE_E_NOMEM; goto done; }
+        rt_open = 1;
+        for (y = rt.y0; y <= rt.y1 && !c.err; y++) {
+            const uint16_t *row;
+            if (div == 1) { fr_row_full(&fc, y, rowbuf); row = rowbuf; }
+            else { int ox; for (ox = rt.bx0; ox <= rt.bx1; ox++) fr_pix_binned(&fc, ox, y, div, rowbuf + (size_t)ox * 3); row = rowbuf; }
+            if (fd_rot_rows(&rt, row, 1, g.bw) != 0) c.err = 1;
+        }
+        if (!c.err && !fd_rot_done(&rt)) c.err = 1;
+    } else
     for (y = g.cy; y < g.cy + g.ch && !c.err; y++) {          /* only the rows of the crop are made */
         const uint16_t *row;
         int bad;
@@ -758,6 +835,7 @@ done:
     if (rs_open) fd_rs16_free(&rs);
     if (zs_open) fd_zs_free(&zs);
     if (full_open) fr_full_end(&fc);
+    if (rt_open) fd_rot_free(&rt);
     free(row8); free(rowbuf); free(mp);
 }
 

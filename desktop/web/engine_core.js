@@ -21,7 +21,7 @@ function fdCrc32(u8) {
 /* wasmModule: a compiled WebAssembly.Module. Returns (a promise of) the engine:
  *   engine.films            the list of films: {i, name, full, maker, type, typeNo, kind, desc, iso, mono}
  *   engine.version          text
- *   engine.setSource(u8)    keeps a photo (the whole file) in the engine's memory, for several runs; a CR2 / DNG is decoded
+ *   engine.setSource(u8)    keeps a photo (the whole file) in the engine's memory, for several runs; a CR2 / CR3 / DNG is decoded
  *                           right here (once). Returns false (no memory) or {raw: true when sensor data was decoded, rawW, rawH,
  *                           fit: true when the tone of the camera's JPEG could be measured, rawErr / rawErrText: why the sensor
  *                           data of this file could not be used (undefined when it simply has none)}

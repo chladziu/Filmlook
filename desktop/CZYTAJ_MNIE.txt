@@ -8,10 +8,16 @@ Oryginały zostają nietknięte. Źródłem może być JPG z aparatu albo plik R
 wywołuje zdjęcie z surowych danych matrycy (nie z JPG zapisanego w pliku, który ma niską jakość):
 najpierw sam wywołuje RAW (balans bieli, światło, kolory), potem nakłada film. Czyta:
 - CR2 z aparatu Canon EOS 5D Mark II,
+- CR3 z aparatów Canon z matrycą CRX: EOS R, RP, R3, R5, R5 II, R6, R6 II, R6 III, R7, R8, R10,
+  R50, R100, M50, M50 II, M200, M6 II, 90D, 250D, 850D, 1D X III oraz PowerShot G5 X II, G7 X III,
+  SX70 HS - w tym C-RAW (mniejsze pliki, zapis z niewielką stratą) i zwykły RAW (zapis bezstratny),
 - DNG (z matrycą Bayera albo liniowe, bez kompresji albo z kompresją bezstratną).
-Plik CR3 (Canon EOS R...) i CR2 z innych aparatów: program bierze z nich pełnowymiarowy podgląd JPG
-(w pliku RAW leży obok surowych danych). Żeby użyć RAW z CR3, zamień go na DNG darmowym programem
-Adobe DNG Converter - wtedy zdjęcie wywoła się z surowych danych.
+Pliki CR3 z aparatów spoza tej listy i z najnowszym zapisem (CRX wersja 2) program wywołuje
+tak jak dawniej: bierze z nich pełnowymiarowy podgląd JPG, który leży w pliku obok surowych danych.
+Żeby użyć RAW z takiego pliku, zamień go na DNG darmowym programem Adobe DNG Converter.
+Dekoder CR3 jest przeniesiony z programu RAWmakase (licencja MIT) i sprawdzony co do jednej
+wartości z dekoderem LibRaw na plikach z Canona EOS RP (C-RAW). Pozostałe aparaty i zapis bezstratny
+są sprawdzone na plikach testowych - jeśli któryś Twój plik CR3 wyjdzie dziwnie, daj znać.
 
 
 NAJPROSTSZY SPOSÓB (Windows i Mac): plik FILMLOOK_DESKTOP.html
@@ -20,9 +26,13 @@ NAJPROSTSZY SPOSÓB (Windows i Mac): plik FILMLOOK_DESKTOP.html
    (Chrome, Edge, Firefox, Safari). Nic nie trzeba instalować i nie trzeba internetu.
    Zdjęcia nigdzie nie są wysyłane - wszystko dzieje się na Twoim komputerze.
 2. Układ okna: zdjęcie jest pośrodku, po lewej lista zdjęć i wybór filmu, po prawej
-   ustawienia. Oba panele chowają się jednym kliknięciem w strzałkę na ich krawędzi
-   (albo klawiszami [ i ]), a ich szerokość zmieniasz przeciągając krawędź.
-   Na małym ekranie (telefon, wąskie okno) panele wsuwają się nad zdjęcie.
+   ustawienia. Ustawienia są pogrupowane pod ikonami na prawej krawędzi okna: Film, Światło,
+   Kolor, Kadr, RAW i (na dole) Zapis - po kliknięciu ikony widzisz tylko ten dział, a kropka
+   przy ikonie mówi, że coś w nim zmieniono. Oba panele chowają się jednym kliknięciem w strzałkę
+   na ich krawędzi (albo klawiszami [ i ]), klawisz Tab chowa oba naraz (i przywraca), a ich
+   szerokość zmieniasz przeciągając krawędź. Okienko z zapisem (rozmiar, jakość, wywoływanie)
+   jest w dziale Zapis (Ctrl+S) i nie zasłania zdjęcia. Na małym ekranie (telefon, wąskie okno)
+   panele wsuwają się nad zdjęcie.
 3. Zdjęcia: przeciągnij je (JPG, CR2, CR3 albo DNG) albo cały folder z karty (np. DCIM) na okno
    albo użyj przycisków "+ Zdjęcia" / "+ Folder". Gdy w folderze jest para RAW+JPG,
    domyślnie brany jest tylko plik RAW.
@@ -40,8 +50,8 @@ NAJPROSTSZY SPOSÓB (Windows i Mac): plik FILMLOOK_DESKTOP.html
      wywołanego RAW (jasność, kontrast) jest dopasowany do JPG z aparatu, który leży w tym samym
      pliku - czyli do tego, co widać na ekranie aparatu - i na ten wygląd nakładają się filmy.
      Wyłączony: czysty RAW ze standardowym, neutralnym tonem programu, bez wzorca z aparatu.
-     Wzorzec dopasowuje tylko jasność i kontrast, nie kolory. Przy zwykłym JPG i przy CR3 ten
-     dział tylko mówi, dlaczego nie ma RAW.
+     Wzorzec dopasowuje tylko jasność i kontrast, nie kolory. Przy zwykłym JPG i przy pliku, którego
+     RAW program nie umie odczytać, ten dział tylko mówi, dlaczego nie ma RAW.
    - Film i ziarno: siła efektu, ilość, wielkość i szorstkość ziarna, kolor ziarna
      (w filmach kolorowych ziarno jest domyślnie kolorowe, jak w prawdziwym filmie barwnym;
      0 = szare ziarno, jak w aparacie), winieta, matowość
@@ -69,18 +79,25 @@ NAJPROSTSZY SPOSÓB (Windows i Mac): plik FILMLOOK_DESKTOP.html
    klawisz F - całe zdjęcie, 1 - 100 %, + i - powiększenie. Przy powiększeniu program
    liczy zdjęcie w pełnym rozmiarze, więc widać prawdziwe ziarno i szczegóły.
    Przytrzymaj klawisz \ (albo przycisk "Przed"), żeby zobaczyć oryginał.
-7. Kadr (przycisk "Kadr" nad zdjęciem albo klawisz C): ramka z uchwytami i siatką trzecich.
+7. Kadr i obrót (przycisk "Kadr" nad zdjęciem albo klawisz C; działa też na zdjęciach RAW):
+   ramka z uchwytami i siatką trzecich.
    Przeciągnij ramkę, żeby ją przesunąć, uchwyty na rogach i bokach zmieniają jej rozmiar.
    Na pasku z góry wybierasz proporcje, jak w Lightroomie: Oryginał, Dowolne (bez blokady),
    1:1, 5:4 (4x5), 7:5 (5x7), 4:3, 3:2 (2x3, jak w aparacie), 16:10, 16:9, 2:1, 3:1 (panorama)
    albo Własne (np. 7:3). Przy wybranych proporcjach ramka ma zawsze dokładnie ten kształt
-   ("Obróć" albo klawisz X zamienia poziomo na pionowo). "Wyzeruj" daje całą klatkę,
+   ("Pion / poziom" albo klawisz X zamienia poziomo na pionowo).
+   Prostowanie, jak w Lightroomie: suwak "Kąt" (od -45 do 45 stopni, podwójne kliknięcie = 0),
+   albo przeciąganie myszą tuż przy ramce, na zewnątrz (zdjęcie obraca się pod ramką), albo
+   przycisk "Wyprostuj" - rysujesz na zdjęciu linię wzdłuż horyzontu lub pionowej ściany i zdjęcie
+   samo się prostuje. Ramka zawsze mieści się w obróconym zdjęciu (program ją zmniejsza, gdyby
+   wyszła poza zdjęcie). Przyciski "90°" obracają zdjęcie o ćwierć obrotu (Ctrl+[ i Ctrl+]).
+   "Wyzeruj" daje całą klatkę bez obrotu,
    Enter albo "Gotowe" zapisuje kadr, Esc go odrzuca, dwukrotne kliknięcie w ramce też kończy.
-   Kadr jest osobny dla każdego zdjęcia. "Dla wszystkich" ustawia te same proporcje
+   Kadr i kąt są osobne dla każdego zdjęcia. "Dla wszystkich" ustawia te same proporcje
    (wyśrodkowane) wszystkim zdjęciom, które nie mają jeszcze własnego kadru; pionowe zdjęcia
    dostają proporcje pionowe. Kadr jest też w prawym panelu ("Kadr") i przy "Usuń kadr".
-   Winieta i ziarno są liczone już na wykadrowanym zdjęciu, tak jak będą w pliku.
-8. Rozmiar zapisu (pole "Rozmiar" na dole): "Pełny" (rozmiar zdjęcia, a po kadrowaniu rozmiar
+   Winieta i ziarno są liczone już na wykadrowanym i wyprostowanym zdjęciu, tak jak będą w pliku.
+8. Rozmiar zapisu (dział Zapis): "Pełny" (rozmiar zdjęcia, a po kadrowaniu rozmiar
    kadru) albo dowolny: dłuższy bok, szerokość albo wysokość w pikselach (od 16 do 16384 px,
    najwyżej 160 Mpix). Rozmiar może być też większy niż zdjęcie - wtedy zdjęcie jest powiększane
    (metodą bicubic, Catmull-Rom), a pomniejszane jest uśredniane. Druga strona zawsze wynika
@@ -96,9 +113,12 @@ NAJPROSTSZY SPOSÓB (Windows i Mac): plik FILMLOOK_DESKTOP.html
    Nazwa wyniku: nazwa zdjęcia + nazwa filmu (+ _3000px, _w2048 albo _h1080 przy wybranym rozmiarze).
 Strona pamięta ostatnio wybrany film, suwaki, rozmiar, proporcje kadru, jakość i układ okna
 (kadry zdjęć nie, bo lista zdjęć jest za każdym razem nowa).
-Uwaga: to, co widać w podglądzie, jest liczone w połowie rozmiaru (po powiększeniu - w pełnym),
-dlatego ziarno w gotowym zdjęciu wygląda nieco inaczej. Wywołanie RAW trwa ok. 1-3 sekund na zdjęcie
-(21 Mpix), a zdjęcie jest wczytywane do pamięci w całości (CR2 z 5D Mark II ma ok. 25 MB).
+Ziarno w podglądzie: całe zdjęcie jest w podglądzie liczone w połowie rozmiaru, ale przy "100 %"
+(klawisz 1 albo przycisk "Pokaż ziarno jak w pliku") program liczy zdjęcie w rozmiarze gotowego
+pliku, więc widać dokładnie to ziarno, które będzie w zapisanym JPG (w przybliżeniu 1 piksel
+gotowego zdjęcia = 1 piksel ekranu). Wywołanie RAW trwa ok. 1-3 sekund na zdjęcie
+(21-26 Mpix), a zdjęcie jest wczytywane do pamięci w całości (CR2 z 5D Mark II ma ok. 25 MB,
+CR3 z EOS RP ok. 15-35 MB).
 Ograniczenia RAW: kolory bierze z uniwersalnej macierzy aparatu (nie z profili Adobe), a wzorzec
 z JPG dopasowuje tylko ton; programy takie jak Lightroom dadzą nieco inne kolory.
 
@@ -112,7 +132,9 @@ Windows (filmlook_cli.exe): przeciągnij zdjęcia albo folder na filmlook_cli.ex
   Kadr i rozmiar: --crop X0,Y0,X1,Y1 (prostokąt w ułamkach 0..1, np. 0.1,0.1,0.9,0.9),
   --ratio 3:2 (największy kadr o tych proporcjach, w środku; dla zdjęcia pionowego proporcja
   się obraca, 3:2! = dokładnie tak jak wpisano), --long 3000 (dłuższy bok w px), --width 2048,
-  --height 1080 (zdjęcie może być też powiększone).
+  --height 1080 (zdjęcie może być też powiększone). Obrót: --angle -3.5 (prostowanie w stopniach,
+  od -45 do 45; kadr --crop jest wtedy prostokątem na obróconym zdjęciu), --turn 1 (ćwierć obrotu
+  w prawo; 2 - pół, 3 - w lewo).
   Dodatkowe suwaki z całej reszty ustawień: --expo --hi_t --sh_t --wh_t --bl_t --wb_temp --wb_tint
   --skin_hue --skin_sat --skin_lum --gcolor --filter --ton_mode --hue_red ... oraz krzywe
   --crv0_n 3 --crv0_x0 0 --crv0_y0 0 --crv0_x1 128 --crv0_y1 90 --crv0_x2 255 --crv0_y2 255
@@ -132,4 +154,7 @@ LICENCJE
 Silnik obróbki zdjęć pochodzi z Soup Engine (licencja GPL v2, plik LICENSE_GPL2_silnik.txt),
 rozszerzonego o film look. Program jako całość jest więc na licencji GPL v2.
 Wyglądy filmów: własne presety oraz EmulsionPresets (licencja MIT, plik THIRD_PARTY_LICENSES.txt).
+Dekoder plików CR3 (desktop/src/fd_cr3.h) jest przeniesiony z programu RAWmakase
+(https://github.com/pch/rawmakase, licencja MIT, (c) 2026 RAWmakase contributors; pełny tekst
+licencji w THIRD_PARTY_LICENSES.txt).
 Kod źródłowy: https://github.com/chladziu/filmlook (katalog desktop/ i modules/filmlook/).

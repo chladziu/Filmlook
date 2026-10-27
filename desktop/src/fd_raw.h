@@ -297,9 +297,15 @@ static int fr_has(const char *s, const char *needle)
     return 0;
 }
 
+/* the header of the image of a CR3 (its CMP1 box; see fd_cr3.h) */
+typedef struct {
+    int version, width, height, tile_w, tile_h, bits, planes, cfa, encoding, levels;
+    uint32_t header_size;
+} fcx_hdr;
+
 /* everything the program needs to know about the sensor data of one file */
 typedef struct {
-    int kind;                       /* 1 = CR2, 2 = DNG */
+    int kind;                       /* 1 = CR2, 2 = DNG, 3 = CR3 */
     int rw, rh;                     /* the raw array (with the masked pixels around the picture) */
     int x0, y0, w, h;               /* the picture inside it */
     int cfa[4];                     /* colour (0 R, 1 G, 2 B) at ((y - y0) & 1) * 2 + ((x - x0) & 1); only when ncomp == 1 */
@@ -311,7 +317,8 @@ typedef struct {
     int orient;
     int base_exp;                   /* baseline exposure in 1/100 stop (DNG), 0 otherwise */
     /* where the sensor data is */
-    size_t off, len;                /* CR2: the one strip; DNG: not used */
+    size_t off, len;                /* CR2: the one strip; CR3: the sample of the image; DNG: not used */
+    fcx_hdr crx;                    /* CR3 */
     int nsl, sw1, sw2;              /* CR2: the slices (columns that were cut apart before the compression) */
     int compression;                /* DNG: 1 none, 7 lossless JPEG */
     int bps;                        /* bits of a sample (DNG, uncompressed) */

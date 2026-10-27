@@ -150,7 +150,7 @@ async function cr3Source(file) {
   return withOrientation(await readBytes(file, pick.off, pick.len), ori);
 }
 
-async function jpegSource(file) {                      /* only the JPEG of the file (for small pictures and for CR3, whose sensor data the program does not read) */
+async function jpegSource(file) {                      /* only the JPEG of the file (for the small pictures) */
   var head = new Uint8Array(await file.slice(0, 65536).arrayBuffer());
   if (head.length > 16 && head[0] === 0xFF && head[1] === 0xD8) return await file.arrayBuffer();
   if (head.length > 16 && head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) return await cr3Source(file);      /* 'ftyp' */
@@ -171,11 +171,13 @@ async function jpegSource(file) {                      /* only the JPEG of the f
   return await file.arrayBuffer();
 }
 
-/* what the engine gets for the picture on the screen: the whole file of a CR2 / DNG (it develops the sensor data itself), otherwise the JPEG */
+/* what the engine gets for the picture on the screen: the whole file of a CR2 / CR3 / DNG (it develops the sensor data itself, and takes the
+ * JPEG inside when it can not), otherwise the JPEG */
 async function engineSource(file) {
   var head = new Uint8Array(await file.slice(0, 16).arrayBuffer());
   var tiff = head.length >= 16 && ((head[0] === 0x49 && head[1] === 0x49 && head[2] === 42 && head[3] === 0) || (head[0] === 0x4D && head[1] === 0x4D && head[2] === 0 && head[3] === 42));
-  if (tiff) return await file.arrayBuffer();
+  var cr3 = head.length >= 16 && head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70;           /* 'ftyp' */
+  if (tiff || cr3) return await file.arrayBuffer();
   return await jpegSource(file);
 }
 var BIG_SOURCE = 12 << 20;                              /* a bigger source (a RAW file) is read again from the disk when another engine needs it */
@@ -189,8 +191,20 @@ var stageEl, worldEl, imgEl;
 
 function stageW() { return stageEl.clientWidth; }
 function stageH() { return stageEl.clientHeight; }
-function fitScale() { return V.fw ? Math.max(0.01, Math.min((stageW() - 24) / V.fw, (stageH() - 24) / V.fh)) : 1; }
+function fitPad() { return CROP.on ? 2 * RING + 16 : 24; }           /* the crop tool leaves room round the picture: the zone in which a drag turns it */
+function fitScale() { var pad = fitPad(); return V.fw ? Math.max(0.01, Math.min((stageW() - pad) / V.fw, (stageH() - pad) / V.fh)) : 1; }
 function minScale() { return fitScale() * 0.6; }
+/* What "100 %" is: one pixel of the FINISHED picture (its size is chosen under "Zapis") is one pixel of the screen. When the finished picture is as big as
+ * the photo (or its crop) that is the same as a pixel of the photo. The picture on the screen is shown in pixels of the photo (V.s), so the zoom is V.s * outK(). */
+function outK() {                                       /* how many pixels of the photo one pixel of the finished picture covers */
+  var f = S.sel, fr = cropFrame(), r, d, w;
+  if (!f || !fr) return 1;
+  r = CROP.on && CROP.rect ? CROP.rect : cropRectPx(f, fr);
+  w = r.x1 - r.x0;
+  d = outDims(w, r.y1 - r.y0);
+  return d.w > 0 && w > 0 ? w / d.w : 1;
+}
+function s100() { return clamp(1 / outK(), 0.02, maxScale()); }
 function maxScale() { return 4; }
 
 function clampPan() {
@@ -204,15 +218,15 @@ function applyView() {
   worldEl.style.transform = 'translate(' + V.tx + 'px,' + V.ty + 'px) scale(' + V.s + ')';
   var shown = V.s * (imgEl.naturalWidth ? V.fw / imgEl.naturalWidth : 1);
   imgEl.classList.toggle('px', shown >= 3);
-  $('#zVal').textContent = Math.round(V.s * 100) + ' %';
+  $('#zVal').textContent = Math.round(V.s * outK() * 100) + ' %';
   $('#zFit').setAttribute('aria-pressed', String(V.fit));
-  $('#z100').setAttribute('aria-pressed', String(Math.abs(V.s - 1) < 0.005));
+  $('#z100').setAttribute('aria-pressed', String(Math.abs(V.s - s100()) < 0.005));
   cropLayout();
   scheduleDetail();
 }
 function hudShow() {
   var h = $('#hud');
-  h.textContent = Math.round(V.s * 100) + ' %  ·  ' + V.fw + ' × ' + V.fh;
+  h.textContent = Math.round(V.s * outK() * 100) + ' %  ·  ' + V.fw + ' × ' + V.fh;
   h.classList.add('on'); clearTimeout(hudShow.tm); hudShow.tm = setTimeout(function () { h.classList.remove('on'); }, 1400);
 }
 function setFit() {
@@ -230,6 +244,12 @@ function zoomAt(ns, cx, cy) {
 }
 function zoomCenter(ns) { zoomAt(ns, stageW() / 2, stageH() / 2); }
 function zoomStep(f) { zoomCenter(V.s * f); }
+function showGrain() {                                  /* "Pokaż ziarno jak w pliku": 1 pixel of the finished picture = 1 pixel of the screen, round the middle of the picture */
+  if (!S.pv || !V.fw) { toast('Najpierw wybierz zdjęcie.'); return; }
+  if (CROP.on) cropClose(true);
+  if (S.pvView === 'before') pvShow('after');
+  zoomCenter(s100());
+}
 
 /* show a picture URL: k = how many times bigger the real photo is than this picture (2 for the half size, 1 for the full one).
  * The natural size of the picture (the browser has applied the camera's orientation) decides the size on the screen. */
@@ -250,14 +270,22 @@ async function showImg(url, k, key) {
 function curUrl() {
   var pv = S.pv;
   if (!pv) return null;
-  if (S.pvView === 'before') return pv.beforeFull ? { u: pv.beforeFull, k: 1, key: pv.beforeFullKey } : { u: pv.beforeUrl, k: pv.beforeK, key: pv.beforeKey };
-  return pv.afterFull ? { u: pv.afterFull, k: 1, key: pv.afterFullKey } : { u: pv.afterUrl, k: pv.afterK, key: pv.afterKey };
+  if (S.pvView === 'before') return pv.beforeFull ? { u: pv.beforeFull, k: pv.beforeFullK, key: pv.beforeFullKey, full: true } : { u: pv.beforeUrl, k: pv.beforeK, key: pv.beforeKey };
+  return pv.afterFull ? { u: pv.afterFull, k: pv.afterFullK, key: pv.afterFullKey, full: true } : { u: pv.afterUrl, k: pv.afterK, key: pv.afterKey };
 }
 function showCurrent() {
   var c = curUrl();
   if (!c || !c.u) return;
   $('#pvMsg').className = 'off';
   showImg(c.u, c.k, c.key);
+  paintCap(c.full);
+}
+/* the line under the picture */
+function paintCap(full) {
+  var pv = S.pv;
+  if (!pv || !pv.capBase) return;
+  if (full === undefined) { var c = curUrl(); full = !!(c && c.full); }
+  $('#pvCap').textContent = pv.capBase + (full ? ' · rozmiar gotowego zdjęcia: ziarno wygląda tak jak w pliku' : (pv.capNote || ''));
 }
 function pvShow(which) {
   $('#pvBefore').setAttribute('aria-pressed', String(which === 'before'));
@@ -316,16 +344,19 @@ async function selectFile(f) {
 
 /* the "before" picture of the photo on the screen, for the source and the crop it has now. A small crop is made from the full size photo (previewSize),
  * which is known only once the size of the whole frame is: so the first run may have to be made twice. */
-function beforeSigNow() { return val('usejpg') + ',' + val('rawref') + '|' + geoKey() + '|' + previewSize(); }
+function beforeSigNow() { return val('usejpg') + ',' + val('rawref') + ',' + (S.hq ? 1 : 0) + '|' + geoKey() + '|' + previewSize(); }
 async function runBefore(seq, pv, again) {
   var tries = 0, sig, size, key, res, old;
   for (;;) {
     sig = beforeSigNow(); size = previewSize(); key = geoKey();
     pv.beforeSig = sig;
-    res = await S.preview.request({ type: 'run', params: pvPlain(size, 88) });
+    res = await S.preview.request({ type: 'run', params: pvPlain(size, PV_Q) });
     if (seq !== S.pvSeq || S.pv !== pv) return false;
     if (res.rc !== 0) { if (!again) { pvMessage('Podgląd niemożliwy: ' + res.text); pvBusy(false); S.pv = null; } return false; }
-    if (res.picW && !pv.frameW) { pv.frameW = res.picW; pv.frameH = res.picH; }
+    if (res.picW && !pv.frameW) {                                                      /* (the engine reports the picture as it is turned: the whole frame is the other way round for a quarter turn) */
+      var qt = (CROP.on ? CROP.turn : (pv.file.turn || 0)) & 1;
+      pv.frameW = qt ? res.picH : res.picW; pv.frameH = qt ? res.picW : res.picH;
+    }
     if (pv.beforeSig !== sig) return false;                                        /* (another run has been started meanwhile and keeps the sign) */
     if (previewSize() !== size && tries++ < 1) continue;
     break;
@@ -342,6 +373,7 @@ async function runBefore(seq, pv, again) {
   return true;
 }
 
+var PV_Q = 92;                                          /* the JPEG quality of the previews (the grain is not smoothed away) */
 var pvTimer = null, pvPending = false, pvRunning = false;
 function schedulePreview(now) {
   if (!S.pv) return;
@@ -362,7 +394,7 @@ async function pumpPreview() {
     var seq = S.pvSeq, pv = S.pv;
     if (!pv) break;
     var key = geoKey(), size = previewSize();
-    var res = await S.preview.request({ type: 'run', params: pvParams({ size: size, quality: 88 }) });
+    var res = await S.preview.request({ type: 'run', params: pvParams({ size: size, quality: PV_Q }) });
     if (seq !== S.pvSeq || S.pv !== pv) continue;
     if (res.rc !== 0) { pvMessage('Podgląd niemożliwy: ' + res.text); continue; }
     var old = pv.afterUrl, oldFull = pv.afterFull;
@@ -373,7 +405,9 @@ async function pumpPreview() {
     if (old) setTimeout(function () { URL.revokeObjectURL(old); }, 2500);
     if (oldFull) setTimeout(function () { URL.revokeObjectURL(oldFull); }, 2500);
     if (S.pvView !== 'before') showCurrent(); else $('#pvMsg').className = 'off';
-    $('#pvCap').textContent = S.films[S.film].full + ' · ' + shownDims(pv) + (res.raw ? ' · z RAW' : ' · z JPG') + (size === 102 ? ' · podgląd w połowie rozmiaru (po powiększeniu: w pełnym)' : ' · podgląd w pełnym rozmiarze') + ', ziarno w gotowym zdjęciu wygląda nieco inaczej';
+    pv.capBase = S.films[S.film].full + ' · ' + shownDims(pv) + (res.raw ? ' · z RAW' : ' · z JPG');
+    pv.capNote = size === 102 ? ' · podgląd pomniejszony; ziarno jak w pliku zobaczysz od 100 % (klawisz 1)' : ' · podgląd w pełnym rozmiarze';
+    paintCap();
     drawHist(pv.afterBlob);
     scheduleDetail();
   }
@@ -383,7 +417,15 @@ async function pumpPreview() {
 
 /* ---------------------------------------------------------------- the details: the full size picture, when zoomed in */
 var detailSeq = 0, detailTimer = null;
-function needDetail() { return !!S.pv && V.fw > 0 && V.s > 0.55; }
+function needDetail() { return !!S.pv && V.fw > 0 && V.s * Math.max(1, outK()) > 0.55; }
+function dropDetail() {                                 /* the full size pictures were made for other settings of the result: they are made again */
+  var pv = S.pv;
+  detailSeq++;
+  if (!pv) return;
+  pv.afterFull = null; pv.beforeFull = null;
+  if (V.fw) showCurrent();
+  scheduleDetail();
+}
 function scheduleDetail() {
   clearTimeout(detailTimer);
   var pv = S.pv;
@@ -413,16 +455,17 @@ async function runDetail() {
     if (seq !== detailSeq || S.pv !== pv) return;
   }
   var key = geoKey();
-  var p = view === 'before' ? pvPlain(101, 90) : pvParams({ size: 101, quality: 90 });
-  p.x.hq = S.hq ? 1 : 0;                                  /* the full size picture is what the finished one is like */
+  /* the picture made here is the finished one: the size chosen for the result, the quality and the way of counting of the file (so the grain looks as it will in the file) */
+  var p = view === 'before' ? pvPlain(101, S.quality) : pvParams({ size: 101, quality: S.quality });
+  if (!CROP.on) mergeX(p.x, outX());
   var res = await w.request({ type: 'run', params: p }, null, function (pm) { if (seq === detailSeq) $('#hud').textContent = 'szczegóły ' + Math.round(pm / 10) + ' %'; });
   finishDetail(res, pv, seq, view, key);
 }
 function finishDetail(res, pv, seq, view, key) {
   $('#hud').classList.remove('on');
   if (seq !== detailSeq || S.pv !== pv || res.rc !== 0) return;
-  var url = URL.createObjectURL(new Blob([res.jpeg], { type: 'image/jpeg' }));
-  if (view === 'before') { pv.beforeFull = url; pv.beforeFullKey = key; } else { pv.afterFull = url; pv.afterFullKey = key; }
+  var url = URL.createObjectURL(new Blob([res.jpeg], { type: 'image/jpeg' })), k = res.outW ? res.srcW / res.outW : 1;
+  if (view === 'before') { pv.beforeFull = url; pv.beforeFullKey = key; pv.beforeFullK = k; } else { pv.afterFull = url; pv.afterFullKey = key; pv.afterFullK = k; }
   if (S.pvView === view) showCurrent();
 }
 
@@ -561,12 +604,12 @@ function initStage() {
   stageEl.addEventListener('dblclick', function (e) {
     if (!V.fw || S.pipette || (e.target.closest && e.target.closest('#cropBar'))) return;
     var r = stageEl.getBoundingClientRect();
-    if (V.fit || Math.abs(V.s - 1) > 0.01) zoomAt(1, e.clientX - r.left, e.clientY - r.top); else setFit();
+    if (V.fit || Math.abs(V.s - s100()) > 0.01) zoomAt(s100(), e.clientX - r.left, e.clientY - r.top); else setFit();
   });
   if (window.ResizeObserver) new ResizeObserver(function () { if (!V.fw) return; if (V.fit) setFit(); else applyView(); }).observe(stageEl);
   else window.addEventListener('resize', function () { if (V.fw) { if (V.fit) setFit(); else applyView(); } });
   $('#zFit').onclick = function () { setFit(); hudShow(); };
-  $('#z100').onclick = function () { zoomCenter(1); };
+  $('#z100').onclick = function () { zoomCenter(s100()); };
   $('#zIn').onclick = function () { zoomStep(1.25); };
   $('#zOut').onclick = function () { zoomStep(0.8); };
   $('#pipCancel').onclick = stopPipette;

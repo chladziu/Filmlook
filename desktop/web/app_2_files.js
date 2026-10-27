@@ -92,7 +92,7 @@ function itemMeta(f) {
   if (f.status === 'running') return { t: 'wywołuję… ' + Math.round(f.pct) + ' %', c: '' };
   if (f.status === 'error') return { t: 'błąd: ' + f.err, c: 'err' };
   if (f.status === 'done') return { t: '✓ gotowe · ' + f.outW + ' × ' + f.outH + ' · ' + fmtMB(f.blob.size) + (f.raw ? ' · z RAW' : ''), c: 'ok' };
-  return { t: fmtMB(f.size) + (/\.(cr2|cr3|dng)$/i.test(f.name) ? ' · ' + f.name.slice(-3).toUpperCase() : ' · JPG') + (f.crop || f.cropAr ? ' · z kadrem' : ''), c: '' };
+  return { t: fmtMB(f.size) + (/\.(cr2|cr3|dng)$/i.test(f.name) ? ' · ' + f.name.slice(-3).toUpperCase() : ' · JPG') + (f.crop || f.cropAr ? ' · z kadrem' : '') + (f.rot || f.turn ? ' · obrócone' : ''), c: '' };
 }
 
 function renderItem(f, li) {
@@ -146,6 +146,15 @@ function renderList() {
   $('#btnSheet').disabled = !S.pv || S.running;
   $('#btnFolder').classList.toggle('hidden', !window.showDirectoryPicker);
   paintCropSection();                                  /* (the crop button waits while photos are being developed) */
+  paintExportInfo();
+}
+function paintExportInfo() {                            /* the first line of the group "Zapis" */
+  var el = $('#expSel'), mk = marked(), t;
+  if (!el) return;
+  if (!S.files.length) t = 'Dodaj zdjęcia, żeby je wywołać.';
+  else if (!mk.length) t = 'Nic nie jest zaznaczone do wywołania (pola przy zdjęciach na liście).';
+  else t = 'Do wywołania: ' + mk.length + ' ' + plural(mk.length, 'zdjęcie', 'zdjęcia', 'zdjęć') + '. Każde dostanie swój kadr i obrót, jeśli je ma.';
+  el.textContent = t;
 }
 
 function setChecked(pred) {

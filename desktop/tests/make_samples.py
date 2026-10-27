@@ -208,6 +208,11 @@ def fake_dng(path, jpeg_path, w, h, orientation, preview_small_path, be=False, w
 
 RAW_SAMPLES = ["synth_raw_5d2_landscape.cr2", "synth_raw_5d2_portrait.cr2", "synth_raw_strips.dng", "synth_raw_tiles.dng",
                "synth_raw_linear.dng", "synth_raw_crop.dng"]
+# CR3 of the Canon EOS RP (crxgen.py codes the sensor data like Canon's CRX): lossless in four tiles, C-RAW without loss (the same sensor values),
+# C-RAW with a quantization (a portrait shot, turned by the orientation mark), and a camera that the program has no colour matrix of (JPEG route).
+# For each of the first three the exact sensor array that the decoder has to give back is saved too (_cr3_<name>.u16: 16 bit little endian).
+CR3_SAMPLES = ["synth_raw_cr3_lossless.cr3", "synth_raw_cr3_craw.cr3", "synth_raw_cr3_portrait.cr3", "synth_raw_cr3_unknown.cr3"]
+CR3_LOSSY_Q = [3, 12, 12, 18, 6, 6, 12, 0, 0, 6]
 
 
 def make_raw_samples(out):
@@ -224,6 +229,14 @@ def make_raw_samples(out):
     rg.make_dng(os.path.join(out, RAW_SAMPLES[4]), rgb, kind="linear")
     rg.make_dng(os.path.join(out, RAW_SAMPLES[5]), rgb, kind="strips", margins=(64, 16, 16, 8), extra_active=(4, 2))
     Image.fromarray(rgb).save(os.path.join(out, "_raw_picture.png"))               # (the picture itself; run_tests.py compares with it)
+    import crxgen
+    exact = {}
+    exact[CR3_SAMPLES[0]] = crxgen.make_cr3(os.path.join(out, CR3_SAMPLES[0]), rgb, levels=0, tile=(320, 206))
+    exact[CR3_SAMPLES[1]] = crxgen.make_cr3(os.path.join(out, CR3_SAMPLES[1]), rgb, levels=3, ctmd=False)        # the maker note of the Canon box only
+    exact[CR3_SAMPLES[2]] = crxgen.make_cr3(os.path.join(out, CR3_SAMPLES[2]), rgb, levels=3, qs=CR3_LOSSY_Q, orientation=6)
+    crxgen.make_cr3(os.path.join(out, CR3_SAMPLES[3]), rgb, levels=0, tile=(320, 206), model="Canon EOS R99")
+    for name, arr in exact.items():
+        arr.astype("<u2").tofile(os.path.join(out, "_cr3_" + name[len("synth_raw_cr3_"):-4] + ".u16"))
 
 
 def main():

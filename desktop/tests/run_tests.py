@@ -8,7 +8,10 @@ same picture on every computer?
   3. the sizes M and S: the right dimensions, and the same bytes in the command line version and in the browser version
   4. RAW: files with real sensor data (CR2 of the 5D Mark II, DNG of several kinds; tests/rawgen.py): the command line version and the
      browser version make the same bytes, every kind of DNG gives the same pixels as the CR2, the picture comes back (close to the one
-     the sensor data was made from), the switches "JPG z pliku" / "wzorzec z JPG" / "najwyższa jakość" work, damaged files do not crash
+     the sensor data was made from), the switches "JPG z pliku" / "wzorzec z JPG" / "najwyższa jakość" work, damaged files do not crash;
+     CR3 of the Canon EOS RP (tests/crxgen.py codes the sensor data like Canon's CRX: lossless in tiles, C-RAW with and without loss):
+     the decoder (tests/cr3_probe.c, built here with the sanitizers where the compiler has them) gives back every sensor value exactly,
+     the lossless and the C-RAW files develop to the same pixels, damaged copies never crash it
   5. the crop and the size of the result: every kind of file, landscape and portrait, a crop of any shape, an exact ratio, any size
      (smaller and bigger than the photo), the same bytes in the command line version and in the browser version
   6. a file with the SHA-256 of every result: the same file must come out on Windows, macOS and Linux (compared by the workflow)
@@ -129,6 +132,8 @@ def source_size(path):
         data = open(path, "rb").read()
         if "prvw_only" in os.path.basename(path).lower():
             return 1620, 1080
+        if os.path.basename(path).startswith("synth_raw_cr3_"):          # (the coded sensor data is no place to look for a JPEG: the picture is 600 x 400)
+            return 600, 400
         best, pos = None, data.find(b"\xff\xd8\xff")
         while pos >= 0:
             sz = jpeg_size(data[pos:pos + 70000])
@@ -497,6 +502,91 @@ if RAW_FILES:
                 o = plain("synth_raw_5d2_portrait.cr2", [])
                 check(bool(o) and bool((px(o) == px(base)).all()), "portrait CR2: the pixels are the same, only the orientation mark differs")
 
+        # CR3 of the Canon EOS RP: the decoder of CRX (src/fd_cr3.h) against the exact sensor arrays that tests/crxgen.py coded
+        import random
+        cr3_exact = [("lossless", "lossless in four tiles"), ("craw", "C-RAW without loss, the maker note of the Canon box only"), ("portrait", "C-RAW with a quantization")]
+        if all(("synth_raw_cr3_%s.cr3" % n) in RAW_FILES for n, _ in cr3_exact):
+            src_dir = os.path.join(os.path.dirname(HERE), "src")
+            probe = os.path.join(work, "cr3_probe" + (".exe" if os.name == "nt" else ""))
+            sanitized = False
+            for san in (["-fsanitize=address,undefined", "-fno-sanitize-recover=undefined"], []):
+                r = run([args.cc, "-O1", "-g", "-std=gnu99"] + san + ["-DSE_HOSTED=1", "-I", src_dir, "-I", MODULE, "-o", probe,
+                                                                    os.path.join(HERE, "cr3_probe.c"), os.path.join(src_dir, "fd_engine.c")])
+                if r.returncode == 0:
+                    sanitized = bool(san)
+                    break
+                note(r.stderr.decode(errors="replace")[-1500:])
+            else:
+                probe = None
+            check(probe is not None, "the CR3 decoder builds on its own (%s)" % ("with the address and undefined behaviour sanitizers" if sanitized else "without sanitizers"))
+            penv = dict(os.environ, ASAN_OPTIONS="detect_leaks=0:exitcode=77", UBSAN_OPTIONS="halt_on_error=1:exitcode=78")
+            if probe:
+                for n, what in cr3_exact:
+                    f = os.path.join(args.samples, "synth_raw_cr3_%s.cr3" % n)
+                    want = os.path.join(args.samples, "_cr3_%s.u16" % n)
+                    got_raw = os.path.join(work, "cr3_%s.u16" % n)
+                    r = run([probe, f, got_raw], env=penv)
+                    same = r.returncode == 0 and os.path.exists(got_raw) and os.path.exists(want) and open(got_raw, "rb").read() == open(want, "rb").read()
+                    if not same:
+                        note("   probe exit %d\n%s%s" % (r.returncode, r.stdout.decode(errors="replace")[-600:], r.stderr.decode(errors="replace")[-1500:]))
+                    check(same, "CR3 %s: the decoder gives back every sensor value" % what)
+                    if same:
+                        hashes.append("%s  CR3_sensor_values_%s" % (sha(got_raw), n))
+                r = run([probe, os.path.join(args.samples, "synth_raw_cr3_unknown.cr3")], env=penv)
+                check(r.returncode == 1, "CR3 of a camera without a colour matrix: the RAW decoder refuses it, the JPEG is taken (exit %d)" % r.returncode)
+                # damaged copies: the metadata, the tile headers, the coded data, cut files; never a crash or a memory error
+                rnd3 = random.Random(23)
+                for n, what in cr3_exact:
+                    data = open(os.path.join(args.samples, "synth_raw_cr3_%s.cr3" % n), "rb").read()
+                    start = data.find(b"\xff\x01\x00\x08", 1000)
+                    codes, badn = {}, 0
+                    for k in range(90):
+                        d = bytearray(data)
+                        mode = k % 5
+                        if mode == 0:
+                            for _ in range(rnd3.randint(1, 12)):
+                                d[rnd3.randrange(len(d))] = rnd3.randrange(256)
+                        elif mode == 1:
+                            for _ in range(rnd3.randint(1, 8)):
+                                d[rnd3.randrange(0, start)] = rnd3.randrange(256)
+                        elif mode == 2:
+                            for _ in range(rnd3.randint(1, 6)):
+                                d[start + rnd3.randrange(0, 700)] = rnd3.randrange(256)
+                        elif mode == 3:
+                            for _ in range(rnd3.randint(1, 40)):
+                                d[start + 700 + rnd3.randrange(0, len(d) - start - 700)] = rnd3.randrange(256)
+                        else:
+                            d = d[:rnd3.randrange(30, len(d))]
+                        fz = os.path.join(work, "cr3_fuzz.cr3")
+                        open(fz, "wb").write(bytes(d))
+                        r = run([probe, fz], env=penv)
+                        codes[r.returncode] = codes.get(r.returncode, 0) + 1
+                        if r.returncode not in (0, 1, 2):
+                            badn += 1
+                            keep = os.path.join(work, "cr3_fuzz_bad_%s_%d.cr3" % (n, k))
+                            open(keep, "wb").write(bytes(d))
+                            note("   damaged copy %d (mode %d) of %s: exit %d\n%s" % (k, mode, n, r.returncode, r.stderr.decode(errors="replace")[-1500:]))
+                    check(badn == 0, "CR3 %s: 90 damaged copies through the decoder, no crash and no memory error (exits %s)" % (what, sorted(codes.items())))
+            # the developed pictures
+            pl, pc, pp, pu = (plain("synth_raw_cr3_%s.cr3" % n, []) for n in ("lossless", "craw", "portrait", "unknown"))
+            if pl and pc:
+                check(bool((px(pl) == px(pc)).all()), "CR3: the C-RAW file without loss develops to the very same pixels as the lossless file")
+            if picture_ref is not None:
+                for o, what in ((pl, "lossless"), (pc, "C-RAW"), (pp, "C-RAW with a quantization")):
+                    if o:
+                        m3 = float(np.abs(px(o) - picture_ref).mean())
+                        check(m3 < 14, "CR3 %s: the picture comes back from the sensor data (mean error %.1f levels)" % (what, m3))
+            if pl and pp:
+                dq = float(np.abs(px(pl) - px(pp)).mean())
+                check(dq < 3, "CR3: the quantization of the C-RAW changes the pictures only a little (%.2f levels)" % dq)
+            jl = plain("synth_raw_cr3_lossless.cr3", ["--usejpg", "1"])
+            if pl and jl:
+                check(sha(pl) != sha(jl), "CR3: 'JPG z pliku' gives another picture than the sensor data")
+            if pu:
+                ju = plain("synth_raw_cr3_unknown.cr3", ["--usejpg", "1"])
+                if ju:
+                    check(sha(pu) == sha(ju), "CR3 of a camera without a colour matrix: develops from its JPEG, as before")
+
         # damaged RAW files: no crash (the command line), no trap (the browser version)
         import random
         rnd = random.Random(11)
@@ -558,7 +648,7 @@ try:
     import numpy as np
     from PIL import Image, ImageOps
     GEO_FILES = [f for f in ("synth_raw_5d2_landscape.cr2", "synth_raw_5d2_portrait.cr2", "synth_raw_strips.dng", "synth_landscape.cr3",
-                             "synth_portrait.cr2", "synth_small.jpg") if f in photos]
+                             "synth_raw_cr3_portrait.cr3", "synth_portrait.cr2", "synth_small.jpg") if f in photos]
     geo_n = [0]
 
     def geo_make(photo, opts, quality=100, plain=True):
@@ -658,6 +748,69 @@ try:
         r5 = run([args.cli, "--quiet", "--film", "1", "--long", "20000", "--out", os.path.join(work, "geo_big"), os.path.join(args.samples, photo)])
         check(r5.returncode == 1 and b"za du" in r5.stderr, "%s: 20000 px is refused with a message (exit %d)" % (tag, r5.returncode))
 
+        # straightening (the angle of the crop tool): the crop is a rectangle of the turned picture
+        import math
+        r0 = geo_make(photo, ["--angle", "0"])
+        check(bool(r0) and sha(r0) == sha(full), "%s: angle 0 == no angle, byte for byte" % tag)
+        ang = 4.5
+        rx0, ry0, rx1, ry1 = 0.2, 0.25, 0.8, 0.75
+        ra = geo_make(photo, ["--angle", str(ang), "--crop", "%g,%g,%g,%g" % (rx0, ry0, rx1, ry1)])
+        if ra:
+            B = shown(ra)
+            px0, px1, py0, py1 = frac(rx0, W), frac(rx1, W), frac(ry0, H), frac(ry1, H)
+            check(B.shape[:2] == (py1 - py0, px1 - px0), "%s: angle %g + crop: size %s (wanted %s)" % (tag, ang, B.shape[1::-1], (px1 - px0, py1 - py0)))
+            th = math.radians(ang)
+            cs_, sn_ = math.cos(th), math.sin(th)
+            coef = (cs_, sn_, W / 2 + cs_ * (px0 - W / 2) + sn_ * (py0 - H / 2), -sn_, cs_, H / 2 - sn_ * (px0 - W / 2) + cs_ * (py0 - H / 2))
+            ref = np.asarray(Image.fromarray(A.astype(np.uint8)).transform((px1 - px0, py1 - py0), Image.AFFINE, coef, resample=Image.BICUBIC)).astype(np.int32)
+            if ref.shape == B.shape:
+                mae = float(np.abs(ref - B).mean())
+                check(mae < 3.0, "%s: angle %g: the same as an independent bicubic turn of the whole picture (mean error %.2f)" % (tag, ang, mae))
+                flat = float(np.abs(ref[8:-8, 8:-8] - B[8:-8, 8:-8]).mean())
+                check(flat < 3.0, "%s: angle %g: inside the picture too (mean error %.2f)" % (tag, ang, flat))
+                turned = float(np.abs(B - A[py0:py1, px0:px1]).mean())
+                check(turned > 1.0 or A[py0:py1, px0:px1].std() < 3, "%s: angle %g really turns the picture (differs from the plain crop by %.2f)" % (tag, ang, turned))
+        else:
+            check(False, "%s: angle %g + crop made" % (tag, ang))
+        # an angle without a crop: the biggest rectangle of the shape of the picture that lies inside the turned one
+        for ang2 in (3.0, -10.0, 30.0):
+            rb = geo_make(photo, ["--angle", str(ang2)])
+            if not rb:
+                check(False, "%s: angle %g made" % (tag, ang2))
+                continue
+            B = shown(rb)
+            h, w = B.shape[:2]
+            th = math.radians(abs(ang2))
+            k = min(1 / (math.cos(th) + (H / W) * math.sin(th)), 1 / ((W / H) * math.sin(th) + math.cos(th)))
+            check(abs(w - W * k) <= 3 and abs(h - H * k) <= 3 and abs(w * H - h * W) <= max(W, H), "%s: angle %g without a crop gives %d x %d (about %d x %d, the shape of the picture)" % (tag, ang2, w, h, W * k, H * k))
+        rc1 = geo_make(photo, ["--angle", "10"])
+        rc2 = geo_make(photo, ["--angle", "10", "--crop", "0,0,1,1"])
+        check(bool(rc1) and bool(rc2) and sha(rc1) == sha(rc2), "%s: angle 10 with the whole picture as a crop is shrunk to fit == no crop, byte for byte" % tag)
+        # a crop that does not fit into the turned picture is shrunk round its centre, an exact ratio stays exact
+        rd = geo_make(photo, ["--angle", "-6", "--crop", "0,0.1,1,0.9", "--ratio", "16:9!"])
+        if rd:
+            B = shown(rd)
+            check(B.shape[1] * 9 == B.shape[0] * 16, "%s: angle -6 + ratio 16:9! stays exact (%d x %d)" % (tag, B.shape[1], B.shape[0]))
+        # quarter turns: only the orientation mark changes; the picture is the same, turned
+        for tn, kk in ((1, -1), (2, 2), (3, 1)):
+            rt = geo_make(photo, ["--turn", str(tn)])
+            if not rt:
+                check(False, "%s: turn %d made" % (tag, tn))
+                continue
+            B = shown(rt)
+            want = np.rot90(A, k=kk)
+            check(B.shape == want.shape, "%s: turn %d gives %s (wanted %s)" % (tag, tn, B.shape[1::-1], want.shape[1::-1]))
+            if B.shape == want.shape:
+                mae = float(np.abs(B - want).mean())
+                check(mae < 1.8, "%s: turn %d is the picture turned by %d degrees clockwise (mean error %.2f)" % (tag, tn, 90 * tn, mae))
+        rt4 = geo_make(photo, ["--turn", "4"])
+        check(bool(rt4) and sha(rt4) == sha(full), "%s: turn 4 == no turn, byte for byte" % tag)
+        # a turn, an angle, a ratio and a size together
+        re_ = geo_make(photo, ["--turn", "1", "--angle", "-7", "--ratio", "3:2", "--long", "700"], plain=False)
+        if re_:
+            B = shown(re_)
+            check(max(B.shape[:2]) == 700 and abs(B.shape[0] * 3 - B.shape[1] * 2) <= 3 or abs(B.shape[1] * 3 - B.shape[0] * 2) <= 3, "%s: turn 1 + angle -7 + ratio 3:2 + long 700 -> %s" % (tag, B.shape[1::-1]))
+
     # the same bytes from the browser version (where there is one); the hashes of the command line version are kept on every system
     if True:
         combos = [
@@ -667,6 +820,11 @@ try:
             (dict(crop_ar_w=1, crop_ar_h=1), ["--ratio", "1:1"]),
             (dict(crop_x0=0, crop_y0=500000, crop_x1=500000, crop_y1=1000000, out_w=333), ["--crop", "0,0.5,0.5,1", "--width", "333"]),
             (dict(crop_ar_w=16, crop_ar_h=9, crop_ar_auto=0, out_h=250), ["--ratio", "16:9!", "--height", "250"]),
+            (dict(crop_rot=4500, crop_x0=200000, crop_y0=250000, crop_x1=800000, crop_y1=750000, out_long=1200),
+             ["--angle", "4.5", "--crop", "0.2,0.25,0.8,0.75", "--long", "1200"]),
+            (dict(crop_rot=-12500), ["--angle", "-12.5"]),
+            (dict(turn=1, crop_rot=3000, crop_ar_w=3, crop_ar_h=2, crop_ar_auto=1, out_w=700), ["--turn", "1", "--angle", "3", "--ratio", "3:2", "--width", "700"]),
+            (dict(turn=3), ["--turn", "3"]),
         ]
         for photo in GEO_FILES:
             for ex, cli_opts in combos:

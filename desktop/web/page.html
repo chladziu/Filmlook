@@ -17,7 +17,7 @@ __APP_CSS__
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9.5 4.5v15" stroke="currentColor" stroke-width="1.8"/><rect x="4.4" y="5.4" width="4.2" height="13.2" fill="currentColor" opacity=".35"/></svg>
   </button>
   <div class="brand"><h1>Film Look Simulation</h1><span class="sub">wywoływarka zdjęć</span></div>
-  <span class="chip" id="chipEngine">silnik: ładuję…</span>
+  <span class="chip" id="chipEngine" role="status"></span>
   <div class="tools">
     <div class="seg" role="group" aria-label="Przed i po">
       <button type="button" id="pvBefore" aria-pressed="false" title="Oryginał z aparatu  ( przytrzymaj \ )">Przed</button><button type="button" id="pvAfter" aria-pressed="true" title="Ze wzorem filmu">Po</button>
@@ -27,7 +27,7 @@ __APP_CSS__
     </div>
     <div class="zoom" role="group" aria-label="Powiększenie">
       <button type="button" id="zFit" title="Całe zdjęcie  ( F )">Całe</button>
-      <button type="button" id="z100" title="Jeden piksel zdjęcia = jeden piksel ekranu  ( 1 )">100 %</button>
+      <button type="button" id="z100" title="Jeden piksel gotowego zdjęcia = jeden piksel ekranu — tak wygląda ziarno w pliku  ( 1 )">100 %</button>
       <button type="button" id="zOut" title="Pomniejsz  ( − )" aria-label="Pomniejsz">−</button>
       <output id="zVal" title="Powiększenie">—</output>
       <button type="button" id="zIn" title="Powiększ  ( + )" aria-label="Powiększ">+</button>
@@ -39,6 +39,7 @@ __APP_CSS__
       <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg>
     </button>
   </div>
+  <button class="btn primary sm" id="btnSave" type="button" title="Otwiera dział „Zapis”: rozmiar, jakość i wywoływanie zaznaczonych zdjęć  ( Ctrl + S )"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:-2px;margin-right:5px"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="saveTxt">Zapisz</span></button>
   <button class="ic" id="btnR" type="button" title="Pokaż lub schowaj prawy panel  ( ] )" aria-label="Prawy panel" aria-pressed="true">
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M14.5 4.5v15" stroke="currentColor" stroke-width="1.8"/><rect x="15.4" y="5.4" width="4.2" height="13.2" fill="currentColor" opacity=".35"/></svg>
   </button>
@@ -104,24 +105,37 @@ __APP_CSS__
       <div class="hud" id="hud"></div>
       <canvas id="hist" width="256" height="72" aria-label="Histogram"></canvas>
       <div class="cropui hidden" id="cropUi">
+        <div class="cropring" id="cropRing" title="Przeciągnij, żeby obrócić zdjęcie (prostowanie)"></div>
         <div class="croprect" id="cropRect" title="Przeciągnij ramkę, żeby ją przesunąć; uchwyty zmieniają rozmiar. Dwukrotne kliknięcie = gotowe.">
           <i class="gl gh1"></i><i class="gl gh2"></i><i class="gl gv1"></i><i class="gl gv2"></i>
           <b class="ch" data-h="nw"></b><b class="ch" data-h="n"></b><b class="ch" data-h="ne"></b><b class="ch" data-h="e"></b>
           <b class="ch" data-h="se"></b><b class="ch" data-h="s"></b><b class="ch" data-h="sw"></b><b class="ch" data-h="w"></b>
           <span class="cropsize" id="cropSize"></span>
         </div>
+        <div class="rulerpad hidden" id="cropRulerPad" title="Narysuj linię wzdłuż horyzontu albo ściany: zdjęcie obróci się tak, żeby ta linia była prosta"></div>
+        <div class="rulerline hidden" id="cropRulerLine"></div>
       </div>
       <div class="cropbar hidden" id="cropBar" role="toolbar" aria-label="Kadrowanie">
-        <label class="small" for="cropAr">Proporcje</label>
-        <select id="cropAr" title="Blokada proporcji: ramka zawsze ma wybrany kształt. „Dowolne” zdejmuje blokadę."></select>
-        <span id="cropCustom" class="hidden"><input type="number" id="cropCa" min="1" max="99" value="4" aria-label="Własne proporcje: szerokość"> : <input type="number" id="cropCb" min="1" max="99" value="5" aria-label="Własne proporcje: wysokość"></span>
-        <button type="button" class="btn sm" id="cropFlip" title="Obraca proporcje: poziomo ↔ pionowo  ( X )">Obróć ⟲</button>
-        <button type="button" class="btn sm" id="cropAll" title="Ustawia te same proporcje (wyśrodkowane) wszystkim zdjęciom na liście, które nie mają jeszcze własnego kadru. Pionowe zdjęcia dostają proporcje pionowe.">Dla wszystkich</button>
-        <button type="button" class="btn sm" id="cropReset" title="Cała klatka w wybranych proporcjach">Wyzeruj</button>
-        <span class="muted small" id="cropInfo"></span>
-        <span class="grow"></span>
-        <button type="button" class="btn sm" id="cropCancel" title="Zostawia kadr taki, jaki był  ( Esc )">Anuluj</button>
-        <button type="button" class="btn sm primary" id="cropDone" title="Zapisuje kadr dla tego zdjęcia  ( Enter )">Gotowe</button>
+        <div class="crow">
+          <label class="small" for="cropAr">Proporcje</label>
+          <select id="cropAr" title="Blokada proporcji: ramka zawsze ma wybrany kształt. „Dowolne” zdejmuje blokadę."></select>
+          <span id="cropCustom" class="hidden"><input type="number" id="cropCa" min="1" max="99" value="4" aria-label="Własne proporcje: szerokość"> : <input type="number" id="cropCb" min="1" max="99" value="5" aria-label="Własne proporcje: wysokość"></span>
+          <button type="button" class="btn sm" id="cropFlip" title="Zamienia proporcje: poziomo ↔ pionowo  ( X )">⇄ Pion / poziom</button>
+          <button type="button" class="btn sm" id="cropAll" title="Ustawia te same proporcje (wyśrodkowane) wszystkim zdjęciom na liście, które nie mają jeszcze własnego kadru. Pionowe zdjęcia dostają proporcje pionowe.">Dla wszystkich</button>
+          <span class="grow"></span>
+          <button type="button" class="btn sm" id="cropCancel" title="Zostawia kadr taki, jaki był  ( Esc )">Anuluj</button>
+          <button type="button" class="btn sm primary" id="cropDone" title="Zapisuje kadr dla tego zdjęcia  ( Enter )">Gotowe</button>
+        </div>
+        <div class="crow">
+          <label class="small" for="cropAng">Kąt</label>
+          <input type="range" id="cropAng" min="-45" max="45" step="0.1" value="0" title="Prostowanie: obraca zdjęcie pod ramką (podwójne kliknięcie = 0°). Można też przeciągać myszą tuż przy ramce, na zewnątrz.">
+          <input type="number" id="cropAngN" min="-45" max="45" step="0.1" value="0" aria-label="Kąt prostowania w stopniach"><span class="small muted">°</span>
+          <button type="button" class="btn sm" id="cropRuler" aria-pressed="false" title="Narysuj na zdjęciu linię wzdłuż horyzontu albo pionowej ściany — zdjęcie samo się wyprostuje">Wyprostuj</button>
+          <button type="button" class="btn sm" id="cropTurnL" title="Obróć zdjęcie o 90° w lewo  ( Ctrl + [ )" aria-label="Obróć o 90 stopni w lewo">⟲ 90°</button>
+          <button type="button" class="btn sm" id="cropTurnR" title="Obróć zdjęcie o 90° w prawo  ( Ctrl + ] )" aria-label="Obróć o 90 stopni w prawo">⟳ 90°</button>
+          <button type="button" class="btn sm" id="cropReset" title="Cała klatka w wybranych proporcjach, bez obrotu">Wyzeruj</button>
+          <span class="muted small" id="cropInfo"></span>
+        </div>
       </div>
       <div class="pipnote hidden" id="pipNote">Kliknij w zdjęciu coś, co ma być neutralnie szare lub białe. <button class="btn link sm" id="pipCancel" type="button">Anuluj (Esc)</button></div>
     </div>
@@ -134,42 +148,66 @@ __APP_CSS__
 
   <!-- ============================================ right: the settings -->
   <aside id="right" class="panel" aria-label="Ustawienia wywołania">
-    <div class="scroll" id="adj"></div>
-    <div class="export" id="exp">
-      <div class="erow">
-        <label class="elabel" for="outMode">Rozmiar</label>
-        <select id="outMode" title="Rozmiar gotowych zdjęć: pełny (jak zdjęcie, a po kadrowaniu — jak kadr) albo dowolny, także większy niż zdjęcie (wtedy jest powiększane)">
-          <option value="full">Pełny</option>
-          <option value="long">Dłuższy bok</option>
-          <option value="w">Szerokość</option>
-          <option value="h">Wysokość</option>
-        </select>
-        <input type="number" id="outPx" min="16" max="16384" step="1" value="3000" list="outPresets" aria-label="Rozmiar w pikselach">
-        <span class="muted small">px</span>
-        <datalist id="outPresets"><option value="1080"><option value="1600"><option value="2048"><option value="2560"><option value="3000"><option value="3840"><option value="4096"><option value="5616"><option value="8000"></datalist>
+    <div id="rmain">
+      <div class="rhead" id="rhead">
+        <h2 id="rtitle">Film</h2>
+        <span class="grow"></span>
+        <button type="button" class="btn sm" id="rsFilm" title="Przywraca suwaki tego filmu do wartości domyślnych">Resetuj film</button>
+        <button type="button" class="btn sm" id="rsScene" title="Zeruje światło, krzywe, balans bieli, tony skóry i mikser kolorów">Resetuj korekty</button>
       </div>
-      <p class="muted small note" id="outInfo"></p>
-      <div class="erow">
-        <label class="elabel" for="qr">Jakość JPG</label>
-        <input type="range" id="qr" min="70" max="100" step="1" value="98">
-        <input type="number" id="qn" min="70" max="100" value="98" aria-label="Jakość JPG, wartość">
+      <div class="scroll" id="adj"></div>
+      <div class="scroll hidden" id="exp">
+        <p class="hint" id="expSel"></p>
+        <div class="erow">
+          <label class="elabel" for="outMode">Rozmiar</label>
+          <select id="outMode" title="Rozmiar gotowych zdjęć: pełny (jak zdjęcie, a po kadrowaniu — jak kadr) albo dowolny, także większy niż zdjęcie (wtedy jest powiększane)">
+            <option value="full">Pełny</option>
+            <option value="long">Dłuższy bok</option>
+            <option value="w">Szerokość</option>
+            <option value="h">Wysokość</option>
+          </select>
+          <input type="number" id="outPx" min="16" max="16384" step="1" value="3000" list="outPresets" aria-label="Rozmiar w pikselach">
+          <span class="muted small">px</span>
+          <datalist id="outPresets"><option value="1080"><option value="1600"><option value="2048"><option value="2560"><option value="3000"><option value="3840"><option value="4096"><option value="5616"><option value="8000"></datalist>
+        </div>
+        <p class="muted small note" id="outInfo"></p>
+        <div class="erow">
+          <label class="elabel" for="qr">Jakość JPG</label>
+          <input type="range" id="qr" min="70" max="100" step="1" value="98">
+          <input type="number" id="qn" min="70" max="100" value="98" aria-label="Jakość JPG, wartość">
+        </div>
+        <div class="erow">
+          <label class="chk small" title="Gotowy JPG ma kolory w pełnej rozdzielczości (4:4:4, a nie połowie jak w aparacie) i każdy piksel jest liczony dokładnie. Pliki są większe, a wywoływanie trochę dłuższe. Podgląd na ekranie liczy się tak samo (ziarno wygląda wtedy jak w pliku)."><input type="checkbox" id="chkHq" checked> <span>Najwyższa jakość (kolory 4:4:4, dokładne liczenie)</span></label>
+        </div>
+        <button class="btn primary big full" id="btnRun" type="button" disabled>Wywołaj zaznaczone</button>
+        <div class="overall" id="overall"><i id="overallBar"></i></div>
+        <div class="erow wrapr">
+          <span class="muted small grow" id="runInfo"></span>
+          <button class="btn sm hidden" id="btnStop" type="button">Zatrzymaj</button>
+        </div>
+        <div class="erow wrapr">
+          <button class="btn sm" id="btnZip" type="button" disabled>Pobierz ZIP</button>
+          <button class="btn sm hidden" id="btnFolder" type="button">Zapisz w folderze…</button>
+          <span class="muted small grow" id="folderInfo"></span>
+        </div>
+        <p class="muted small note" id="runNote">Wynik: nowe pliki JPG, oryginały zostają nietknięte.</p>
       </div>
-      <div class="erow">
-        <label class="chk small" title="Gotowy JPG ma kolory w pełnej rozdzielczości (4:4:4, a nie połowie jak w aparacie) i każdy piksel jest liczony dokładnie. Pliki są większe, a wywoływanie trochę dłuższe."><input type="checkbox" id="chkHq" checked> <span>Najwyższa jakość (kolory 4:4:4, dokładne liczenie)</span></label>
-      </div>
-      <button class="btn primary big full" id="btnRun" type="button" disabled>Wywołaj zaznaczone</button>
-      <div class="overall" id="overall"><i id="overallBar"></i></div>
-      <div class="erow wrapr">
-        <span class="muted small grow" id="runInfo"></span>
-        <button class="btn sm hidden" id="btnStop" type="button">Zatrzymaj</button>
-      </div>
-      <div class="erow wrapr">
-        <button class="btn sm" id="btnZip" type="button" disabled>Pobierz ZIP</button>
-        <button class="btn sm hidden" id="btnFolder" type="button">Zapisz w folderze…</button>
-        <span class="muted small grow" id="folderInfo"></span>
-      </div>
-      <p class="muted small note" id="runNote">Wynik: nowe pliki JPG, oryginały zostają nietknięte.</p>
     </div>
+    <nav class="rail" id="rail" aria-label="Działy ustawień" role="tablist" aria-orientation="vertical">
+      <button type="button" class="rb" data-g="film" role="tab" title="Film i ziarno: efekt, ziarno, winieta, matowość">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="3.5" y="6" width="17" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 9h17M3.5 15h17M7 6v3M11 6v3M15 6v3M7 15v3M11 15v3M15 15v3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span>Film</span><i class="dot"></i></button>
+      <button type="button" class="rb" data-g="light" role="tab" title="Światło: ekspozycja, kontrast, światła i cienie, krzywe">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3.5v2.3M12 18.2v2.3M3.5 12h2.3M18.2 12h2.3M6 6l1.6 1.6M16.4 16.4 18 18M18 6l-1.6 1.6M7.6 16.4 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>Światło</span><i class="dot"></i></button>
+      <button type="button" class="rb" data-g="color" role="tab" title="Kolor: balans bieli, nasycenie, tony skóry, mikser kolorów, tonowanie">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 3.5c3.5 4 6 7 6 10a6 6 0 0 1-12 0c0-3 2.5-6 6-10z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 14a3 3 0 0 0 3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span>Kolor</span><i class="dot"></i></button>
+      <button type="button" class="rb" data-g="crop" role="tab" title="Kadr i obrót: przycinanie, proporcje, prostowanie">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M7 2v15h15M2 7h15v15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Kadr</span><i class="dot"></i></button>
+      <button type="button" class="rb" data-g="source" role="tab" title="Źródło zdjęcia: surowe dane (RAW) albo JPG z pliku, wzorzec tonalny">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9.7 5v14M14.3 5v14M5 9.7h14M5 14.3h14" stroke="currentColor" stroke-width="1.3" opacity=".7"/></svg><span>RAW</span><i class="dot"></i></button>
+      <span class="grow"></span>
+      <button type="button" class="rb" data-g="export" role="tab" title="Zapis: rozmiar, jakość i wywoływanie zaznaczonych zdjęć">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Zapis</span><i class="dot"></i></button>
+    </nav>
   </aside>
 </div>
 
@@ -179,8 +217,8 @@ __APP_CSS__
 <dialog id="about" aria-labelledby="aboutTitle">
   <form method="dialog" class="aboutbox">
     <div class="abouthead"><h2 id="aboutTitle">Film Look Simulation</h2><button class="btn sm" value="close">Zamknij</button></div>
-    <p class="small"><b>Skróty:</b> <kbd>[</kbd> <kbd>]</kbd> chowają panele · <kbd>C</kbd> kadrowanie (<kbd>Enter</kbd> gotowe, <kbd>Esc</kbd> anuluj, <kbd>X</kbd> obróć proporcje) · <kbd>F</kbd> całe zdjęcie · <kbd>1</kbd> 100 % · <kbd>+</kbd> <kbd>−</kbd> powiększenie · kółko myszy powiększa, przeciąganie przesuwa, podwójne kliknięcie przełącza całe/100 % · przytrzymaj <kbd>\</kbd> żeby zobaczyć oryginał · <kbd>←</kbd> <kbd>→</kbd> poprzednie / następne zdjęcie · <kbd>Delete</kbd> usuwa zdjęcie z listy · podwójne kliknięcie na nazwie suwaka przywraca jego wartość.</p>
-    <p class="small muted">FILM LOOK DESKTOP <span id="verTxt"></span> — ten sam silnik, który działa w module aparatu (Soup Engine, GPL v2, rozszerzony o film look), skompilowany do WebAssembly. Program jest na licencji GPL v2; kod źródłowy: https://github.com/chladziu/filmlook. Wyglądy filmów: własne presety oraz EmulsionPresets (MIT). Zdjęcia z plików CR2 (Canon 5D Mark II) i DNG są wywoływane z surowych danych matrycy (RAW); plik CR3 — z podglądu JPG zapisanego w pliku (żeby użyć RAW, zamień go na DNG).</p>
+    <p class="small"><b>Skróty:</b> <kbd>[</kbd> <kbd>]</kbd> chowają panele po bokach, <kbd>Tab</kbd> chowa oba naraz (jeszcze raz — pokazuje) · <kbd>C</kbd> kadrowanie i prostowanie (<kbd>Enter</kbd> gotowe, <kbd>Esc</kbd> anuluj, <kbd>X</kbd> zamiana pion / poziom, <kbd>Ctrl</kbd> + <kbd>[</kbd> i <kbd>Ctrl</kbd> + <kbd>]</kbd> obrót o 90°) · <kbd>Ctrl</kbd> + <kbd>S</kbd> dział „Zapis” · <kbd>F</kbd> całe zdjęcie · <kbd>1</kbd> 100 % (jeden piksel gotowego zdjęcia = jeden piksel ekranu) · <kbd>+</kbd> <kbd>−</kbd> powiększenie · kółko myszy powiększa, przeciąganie przesuwa, podwójne kliknięcie przełącza całe/100 % · przytrzymaj <kbd>\</kbd> żeby zobaczyć oryginał · <kbd>←</kbd> <kbd>→</kbd> poprzednie / następne zdjęcie · <kbd>Delete</kbd> usuwa zdjęcie z listy · podwójne kliknięcie na nazwie suwaka przywraca jego wartość.</p>
+    <p class="small muted">FILM LOOK DESKTOP <span id="verTxt"></span> — ten sam silnik, który działa w module aparatu (Soup Engine, GPL v2, rozszerzony o film look), skompilowany do WebAssembly. Program jest na licencji GPL v2; kod źródłowy: https://github.com/chladziu/filmlook. Wyglądy filmów: własne presety oraz EmulsionPresets (MIT). Zdjęcia z plików CR2 (Canon 5D Mark II), CR3 (EOS R, RP, R5, R6 i inne) oraz DNG są wywoływane z surowych danych matrycy (RAW); gdy pliku nie da się odczytać jako RAW, program bierze JPG zapisany w pliku. Dekoder CR3 jest przeniesiony z programu RAWmakase (https://github.com/pch/rawmakase, licencja MIT, © 2026 RAWmakase contributors); pełny tekst licencji: THIRD_PARTY_LICENSES.txt w repozytorium.</p>
     <pre id="licTxt">__LICENSE__</pre>
     <p class="small muted">FILM LOOK DESKTOP · <span id="buildTxt">__BUILD__</span></p>
   </form>

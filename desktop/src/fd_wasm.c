@@ -115,7 +115,7 @@ EXPORT("fd_heap_mark") void fd_heap_mark(void) { g_mark_top = g_top; g_mark_last
 EXPORT("fd_heap_release") void fd_heap_release(void) { if (g_mark_top) { g_top = g_mark_top; g_last = g_mark_last; } }   /* ... when everything after it goes */
 
 /* ------------------------------------------------------------ the sensor data of the open photo
- * The page copies the whole file in, calls fd_source_prepare() once (a CR2 / DNG is decoded into the memory that stays until
+ * The page copies the whole file in, calls fd_source_prepare() once (a CR2 / CR3 / DNG is decoded into the memory that stays until
  * fd_reset), and only then fd_heap_mark(). Every fd_process() after that finds the decoded photo ready. */
 static fd_rawdata g_pre;
 EXPORT("fd_source_prepare")
@@ -126,7 +126,7 @@ int wasm_source_prepare(const uint8_t *src, size_t n)
     rc = fd_raw_load(src, n, &g_pre);
     fd_pre_rc = rc;
     if (rc == SE_OK) fd_pre = &g_pre;
-    return rc;                                     /* 0 = decoded, 1 = no sensor data in this file (a JPG, a CR3 ...), else an error code */
+    return rc;                                     /* 0 = decoded, 1 = no sensor data in this file (a JPG, a CR3 of an unknown camera ...), else an error code */
 }
 /* 0 decoded (1/0), 1 raw width, 2 raw height, 3 the tone was measured on the JPEG of the file (1/0), 4 error of decoding (0 none) */
 EXPORT("fd_source_info")

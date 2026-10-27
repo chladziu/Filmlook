@@ -123,6 +123,11 @@ typedef struct {
     int crop_x0, crop_y0, crop_x1, crop_y1;
     int crop_ar_w, crop_ar_h, crop_ar_auto;
     int out_long, out_w, out_h;
+    /* desktop: straightening, like the angle of the crop tool of Lightroom. crop_rot = the angle in thousandths of a degree
+     * (-90000..90000; positive turns the picture clockwise); the crop (above) is then a rectangle of the TURNED picture and has to
+     * lie inside it (it is shrunk when it does not; without a crop the biggest rectangle of the shape of the picture is taken).
+     * turn = quarter turns clockwise of the picture as it is shown (0..3), done by the orientation tag of the result: no pixel moves. */
+    int crop_rot, turn;
 } look_t;
 
 static int xa_id(const char *name)
