@@ -1,0 +1,67 @@
+cp README.rst build/README.rst
+python3 ../../modules/readme2modulestrings.py > build/module_strings.h.tmp
+/home/runner/work/Filmlook/Filmlook/ml/modules/filmlook/../../modules/readme2modulestrings.py:64: DeprecationWarning: The distutils package is deprecated and slated for removal in Python 3.12. Use setuptools or check PEP 632 for potential alternatives
+  import distutils.spawn
+mv build/module_strings.h.tmp build/module_strings.h
+/home/runner/gcc-arm-none-eabi-14.2.1-linux-x64/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-gcc -Os -D__ARM__ -Wp,-MMD,build/filmlook.d -Wp,-MT,build/filmlook.o -nostdlib -I../../include -Wall -Wextra -Werror-implicit-function-declaration -Wdouble-promotion -Winline -Wundef -Wno-unused-parameter -Wno-unused-function -Wno-format -fomit-frame-pointer -fno-strict-aliasing -ffast-math -fsingle-precision-constant -fno-builtin-printf -fno-common -fno-extended-identifiers -std=gnu99 -I../../src -ggdb3 -DCONFIG_MAGICLANTERN=1 -DCONFIG_DEBUGMSG=  -march=armv5te -mlong-calls -DMODULE -DMODULE_NAME=filmlook -DCONFIG_MAGICLANTERN -I../../src/ -I. -MP -MD -c -o build/filmlook.o filmlook.c
+/home/runner/gcc-arm-none-eabi-14.2.1-linux-x64/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-gcc -Os -D__ARM__ -Wp,-MMD,build/engine_unit.d -Wp,-MT,build/engine_unit.o -nostdlib -I../../include -Wall -Wextra -Werror-implicit-function-declaration -Wdouble-promotion -Winline -Wundef -Wno-unused-parameter -Wno-unused-function -Wno-format -fomit-frame-pointer -fno-strict-aliasing -ffast-math -fsingle-precision-constant -fno-builtin-printf -fno-common -fno-extended-identifiers -std=gnu99 -I../../src -ggdb3 -DCONFIG_MAGICLANTERN=1 -DCONFIG_DEBUGMSG=  -march=armv5te -mlong-calls -DMODULE -DMODULE_NAME=filmlook -DCONFIG_MAGICLANTERN -I../../src/ -I. -MP -MD -c -o build/engine_unit.o engine_unit.c
+In file included from filmlook.c:39:
+state.h: In function 'is_own':
+state.h:178:76: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+  178 |     return OWN_TYPE >= 0 && film > 0 && groups[films[film - 1].group].type == OWN_TYPE;
+      |                                                                            ^~
+/home/runner/gcc-arm-none-eabi-14.2.1-linux-x64/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-ld -r -o build/filmlook.mo.tmp build/filmlook.o build/engine_unit.o
+/home/runner/gcc-arm-none-eabi-14.2.1-linux-x64/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-strip --strip-debug --strip-unneeded --discard-all --discard-locals build/filmlook.mo.tmp
+mv build/filmlook.mo.tmp build/filmlook.mo
+readelf -sW build/filmlook.mo | grep GLOBAL | grep -v UND | grep -v COM | grep -v "__module_.*filmlook" | awk "{print \$2 \" \" \$8;}" | sort > build/filmlook.sym.tmp && cat build/filmlook.sym.tmp
+readelf -sW build/filmlook.mo | grep GLOBAL | grep 00000000 | grep UND | awk "{print \$8;}" | sort > build/filmlook.dep.tmp
+mv build/filmlook.dep.tmp build/filmlook.dep
+0000c264 se_strerror
+0000c288 se_arena_init
+0000c29c se_arena_alloc
+0000c440 se_arena_reset
+0000c44c se_rd_init
+0000c464 se_rd_seek
+0000c47c se_rd_u8
+0000c4a8 se_rd_u16
+0000c504 se_rd_u32
+0000c584 se_set_log
+0000c598 se_log
+0000c5f8 se_set_progress
+0000c60c se_progress
+0000c630 se_jpeg_dec_info
+0000c6ac se_jpeg_scaled_size
+0000d334 se_jpeg_decode
+0000d370 se_jpeg_decode_scaled
+0000d3a4 se_jpeg_decode_stream_scaled
+0000d3d0 se_jpeg_decode_stream
+0000d410 se_jpeg_set_flags
+0000d424 se_jpeg_begin
+0000dc44 se_jpeg_write_rows
+0000dcfc se_jpeg_end
+0000ddcc se_look_bytes
+0000de84 se_look_fit
+0000df08 se_look_set_exact
+0000df20 se_look_begin
+0000e48c se_look_rows
+0000e590 se_look_end
+mv build/filmlook.sym.tmp build/filmlook.sym
+total 936
+drwxr-xr-x 2 runner runner   4096 Oct 27 19:44 .
+drwxr-xr-x 5 runner runner   4096 Oct 27 19:44 ..
+-rw-r--r-- 1 runner runner    373 Oct 27 19:44 README.rst
+-rw-r--r-- 1 runner runner    352 Oct 27 19:44 engine_unit.d
+-rw-r--r-- 1 runner runner 162524 Oct 27 19:44 engine_unit.o
+-rw-r--r-- 1 runner runner   1962 Oct 27 19:44 filmlook.d
+-rw-r--r-- 1 runner runner    728 Oct 27 19:44 filmlook.dep
+-rw-r--r-- 1 runner runner 217612 Oct 27 19:44 filmlook.mo
+-rw-r--r-- 1 runner runner 537516 Oct 27 19:44 filmlook.o
+-rw-r--r-- 1 runner runner    685 Oct 27 19:44 filmlook.sym
+-rw-r--r-- 1 runner runner      0 Oct 27 19:44 module_complete
+-rw-r--r-- 1 runner runner   1991 Oct 27 19:44 module_strings.h
+arm-none-eabi-gcc (Arm GNU Toolchain 14.2.Rel1 (Build arm-14.52)) 14.2.1 20241119
+Copyright (C) 2024 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+--- symbols the module needs and the camera does not have:
