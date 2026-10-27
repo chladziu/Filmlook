@@ -199,7 +199,13 @@ def cli_make(photo, film, sl, extra, outname, legacy=True, quality=95):
     d = os.path.join(work, "cli_" + outname)
     os.makedirs(d, exist_ok=True)
     for f in os.listdir(d):
-        os.remove(os.path.join(d, f))
+        try:
+            os.remove(os.path.join(d, f))
+        except OSError:                              # Windows: a picture that the test still has open keeps its file: another folder
+            cli_make.n = getattr(cli_make, "n", 0) + 1
+            d = os.path.join(work, "cli_%s_%d" % (outname, cli_make.n))
+            os.makedirs(d, exist_ok=True)
+            break
     r = run([args.cli, "--quiet", "--quality", str(quality)] + cli_args(film, sl) + (LEGACY if legacy else []) + extra + ["--out", d, photo])
     out = os.listdir(d)
     if r.returncode != 0 or len(out) != 1:
@@ -309,7 +315,8 @@ if photos:
 def exif_of(path):
     try:
         from PIL import Image
-        return Image.open(path).getexif()
+        with Image.open(path) as im:
+            return im.getexif()
     except ImportError:
         return None
 
@@ -437,6 +444,7 @@ if RAW_FILES:
             check(im.getexif().get(0x112) == want_or, "%s: orientation %s (wanted %d)" % (tag, im.getexif().get(0x112), want_or))
             check(JpegImagePlugin.get_sampling(im) == 0, "%s: the JPEG has full resolution colours (4:4:4)" % tag)
             check(im.size == (600, 400), "%s: size %s (wanted (600, 400))" % (tag, im.size))
+            im.close()
 
         # the picture comes back: the film at Efekt 0, no grain, quality 100
         plain_n = [0]
@@ -468,7 +476,8 @@ if RAW_FILES:
                     mn = float(np.abs(px(noref) - picture_ref).mean())
                     note("   (without the pattern of the JPG the mean error is %.1f: the standard tone of the program is not the camera's)" % mn)
             if lowq:
-                check(JpegImagePlugin.get_sampling(Image.open(lowq)) == 2, "the camera's way (hq 0) writes 4:2:0")
+                with Image.open(lowq) as lq:
+                    check(JpegImagePlugin.get_sampling(lq) == 2, "the camera's way (hq 0) writes 4:2:0")
                 check(os.path.getsize(base) > os.path.getsize(lowq), "the best quality file is the bigger one (%d > %d bytes)" % (os.path.getsize(base), os.path.getsize(lowq)))
             # the same pixels from every Bayer file
             if base:
@@ -564,7 +573,11 @@ try:
         return os.path.join(d, out[0])
 
     def shown(path):                                     # the picture as it is shown (the camera's orientation applied): pixels, (w, h)
-        im = ImageOps.exif_transpose(Image.open(path).convert("RGB")) if Image.open(path).getexif().get(0x112) in (2, 3, 4, 5, 6, 7, 8) else Image.open(path).convert("RGB")
+        with Image.open(path) as src:
+            ori = src.getexif().get(0x112)
+            im = src.convert("RGB")
+        if ori in (2, 3, 4, 5, 6, 7, 8):
+            im = ImageOps.exif_transpose(im)
         return np.asarray(im).astype(np.int32)
 
     def frac(f, n):
