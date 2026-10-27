@@ -410,7 +410,7 @@ def scenario_inline(browser):
     check("pojedynczy" in chip, "no workers, one engine on the page: " + chip)
     develop_and_compare(page, 2, "S", 30)
     # the full size detail also works with one engine only
-    page.click("#list li:nth-child(1) .nm")
+    page.locator("#list li .nm", has_text="synth_5616x3744").click()     # the big one (the order of the list depends on the system)
     wait_idle(page)
     page.click("#stage")
     page.keyboard.press("1")
